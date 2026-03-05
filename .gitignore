@@ -4,3 +4,6 @@
 .env
 .rust-code.jsonl
 .rust-code/
+agent/
+vtcode/
+rust-code.log
