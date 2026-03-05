@@ -23,6 +23,8 @@ pub enum AppEvent {
     Ui(Event),
     Tick,
     AgentResponse(String),
+    AgentPlan(Vec<String>),
+    FileModified(String),
     AgentDone,
     FilesLoaded(Vec<String>),
     PreviewLoaded(Vec<Line<'static>>),
@@ -194,6 +196,8 @@ pub struct App<'a> {
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
+    pub agent_plan: Vec<String>,
+    pub modified_files: Vec<String>,
 }
 
 impl<'a> App<'a> {
@@ -221,6 +225,8 @@ impl<'a> App<'a> {
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
             agent_task: None,
+            agent_plan: Vec::new(),
+            modified_files: Vec::new(),
         }
     }
 
@@ -332,6 +338,14 @@ impl<'a> App<'a> {
                             self.list_state.select(Some(len - 1));
                         }
                     }
+                    AppEvent::AgentPlan(plan) => {
+                        self.agent_plan = plan;
+                    }
+                    AppEvent::FileModified(path) => {
+                        if !self.modified_files.contains(&path) {
+                            self.modified_files.push(path);
+                        }
+                    }
                     AppEvent::AgentDone => {
                         self.is_thinking = false;
                         self.agent_task = None;
@@ -403,48 +417,103 @@ impl<'a> App<'a> {
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
         
-        let chunks = Layout::default()
+        let horizontal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(75), // Chat area
+                Constraint::Percentage(25), // Sidebar
+            ])
+            .split(area);
+
+        let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
                 Constraint::Length(5), // Text area height
             ])
-            .split(area);
+            .split(horizontal_chunks[0]);
+
+        // Style constants inspired by IDEs (like OpenCode)
+        let border_style = Style::default().fg(Color::DarkGray);
+        let user_color = Color::Rgb(100, 200, 255); // Light Blue
+        let ai_color = Color::Rgb(200, 200, 200);   // Light Gray
+        let tool_color = Color::Rgb(100, 200, 100); // Green
+        let error_color = Color::Rgb(255, 100, 100); // Red
 
         // Chat History using List
         let items: Vec<ListItem> = self.messages
             .iter()
             .map(|m| {
-                // Basic syntax coloring based on message prefix
                 if m.starts_with(">") {
-                    // User prompt
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Cyan)))
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(user_color).add_modifier(Modifier::BOLD)))
                 } else if m.starts_with("🤖 Thinking") {
-                    // Agent thinking
                     ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)))
                 } else if m.starts_with("Analysis:") {
-                    // Agent response
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::White)))
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(ai_color)))
                 } else if m.starts_with("🛠️ Tool Result:") {
-                    // Tool output
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Green)))
+                    // Make tool results slightly dimmed so they don't distract from conversation
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Gray)))
                 } else if m.starts_with("❌") {
-                    // Error
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)))
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(error_color).add_modifier(Modifier::BOLD)))
                 } else {
-                    // Default
                     ListItem::new(Text::from(m.as_str()))
                 }
             })
             .collect();
             
         let chat_list = List::new(items)
-            .block(Block::default().title(" rust-code 🤖 ").borders(Borders::ALL).border_style(Style::default().fg(Color::Blue)));
+            .block(Block::default()
+                .title(" 🤖 rust-code ")
+                .borders(Borders::ALL)
+                .border_style(border_style));
         
-        frame.render_stateful_widget(chat_list, chunks[0], &mut self.list_state);
+        frame.render_stateful_widget(chat_list, left_chunks[0], &mut self.list_state);
 
         // Input Area
-        frame.render_widget(self.textarea.widget(), chunks[1]);
+        self.textarea.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "),
+        );
+        frame.render_widget(self.textarea.widget(), left_chunks[1]);
+        
+        // Sidebar Rendering
+        let sidebar_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(10), // Plan
+                Constraint::Length(15), // Modified Files
+            ])
+            .split(horizontal_chunks[1]);
+            
+        // Plan Panel
+        let mut plan_lines = vec![Line::from(Span::styled("Current Plan", Style::default().add_modifier(Modifier::BOLD)))];
+        plan_lines.push(Line::from(""));
+        for p in &self.agent_plan {
+            plan_lines.push(Line::from(format!("• {}", p)).style(Style::default().fg(Color::Gray)));
+        }
+        if self.agent_plan.is_empty() {
+            plan_lines.push(Line::from("Waiting for task...").style(Style::default().fg(Color::DarkGray)));
+        }
+        
+        let plan_widget = Paragraph::new(plan_lines)
+            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" SGR Plan "));
+        frame.render_widget(plan_widget, sidebar_chunks[0]);
+        
+        // Modified Files Panel
+        let mut file_lines = vec![Line::from(Span::styled("▼ Modified Files", Style::default().add_modifier(Modifier::BOLD)))];
+        file_lines.push(Line::from(""));
+        for f in &self.modified_files {
+            file_lines.push(Line::from(format!("+ {}", f)).style(Style::default().fg(tool_color)));
+        }
+        if self.modified_files.is_empty() {
+            file_lines.push(Line::from("No files modified yet").style(Style::default().fg(Color::DarkGray)));
+        }
+        
+        let files_widget = Paragraph::new(file_lines)
+            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Session "));
+        frame.render_widget(files_widget, sidebar_chunks[1]);
         
         // Render Popup if active
         match self.mode {
@@ -888,6 +957,7 @@ impl<'a> App<'a> {
                                         plan_str.push_str(&format!("- {}\n", p));
                                     }
                                     
+                                    let _ = agent_tx.send(AppEvent::AgentPlan(step.plan_updates.clone())).await;
                                     let _ = agent_tx.send(AppEvent::AgentResponse(plan_str)).await;
                                     
                                     // Record the agent's thought process and intended action
@@ -905,6 +975,14 @@ impl<'a> App<'a> {
                                     // Execute the action
                                     match locked_agent.execute_action(&step.action).await {
                                         Ok(rc_core::AgentEvent::Message(result)) => {
+                                            // Check if it was an edit/write action to update sidebar
+                                            if let rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
+                                                let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                            }
+                                            if let rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
+                                                let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                            }
+                                            
                                             locked_agent.add_user_message(format!("Tool result:\n{}", result));
                                             let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
                                         }
