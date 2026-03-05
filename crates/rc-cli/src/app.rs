@@ -227,8 +227,7 @@ impl GitHistoryState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SidebarFocus {
     None,
-    GitFiles,
-    GitHistory,
+    Channels,
 }
 
 pub struct App<'a> {
@@ -243,6 +242,8 @@ pub struct App<'a> {
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState,
     pub sidebar_focus: SidebarFocus,
+    pub channel_items: Vec<String>,
+    pub channel_state: ListState,
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
@@ -259,6 +260,8 @@ impl<'a> App<'a> {
 
         let mut list_state = ListState::default();
         list_state.select(Some(1));
+        let mut channel_state = ListState::default();
+        channel_state.select(Some(0));
 
         Self {
             exit: false,
@@ -275,6 +278,13 @@ impl<'a> App<'a> {
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
             sidebar_focus: SidebarFocus::None,
+            channel_items: vec![
+                "Git Diff".to_string(),
+                "Git History".to_string(),
+                "File Search".to_string(),
+                "Session Search".to_string(),
+            ],
+            channel_state,
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
@@ -490,6 +500,7 @@ impl<'a> App<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
+                Constraint::Length(1), // mini status bar
                 Constraint::Length(5), // Text area height
             ])
             .split(horizontal_chunks[0]);
@@ -547,6 +558,23 @@ impl<'a> App<'a> {
         
         frame.render_stateful_widget(chat_list, left_chunks[0], &mut self.list_state);
 
+        // Mini status bar (Norton Commander style)
+        let status = match self.mode {
+            AppMode::Chat => "Mode: Chat",
+            AppMode::FuzzySearch => "Mode: File Search Channel",
+            AppMode::SessionSearch => "Mode: Session History Channel",
+            AppMode::GitDiffSearch => "Mode: Git Diff Channel",
+            AppMode::GitHistorySearch => "Mode: Git History Channel",
+        };
+        let status_text = format!(
+            "{}  | F1 GitDiff  F2 GitHistory  F3 Files  F4 Sessions  F5 RefreshGit  F10 Sidebar  F12 Quit",
+            status
+        );
+        frame.render_widget(
+            Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray)),
+            left_chunks[1],
+        );
+
         // Input Area
         self.textarea.set_block(
             Block::default()
@@ -554,15 +582,15 @@ impl<'a> App<'a> {
                 .border_style(border_style)
                 .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "),
         );
-        frame.render_widget(self.textarea.widget(), left_chunks[1]);
+        frame.render_widget(self.textarea.widget(), left_chunks[2]);
         
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(14), // Plan (bigger)
-                Constraint::Length(10), // Git files
-                Constraint::Min(8),     // Git history
+                Constraint::Length(10), // Channels
+                Constraint::Min(8),     // Channel status
             ])
             .split(horizontal_chunks[1]);
             
@@ -580,86 +608,55 @@ impl<'a> App<'a> {
             .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" SGR Plan "));
         frame.render_widget(plan_widget, sidebar_chunks[0]);
         
-        // Git Files Panel
-        let git_title = if self.sidebar_focus == SidebarFocus::GitFiles {
-            " Git Files [FOCUSED - ↑↓, Enter insert, D diff, Ctrl+O open] "
+        // Channels panel
+        let channels_title = if self.sidebar_focus == SidebarFocus::Channels {
+            " Channels [FOCUSED - ↑↓ select, Enter open] "
         } else {
-            " Git Files [Ctrl+G refresh, Tab cycle focus] "
+            " Channels [Tab focus] "
         };
-        
-        let git_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
-            vec![ListItem::new("No git changes - Ctrl+G to refresh").style(Style::default().fg(Color::DarkGray))]
-        } else {
-            self.git_sidebar.files
-                .iter()
-                .map(|(status, path)| {
-                    let status_color = match status.as_str() {
-                        "M" => Color::Yellow,
-                        "A" => Color::Green,
-                        "?" => Color::Gray,
-                        _ => Color::White,
-                    };
-                    let content = format!("[{}] {}", status, path);
-                    ListItem::new(content).style(Style::default().fg(status_color))
-                })
-                .collect()
-        };
-        
-        let git_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(if self.sidebar_focus == SidebarFocus::GitFiles {
-                Style::default().fg(Color::Yellow)
-            } else {
-                border_style
+
+        let channel_items: Vec<ListItem> = self
+            .channel_items
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| {
+                let suffix = match idx {
+                    0 => format!(" ({})", self.git_sidebar.files.len()),
+                    1 => format!(" ({})", self.git_history.items.len()),
+                    _ => String::new(),
+                };
+                ListItem::new(format!("{}{}", name, suffix))
             })
-            .title(git_title);
-        
-        let git_list = List::new(git_items)
-            .block(git_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
-            .highlight_symbol("> ");
-        
-        frame.render_stateful_widget(git_list, sidebar_chunks[1], &mut self.git_sidebar.list_state);
+            .collect();
 
-        // Git history / branches panel
-        let history_title = if self.sidebar_focus == SidebarFocus::GitHistory {
-            " Git History [FOCUSED - ↑↓ navigate, Enter insert] "
-        } else {
-            " Git History (commits + branches) "
-        };
-
-        let history_items: Vec<ListItem> = if self.git_history.items.is_empty() {
-            vec![ListItem::new("No history available").style(Style::default().fg(Color::DarkGray))]
-        } else {
-            self.git_history
-                .items
-                .iter()
-                .map(|item| {
-                    let style = if item.starts_with("branch:") {
-                        Style::default().fg(Color::Cyan)
+        let channels_list = List::new(channel_items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(if self.sidebar_focus == SidebarFocus::Channels {
+                        Style::default().fg(Color::Yellow)
                     } else {
-                        Style::default().fg(Color::Gray)
-                    };
-                    ListItem::new(item.as_str()).style(style)
-                })
-                .collect()
-        };
-
-        let history_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(if self.sidebar_focus == SidebarFocus::GitHistory {
-                Style::default().fg(Color::Yellow)
-            } else {
-                border_style
-            })
-            .title(history_title);
-
-        let history_list = List::new(history_items)
-            .block(history_block)
+                        border_style
+                    })
+                    .title(channels_title),
+            )
             .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
             .highlight_symbol("> ");
+        frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
 
-        frame.render_stateful_widget(history_list, sidebar_chunks[2], &mut self.git_history.list_state);
+        // Channel status panel
+        let info_lines = vec![
+            Line::from(format!("Git files: {}", self.git_sidebar.files.len())),
+            Line::from(format!("Git history: {}", self.git_history.items.len())),
+            Line::from("Enter: open selected channel"),
+            Line::from("Inside channel: Enter preview"),
+            Line::from("Ctrl+I insert to chat"),
+        ];
+        frame.render_widget(
+            Paragraph::new(info_lines)
+                .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Channel Status ")),
+            sidebar_chunks[2],
+        );
         
         // Render Popup if active
         match self.mode {
@@ -1366,71 +1363,92 @@ impl<'a> App<'a> {
         agent: Arc<Mutex<Agent>>
     ) {
         // Handle sidebar-focused mode first
-        if self.sidebar_focus != SidebarFocus::None {
+        if self.sidebar_focus == SidebarFocus::Channels {
             match key_event.code {
                 KeyCode::Esc => {
                     self.sidebar_focus = SidebarFocus::None;
                     return;
                 }
-                KeyCode::Tab => {
-                    self.sidebar_focus = match self.sidebar_focus {
-                        SidebarFocus::GitFiles => SidebarFocus::GitHistory,
-                        SidebarFocus::GitHistory => SidebarFocus::None,
-                        SidebarFocus::None => SidebarFocus::GitFiles,
-                    };
-                    return;
-                }
                 KeyCode::Down => {
-                    if self.sidebar_focus == SidebarFocus::GitFiles {
-                        if let Some(selected) = self.git_sidebar.list_state.selected() {
-                            let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
-                            self.git_sidebar.list_state.select(Some(next));
-                            self.load_git_diff();
-                        }
-                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
-                        if let Some(selected) = self.git_history.list_state.selected() {
-                            let next = if selected + 1 < self.git_history.items.len() { selected + 1 } else { 0 };
-                            self.git_history.list_state.select(Some(next));
-                        }
+                    if let Some(selected) = self.channel_state.selected() {
+                        let next = if selected + 1 < self.channel_items.len() { selected + 1 } else { 0 };
+                        self.channel_state.select(Some(next));
                     }
                     return;
                 }
                 KeyCode::Up => {
-                    if self.sidebar_focus == SidebarFocus::GitFiles {
-                        if let Some(selected) = self.git_sidebar.list_state.selected() {
-                            let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
-                            self.git_sidebar.list_state.select(Some(prev));
-                            self.load_git_diff();
-                        }
-                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
-                        if let Some(selected) = self.git_history.list_state.selected() {
-                            let prev = if selected > 0 { selected - 1 } else { self.git_history.items.len().saturating_sub(1) };
-                            self.git_history.list_state.select(Some(prev));
-                        }
+                    if let Some(selected) = self.channel_state.selected() {
+                        let prev = if selected > 0 { selected - 1 } else { self.channel_items.len().saturating_sub(1) };
+                        self.channel_state.select(Some(prev));
                     }
                     return;
                 }
                 KeyCode::Enter => {
-                    if self.sidebar_focus == SidebarFocus::GitFiles {
-                        // Open Git Diff channel popup
-                        self.load_git_diff();
-                        self.mode = AppMode::GitDiffSearch;
-                        self.sidebar_focus = SidebarFocus::None;
-                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
-                        // Open Git History channel popup
-                        self.load_git_history_preview();
-                        self.mode = AppMode::GitHistorySearch;
-                        self.sidebar_focus = SidebarFocus::None;
-                    }
-                    return;
-                }
-                KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                    // Open file in editor
-                    if self.sidebar_focus == SidebarFocus::GitFiles {
-                        if let Some(selected) = self.git_sidebar.list_state.selected() {
-                            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
-                                let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                    if let Some(selected) = self.channel_state.selected() {
+                        match selected {
+                            0 => {
+                                self.load_git_diff();
+                                self.mode = AppMode::GitDiffSearch;
                             }
+                            1 => {
+                                self.load_git_history_preview();
+                                self.mode = AppMode::GitHistorySearch;
+                            }
+                            2 => {
+                                self.mode = AppMode::FuzzySearch;
+                                if self.fuzzy_state.all_files.is_empty() {
+                                    let tx_clone = tx.clone();
+                                    tokio::spawn(async move {
+                                        if let Ok(files) = FuzzySearcher::get_all_files().await {
+                                            let _ = tx_clone.send(AppEvent::FilesLoaded(files)).await;
+                                        }
+                                    });
+                                } else {
+                                    self.fuzzy_state.update_search();
+                                    self.load_preview(tx.clone());
+                                }
+                            }
+                            3 => {
+                                self.mode = AppMode::SessionSearch;
+                                self.session_state.input = TextArea::default();
+                                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
+                                let tx_clone = tx.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
+                                        let mut sessions = Vec::new();
+                                        while let Ok(Some(entry)) = entries.next_entry().await {
+                                            let path = entry.path();
+                                            if path.extension().map_or(false, |ext| ext == "jsonl") {
+                                                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                                                    let mut all_messages = Vec::new();
+                                                    let mut first_message = String::new();
+                                                    for line in content.lines() {
+                                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
+                                                            if first_message.is_empty() && msg.role == "user" {
+                                                                first_message = msg.content.chars().take(80).collect();
+                                                            }
+                                                            all_messages.push(msg);
+                                                        }
+                                                    }
+                                                    if first_message.is_empty() {
+                                                        first_message = "Empty session".to_string();
+                                                    }
+                                                    let timestamp = entry.metadata().await.map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH).duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
+                                                    sessions.push(SessionEntry {
+                                                        path: path.to_string_lossy().to_string(),
+                                                        timestamp,
+                                                        first_message,
+                                                        all_messages,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                                        let _ = tx_clone.send(AppEvent::SessionsLoaded(sessions)).await;
+                                    }
+                                });
+                            }
+                            _ => {}
                         }
                     }
                     self.sidebar_focus = SidebarFocus::None;
@@ -1441,6 +1459,81 @@ impl<'a> App<'a> {
         }
 
         match key_event.code {
+            KeyCode::F(1) => {
+                self.load_git_diff();
+                self.mode = AppMode::GitDiffSearch;
+            }
+            KeyCode::F(2) => {
+                self.load_git_history_preview();
+                self.mode = AppMode::GitHistorySearch;
+            }
+            KeyCode::F(3) => {
+                self.mode = AppMode::FuzzySearch;
+                if self.fuzzy_state.all_files.is_empty() {
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        if let Ok(files) = FuzzySearcher::get_all_files().await {
+                            let _ = tx_clone.send(AppEvent::FilesLoaded(files)).await;
+                        }
+                    });
+                } else {
+                    self.fuzzy_state.update_search();
+                    self.load_preview(tx.clone());
+                }
+            }
+            KeyCode::F(4) => {
+                self.mode = AppMode::SessionSearch;
+                self.session_state.input = TextArea::default();
+                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
+                        let mut sessions = Vec::new();
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let path = entry.path();
+                            if path.extension().map_or(false, |ext| ext == "jsonl") {
+                                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                                    let mut all_messages = Vec::new();
+                                    let mut first_message = String::new();
+                                    for line in content.lines() {
+                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
+                                            if first_message.is_empty() && msg.role == "user" {
+                                                first_message = msg.content.chars().take(80).collect();
+                                            }
+                                            all_messages.push(msg);
+                                        }
+                                    }
+                                    if first_message.is_empty() {
+                                        first_message = "Empty session".to_string();
+                                    }
+                                    let timestamp = entry.metadata().await.map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH).duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
+                                    sessions.push(SessionEntry {
+                                        path: path.to_string_lossy().to_string(),
+                                        timestamp,
+                                        first_message,
+                                        all_messages,
+                                    });
+                                }
+                            }
+                        }
+                        sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                        let _ = tx_clone.send(AppEvent::SessionsLoaded(sessions)).await;
+                    }
+                });
+            }
+            KeyCode::F(5) => {
+                self.refresh_git_sidebar();
+                self.refresh_git_history();
+                self.messages.push("🔄 Git status refreshed".to_string());
+                let len = self.messages.len();
+                self.list_state.select(Some(len.saturating_sub(1)));
+            }
+            KeyCode::F(10) => {
+                self.sidebar_focus = SidebarFocus::Channels;
+            }
+            KeyCode::F(12) => {
+                self.exit = true;
+            }
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_thinking {
                     // Abort the running task
@@ -1456,15 +1549,10 @@ impl<'a> App<'a> {
                 }
             }
             KeyCode::Tab => {
-                // Cycle sidebar focus: none -> files -> history -> none
                 self.sidebar_focus = match self.sidebar_focus {
-                    SidebarFocus::None => SidebarFocus::GitFiles,
-                    SidebarFocus::GitFiles => SidebarFocus::GitHistory,
-                    SidebarFocus::GitHistory => SidebarFocus::None,
+                    SidebarFocus::None => SidebarFocus::Channels,
+                    SidebarFocus::Channels => SidebarFocus::None,
                 };
-                if self.sidebar_focus == SidebarFocus::GitFiles {
-                    self.load_git_diff();
-                }
             }
             KeyCode::Char('g') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Refresh git status
