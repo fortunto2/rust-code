@@ -226,7 +226,7 @@ impl<'a> App<'a> {
         textarea.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab sidebar, Ctrl+C quit) "),
+                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab focus sidebar, Ctrl+C quit) "),
         );
 
         let mut list_state = ListState::default();
@@ -277,37 +277,11 @@ impl<'a> App<'a> {
 
         let agent = Arc::new(Mutex::new(agent_instance));
 
-        // Load initial git status
+        // Load initial git status and diff
         self.refresh_git_sidebar();
-        
-        // Debug: always show git check result
-        use rc_tools::git::git_status;
-        match git_status() {
-            Ok(Some(status)) => {
-                if !status.modified_files.is_empty() || !status.staged_files.is_empty() || !status.untracked_files.is_empty() {
-                    let mut git_msg = String::from("📁 Git changes detected:\n");
-                    for file in &status.modified_files {
-                        git_msg.push_str(&format!("  [M] {}\n", file));
-                    }
-                    for file in &status.staged_files {
-                        git_msg.push_str(&format!("  [A] {}\n", file));
-                    }
-                    for file in &status.untracked_files {
-                        git_msg.push_str(&format!("  [?] {}\n", file));
-                    }
-                    self.messages.push(git_msg);
-                    let len = self.messages.len();
-                    self.list_state.select(Some(len.saturating_sub(1)));
-                } else {
-                    self.messages.push("📁 No git changes (working tree clean)".to_string());
-                }
-            }
-            Ok(None) => {
-                self.messages.push("⚠️ Not a git repository".to_string());
-            }
-            Err(e) => {
-                self.messages.push(format!("⚠️ Git error: {}", e));
-            }
+        if !self.git_sidebar.files.is_empty() {
+            self.git_sidebar.list_state.select(Some(0));
+            self.load_git_diff();
         }
 
         // UI Event Task
@@ -546,8 +520,9 @@ impl<'a> App<'a> {
         let sidebar_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(10), // Plan
-                Constraint::Length(15), // Modified Files
+                Constraint::Length(8),  // Plan (fixed height)
+                Constraint::Length(12), // Git Files List
+                Constraint::Min(10),    // Diff Preview
             ])
             .split(horizontal_chunks[1]);
             
@@ -567,7 +542,7 @@ impl<'a> App<'a> {
         
         // Git Files Panel
         let git_title = if self.sidebar_focused {
-            " Git Files [FOCUSED - ↑↓ navigate, Enter diff, Ctrl+O open] "
+            " Git Files [FOCUSED - ↑↓ navigate, Ctrl+O open] "
         } else {
             " Git Files [Ctrl+G refresh, Tab focus] "
         };
@@ -606,15 +581,21 @@ impl<'a> App<'a> {
         
         frame.render_stateful_widget(git_list, sidebar_chunks[1], &mut self.git_sidebar.list_state);
         
-        // Show diff preview if sidebar is focused and we have a selection
-        if self.sidebar_focused && !self.git_sidebar.files.is_empty() {
-            if let Some(selected) = self.git_sidebar.list_state.selected() {
-                if let Some((_, _path)) = self.git_sidebar.files.get(selected) {
-                    // Show mini preview in the sidebar area or as a popup
-                    // For now, we'll add the diff to the chat
-                }
-            }
-        }
+        // Diff Preview Panel
+        let diff_preview = if self.sidebar_focused && !self.git_sidebar.selected_diff.is_empty() {
+            List::new(
+                self.git_sidebar.selected_diff
+                    .iter()
+                    .map(|line| ListItem::new(line.clone()))
+                    .collect::<Vec<_>>()
+            )
+            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Diff Preview "))
+        } else {
+            List::new(vec![ListItem::new("Select a file to see diff")])
+                .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Diff Preview "))
+        };
+        
+        frame.render_widget(diff_preview, sidebar_chunks[2]);
         
         // Render Popup if active
         match self.mode {
@@ -852,48 +833,51 @@ impl<'a> App<'a> {
                 self.git_sidebar.files.push(("?".to_string(), file.clone()));
             }
             
-            // Reset selection
+            // Reset selection and load diff for first file
             if !self.git_sidebar.files.is_empty() {
                 self.git_sidebar.list_state.select(Some(0));
+                self.load_git_diff();
             } else {
                 self.git_sidebar.list_state.select(None);
+                self.git_sidebar.selected_diff.clear();
             }
         }
     }
 
-    fn load_git_diff(&mut self, tx: mpsc::Sender<AppEvent>) {
+    fn load_git_diff(&mut self) {
+        self.git_sidebar.selected_diff.clear();
+        
         if let Some(selected) = self.git_sidebar.list_state.selected() {
             if let Some((_, path)) = self.git_sidebar.files.get(selected) {
                 let path = path.clone();
-                tokio::spawn(async move {
-                    match rc_tools::git::git_diff(Some(&path), false) {
-                        Ok(diff) => {
-                            let mut lines = Vec::new();
-                            lines.push(Line::from(format!("Diff for {}:", path)).style(Style::default().add_modifier(Modifier::BOLD)));
-                            lines.push(Line::from(""));
-                            
-                            for line in diff.lines() {
-                                let styled_line = if line.starts_with('+') {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Green))
-                                } else if line.starts_with('-') {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Red))
-                                } else if line.starts_with('@') {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
-                                } else {
-                                    Line::from(line.to_string())
-                                };
-                                lines.push(styled_line);
-                            }
-                            
-                            let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
+                // Load diff synchronously for simplicity in sidebar
+                match std::process::Command::new("git")
+                    .args(["diff", "--no-color", "--no-pager", "--", &path])
+                    .env("GIT_PAGER", "cat")
+                    .output() 
+                {
+                    Ok(output) => {
+                        let diff = String::from_utf8_lossy(&output.stdout);
+                        for line in diff.lines().take(50) { // Limit to 50 lines for preview
+                            let styled_line = if line.starts_with('+') && !line.starts_with("+++") {
+                                Line::from(line.to_string()).style(Style::default().fg(Color::Green))
+                            } else if line.starts_with('-') && !line.starts_with("---") {
+                                Line::from(line.to_string()).style(Style::default().fg(Color::Red))
+                            } else if line.starts_with('@') {
+                                Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
+                            } else {
+                                Line::from(line.to_string())
+                            };
+                            self.git_sidebar.selected_diff.push(styled_line);
                         }
-                        Err(e) => {
-                            let _ = tx.send(AppEvent::PreviewLoaded(vec![
-                                Line::from(format!("Error loading diff: {}", e))
-                            ])).await;
+                        if diff.lines().count() > 50 {
+                            self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
                         }
                     }
-                });
+                    Err(_) => {
+                        self.git_sidebar.selected_diff.push(Line::from("Error loading diff"));
+                    }
+                }
             }
         }
     }
@@ -1029,7 +1013,7 @@ impl<'a> App<'a> {
                     if let Some(selected) = self.git_sidebar.list_state.selected() {
                         let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
                         self.git_sidebar.list_state.select(Some(next));
-                        self.load_git_diff(tx.clone());
+                        self.load_git_diff();
                     }
                     return;
                 }
@@ -1037,17 +1021,12 @@ impl<'a> App<'a> {
                     if let Some(selected) = self.git_sidebar.list_state.selected() {
                         let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
                         self.git_sidebar.list_state.select(Some(prev));
-                        self.load_git_diff(tx.clone());
+                        self.load_git_diff();
                     }
                     return;
                 }
                 KeyCode::Enter => {
-                    // Show diff in chat
-                    if let Some(selected) = self.git_sidebar.list_state.selected() {
-                        if let Some((_, path)) = self.git_sidebar.files.get(selected) {
-                            let _ = agent.lock().await.add_user_message(format!("Show me git diff for {}", path));
-                        }
-                    }
+                    // Just unfocus, diff is already shown in preview
                     self.sidebar_focused = false;
                     return;
                 }
@@ -1085,7 +1064,7 @@ impl<'a> App<'a> {
                 if !self.git_sidebar.files.is_empty() {
                     self.sidebar_focused = !self.sidebar_focused;
                     if self.sidebar_focused {
-                        self.load_git_diff(tx.clone());
+                        self.load_git_diff();
                     }
                 }
             }
