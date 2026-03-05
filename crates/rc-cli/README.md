@@ -69,7 +69,7 @@ rust-code
 
 Notes:
 
-- `rust-code` currently initializes BAML clients that are defined in [`crates/rc-baml/baml_src/clients.baml`](/Users/rustam/startups/shared/rust-code/crates/rc-baml/baml_src/clients.baml).
+- `rust-code` currently initializes BAML clients that are defined in `crates/rc-baml/baml_src/clients.baml`.
 - The checked-in config currently includes Gemini, Vertex AI, and OpenRouter.
 - `BAML_LOG` is suppressed automatically by the app so the TUI stays clean.
 
@@ -178,7 +178,7 @@ This repository now publishes a single crate, `rust-code`, but it still keeps a 
 
 If you change BAML source files, edit them in:
 
-- [`crates/rc-baml/baml_src/`](/Users/rustam/startups/shared/rust-code/crates/rc-baml/baml_src/)
+- `crates/rc-baml/baml_src/`
 
 Then regenerate:
 

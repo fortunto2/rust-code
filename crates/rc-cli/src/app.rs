@@ -9,9 +9,10 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tui_textarea::{Input, TextArea};
 
+use crate::agent::{Agent, AgentEvent};
+use crate::baml_client;
 use crate::preview::CodeHighlighter;
-use rc_core::Agent;
-use rc_tools::FuzzySearcher;
+use crate::tools::{self, FuzzySearcher};
 
 pub enum AppMode {
     Chat,
@@ -645,7 +646,7 @@ impl<'a> App<'a> {
                         crate::tui::restore()?;
 
                         // Open Editor
-                        if let Err(e) = rc_tools::open_in_editor(&path, line) {
+                        if let Err(e) = tools::open_in_editor(&path, line) {
                             println!("Error opening editor: {}", e);
                             // Pause slightly so user can see error
                             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1374,7 +1375,7 @@ impl<'a> App<'a> {
                 let path = path.clone();
                 tokio::spawn(async move {
                     // Try to read first part of the file
-                    match rc_tools::read_file(&path, None, None).await {
+                    match tools::read_file(&path, None, None).await {
                         Ok(content) => {
                             // Truncate if too long
                             let content_to_highlight = if content.chars().count() > 5000 {
@@ -2673,18 +2674,18 @@ impl<'a> App<'a> {
 
                                     let is_done = matches!(
                                         step.action,
-                                        rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                        rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                        baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                        baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
                                     );
 
                                     // Execute the action
                                     match locked_agent.execute_action(&step.action).await {
-                                        Ok(rc_core::AgentEvent::Message(result)) => {
+                                        Ok(AgentEvent::Message(result)) => {
                                             // Check if it was an edit/write action to update sidebar
-                                            if let rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
-                                            if let rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
 
@@ -2699,7 +2700,7 @@ impl<'a> App<'a> {
                                                 )))
                                                 .await;
                                         }
-                                        Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
+                                        Ok(AgentEvent::OpenEditor(path, line)) => {
                                             locked_agent.add_user_message(format!(
                                                 "Tool result:\nUser opened editor for {}",
                                                 path

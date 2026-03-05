@@ -1,10 +1,13 @@
 pub mod tui;
 pub mod app;
 pub mod preview;
+pub mod agent;
+pub mod tools;
+pub mod baml_client;
 
 use anyhow::Result;
 use clap::Parser;
-use rc_core::Agent;
+use crate::agent::{Agent, AgentEvent};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
@@ -53,7 +56,7 @@ async fn main() -> Result<()> {
     setup_panic_hook();
     
     // Initialize BAML runtime
-    rc_baml::init();
+    baml_client::init();
 
     if let Some(prompt) = args.prompt {
         // Single prompt headless mode
@@ -84,17 +87,17 @@ async fn main() -> Result<()> {
             
             let is_done = matches!(
                 step.action,
-                rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
             );
 
             let result = agent.execute_action(&step.action).await?;
             match result {
-                rc_core::AgentEvent::Message(msg) => {
+                AgentEvent::Message(msg) => {
                     println!("\nTool Result:\n{}", msg);
                     agent.add_user_message(format!("Tool result:\n{}", msg));
                 }
-                rc_core::AgentEvent::OpenEditor(path, _) => {
+                AgentEvent::OpenEditor(path, _) => {
                     println!("\nAction requested opening editor for: {}", path);
                     agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
                 }
