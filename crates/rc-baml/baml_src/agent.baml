@@ -42,10 +42,15 @@ class Message {
   content string
 }
 
-function GetNextStep(system_prompt: string, history: Message[]) -> NextStep {
+function GetNextStep(history: Message[]) -> NextStep {
   client VertexGemini31FlashLite
   prompt #"
-    {{ system_prompt }}
+    {{ _.role("system") }}
+    You are rust-code, an expert AI coding assistant.
+    You operate within a Terminal UI environment.
+    Your task is to help the user solve their programming problems by exploring the codebase, reading files, and executing commands.
+    Follow the conventions of the project you are working on.
+    Always use the provided tools to verify your assumptions before making changes.
 
     {# Loop through conversation history #}
     {% for msg in history %}
@@ -54,7 +59,7 @@ function GetNextStep(system_prompt: string, history: Message[]) -> NextStep {
     {% endfor %}
 
     {{ _.role("user") }}
-    Determine the next action to take. Return your reasoning and the tool call.
+    Determine the next action to take based on the history above. Return your analysis, plan updates, and the specific tool call.
     {{ ctx.output_format }}
   "#
 }

@@ -7,6 +7,8 @@ edition = "2024"
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 rc-baml = { path = "../rc-baml" }
 rc-tools = { path = "../rc-tools" }

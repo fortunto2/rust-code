@@ -50,3 +50,79 @@
 [2m2026-03-05T01:59:21.752818Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
 [2m2026-03-05T01:59:21.753039Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
 [2m2026-03-05T01:59:21.753106Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T02:02:42.169465Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T02:02:42.169814Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T14:19:44.444681Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(45445321856), interests=READABLE | WRITABLE
+[2m2026-03-05T14:19:44.444771Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(45445322368), interests=READABLE | WRITABLE
+[2m2026-03-05T14:19:44.484281Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:19:44.484330Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:19:45.789328Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(45445322112), interests=READABLE | WRITABLE
+[2m2026-03-05T14:19:45.789363Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(45445325952), interests=READABLE | WRITABLE
+[2m2026-03-05T14:19:45.794213Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:19:45.794245Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:22:41.273872Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T14:22:41.274016Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T14:23:30.391906Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065024), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:30.392008Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064000), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:30.415405Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:30.415460Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:32.019010Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065024), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:32.019081Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065280), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:32.031077Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:32.031194Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:53.800507Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882066560), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:53.800602Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882066048), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:53.819395Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:53.819462Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:55.733324Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882067072), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:55.733389Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882066560), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:55.742249Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:55.742312Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:57.563160Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882070912), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:57.563277Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064768), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:57.580421Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:57.580475Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:59.273653Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065024), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:59.273722Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882070912), interests=READABLE | WRITABLE
+[2m2026-03-05T14:23:59.284168Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:23:59.284231Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:01.620663Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882067328), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:01.620774Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882066816), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:01.634954Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:01.635037Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:03.450851Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064768), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:03.450938Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064512), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:03.466696Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:03.466752Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:06.247380Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065792), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:06.247466Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064256), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:06.277223Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:06.277285Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:08.344022Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063744), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:08.344112Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065792), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:08.364946Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:08.365012Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:10.185472Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065024), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:10.185536Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882070144), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:10.213811Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:10.213908Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:12.579112Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882067328), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:12.579179Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882064512), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:12.590047Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:12.590105Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:15.293676Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882070912), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:15.293728Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882066048), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:15.303449Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:15.303492Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:21.968406Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063744), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:21.968472Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063488), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:21.981933Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:21.981989Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:23.893590Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065280), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:23.893696Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063744), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:23.917884Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:23.917958Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:28.615199Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882065024), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:28.615297Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063488), interests=READABLE | WRITABLE
+[2m2026-03-05T14:24:28.631060Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:24:28.631118Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller

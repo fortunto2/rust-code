@@ -112,7 +112,23 @@ impl<'a> App<'a> {
         let (tx, mut rx) = mpsc::channel(100);
 
         // Share the agent so the background worker can use it
-        let agent = Arc::new(Mutex::new(Agent::new()));
+        let agent_instance = Agent::new();
+        
+        // Load messages from agent history for the UI
+        for msg in agent_instance.history() {
+            if msg.role == "user" {
+                self.messages.push(format!("> {}", msg.content));
+            } else if msg.role == "assistant" {
+                self.messages.push(format!("Analysis: {}", msg.content));
+            }
+        }
+        if !agent_instance.history().is_empty() {
+            self.messages.push("--- Restored previous session ---".to_string());
+            let len = self.messages.len();
+            self.list_state.select(Some(len.saturating_sub(1)));
+        }
+
+        let agent = Arc::new(Mutex::new(agent_instance));
 
         // UI Event Task
         let ui_tx = tx.clone();
@@ -151,7 +167,7 @@ impl<'a> App<'a> {
                     AppEvent::AgentResponse(msg) => {
                         // Remove "Thinking..." message if it's the last one
                         if let Some(last) = self.messages.last() {
-                            if last == "🤖 Thinking..." {
+                            if last.starts_with("🤖 Thinking") {
                                 self.messages.pop();
                             }
                         }
@@ -475,31 +491,56 @@ impl<'a> App<'a> {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.add_user_message(prompt_clone);
                         
-                        match locked_agent.step("You are a helpful coding assistant. Use the tools provided.").await {
-                            Ok(step) => {
-                                let mut plan_str = format!("Analysis: {}\n\nPlan:\n", step.analysis);
-                                for p in &step.plan_updates {
-                                    plan_str.push_str(&format!("- {}\n", p));
+                        loop {
+                            match locked_agent.step().await {
+                                Ok(step) => {
+                                    let mut plan_str = format!("Analysis: {}\n\nPlan:\n", step.analysis);
+                                    for p in &step.plan_updates {
+                                        plan_str.push_str(&format!("- {}\n", p));
+                                    }
+                                    
+                                    let _ = agent_tx.send(AppEvent::AgentResponse(plan_str)).await;
+                                    
+                                    // Record the agent's thought process and intended action
+                                    locked_agent.add_assistant_message(format!(
+                                        "Analysis: {}\nAction: {:?}", 
+                                        step.analysis, step.action
+                                    ));
+                                    
+                                    let is_done = matches!(
+                                        step.action,
+                                        rc_baml::baml_client::types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                        rc_baml::baml_client::types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                    );
+
+                                    // Execute the action
+                                    match locked_agent.execute_action(&step.action).await {
+                                        Ok(rc_core::AgentEvent::Message(result)) => {
+                                            locked_agent.add_user_message(format!("Tool result:\n{}", result));
+                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
+                                        }
+                                        Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
+                                            locked_agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
+                                            // Request the main thread to suspend TUI and open the editor
+                                            let _ = agent_tx.send(AppEvent::SuspendAndRun(path, line)).await;
+                                        }
+                                        Err(e) => {
+                                            locked_agent.add_user_message(format!("Tool error:\n{}", e));
+                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ Tool Error:\n{}", e))).await;
+                                        }
+                                    }
+                                    
+                                    if is_done {
+                                        break;
+                                    } else {
+                                        // Agent needs to continue thinking
+                                        let _ = agent_tx.send(AppEvent::AgentResponse("🤖 Thinking next step...".to_string())).await;
+                                    }
                                 }
-                                
-                                let _ = agent_tx.send(AppEvent::AgentResponse(plan_str)).await;
-                                
-                                // Execute the action
-                                match locked_agent.execute_action(&step.action).await {
-                                    Ok(rc_core::AgentEvent::Message(result)) => {
-                                        let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
-                                    }
-                                    Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
-                                        // Request the main thread to suspend TUI and open the editor
-                                        let _ = agent_tx.send(AppEvent::SuspendAndRun(path, line)).await;
-                                    }
-                                    Err(e) => {
-                                        let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ Tool Error:\n{}", e))).await;
-                                    }
+                                Err(e) => {
+                                    let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ AI Error: {}", e))).await;
+                                    break;
                                 }
-                            }
-                            Err(e) => {
-                                let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ AI Error: {}", e))).await;
                             }
                         }
                     });

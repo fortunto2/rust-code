@@ -1311,6 +1311,8 @@ dependencies = [
  "anyhow",
  "rc-baml",
  "rc-tools",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

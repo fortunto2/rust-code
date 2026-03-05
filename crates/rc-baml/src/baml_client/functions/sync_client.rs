@@ -107,7 +107,7 @@ macro_rules! baml_function_sync {
 
 
 
-baml_function_sync!(GetNextStep(system_prompt: impl AsRef<str> + BamlEncode, history: &[types::Message], ) -> (stream_types::NextStep, types::NextStep));
+baml_function_sync!(GetNextStep(history: &[types::Message], ) -> (stream_types::NextStep, types::NextStep));
 
 
 // =============================================================================

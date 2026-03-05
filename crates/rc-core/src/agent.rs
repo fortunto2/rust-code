@@ -1,10 +1,19 @@
 use anyhow::Result;
 use rc_baml::baml_client::{self, types};
 use rc_tools::{read_file, write_file, run_command, FuzzySearcher};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 
 pub enum AgentEvent {
     Message(String),
     OpenEditor(String, Option<i64>),
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedMessage {
+    role: String,
+    content: String,
 }
 
 pub struct Agent {
@@ -13,27 +22,75 @@ pub struct Agent {
 
 impl Agent {
     pub fn new() -> Self {
-        Self {
+        let mut agent = Self {
             history: Vec::new(),
-        }
+        };
+        // Attempt to load existing history
+        let _ = agent.load_history();
+        agent
+    }
+
+    pub fn history(&self) -> &[types::Message] {
+        &self.history
     }
 
     pub fn add_user_message(&mut self, content: impl Into<String>) {
-        self.history.push(types::Message {
+        let msg = types::Message {
             role: "user".to_string(),
             content: content.into(),
-        });
+        };
+        self.history.push(msg.clone());
+        let _ = self.append_to_history_file(&msg);
     }
 
     pub fn add_assistant_message(&mut self, content: impl Into<String>) {
-        self.history.push(types::Message {
+        let msg = types::Message {
             role: "assistant".to_string(),
             content: content.into(),
-        });
+        };
+        self.history.push(msg.clone());
+        let _ = self.append_to_history_file(&msg);
     }
 
-    pub async fn step(&mut self, system_prompt: &str) -> Result<types::NextStep> {
-        let response = baml_client::async_client::B.GetNextStep.call(system_prompt.to_string(), &self.history).await?;
+    fn append_to_history_file(&self, msg: &types::Message) -> Result<()> {
+        let persisted = PersistedMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+        };
+        let json = serde_json::to_string(&persisted)?;
+        
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(".rust-code.jsonl")?;
+            
+        writeln!(file, "{}", json)?;
+        Ok(())
+    }
+
+    fn load_history(&mut self) -> Result<()> {
+        let path = Path::new(".rust-code.jsonl");
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if let Ok(persisted) = serde_json::from_str::<PersistedMessage>(&line) {
+                self.history.push(types::Message {
+                    role: persisted.role,
+                    content: persisted.content,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn step(&mut self) -> Result<types::NextStep> {
+        let response = baml_client::async_client::B.GetNextStep.call(&self.history).await?;
         Ok(response)
     }
 
