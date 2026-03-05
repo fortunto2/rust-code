@@ -35,3 +35,18 @@
 [2m2026-03-05T01:53:50.381585Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
 [2m2026-03-05T01:53:50.381939Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
 [2m2026-03-05T01:53:50.382040Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T01:58:47.147456Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T01:58:47.147542Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T01:59:13.111797Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(36654174080), interests=READABLE | WRITABLE
+[2m2026-03-05T01:59:13.111855Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(36654173056), interests=READABLE | WRITABLE
+[2m2026-03-05T01:59:13.126511Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T01:59:13.126564Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T01:59:21.745269Z[0m [35mTRACE[0m [2mignore::walk[0m[2m:[0m automatically discovered CWD: /Users/rustam/startups/shared/rust-code
+[2m2026-03-05T01:59:21.749303Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: /Users/rustam/.config/git/ignore
+[2m2026-03-05T01:59:21.749358Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 0 basenames, 0 extensions, 0 prefixes, 1 suffixes, 0 required extensions, 0 regexes
+[2m2026-03-05T01:59:21.750262Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.gitignore
+[2m2026-03-05T01:59:21.750521Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 2 basenames, 0 extensions, 0 prefixes, 0 suffixes, 1 required extensions, 0 regexes
+[2m2026-03-05T01:59:21.750828Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.git/info/exclude
+[2m2026-03-05T01:59:21.752818Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T01:59:21.753039Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T01:59:21.753106Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))

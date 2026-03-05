@@ -24,6 +24,7 @@ pub enum AppEvent {
     AgentResponse(String),
     FilesLoaded(Vec<String>),
     PreviewLoaded(Vec<Line<'static>>),
+    SuspendAndRun(String, Option<i64>),
 }
 
 pub struct FuzzySearchState<'a> {
@@ -171,6 +172,26 @@ impl<'a> App<'a> {
                     }
                     AppEvent::PreviewLoaded(lines) => {
                         self.fuzzy_state.preview_lines = lines;
+                    }
+                    AppEvent::SuspendAndRun(path, line) => {
+                        // Suspend TUI
+                        crate::tui::restore()?;
+                        
+                        // Open Editor
+                        if let Err(e) = rc_tools::open_in_editor(&path, line) {
+                            println!("Error opening editor: {}", e);
+                            // Pause slightly so user can see error
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                        }
+                        
+                        // Restore TUI
+                        *terminal = crate::tui::init()?;
+                        terminal.clear()?;
+                        
+                        // Add a message about the file being edited
+                        self.messages.push(format!("🛠️ Opened editor for {}", path));
+                        let len = self.messages.len();
+                        self.list_state.select(Some(len.saturating_sub(1)));
                     }
                     AppEvent::Tick => {
                         // We could update a spinner here if `is_thinking` is true
@@ -468,9 +489,9 @@ impl<'a> App<'a> {
                                     Ok(rc_core::AgentEvent::Message(result)) => {
                                         let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
                                     }
-                                    Ok(rc_core::AgentEvent::OpenEditor(path, _line)) => {
-                                        // TODO: handle open editor correctly
-                                        let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Editor opened for {}", path))).await;
+                                    Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
+                                        // Request the main thread to suspend TUI and open the editor
+                                        let _ = agent_tx.send(AppEvent::SuspendAndRun(path, line)).await;
                                     }
                                     Err(e) => {
                                         let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ Tool Error:\n{}", e))).await;
