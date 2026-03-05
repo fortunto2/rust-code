@@ -19,6 +19,7 @@ pub enum AppMode {
     SessionSearch,
     GitDiffSearch,
     GitHistorySearch,
+    ProjectSymbolsSearch,
 }
 
 pub enum AppEvent {
@@ -212,6 +213,68 @@ pub struct GitHistoryState {
     pub preview_lines: Vec<Line<'static>>,
 }
 
+#[derive(Clone)]
+pub struct SymbolItem {
+    pub label: String,
+    pub file: String,
+    pub line: usize,
+}
+
+pub struct SymbolsState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<SymbolItem>,
+    pub filtered_items: Vec<SymbolItem>,
+    pub list_state: ListState,
+    pub preview_lines: Vec<Line<'static>>,
+    pub searcher: FuzzySearcher,
+}
+
+impl<'a> SymbolsState<'a> {
+    pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
+            list_state,
+            preview_lines: Vec::new(),
+            searcher: FuzzySearcher::new(),
+        }
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            let haystack: Vec<String> = self
+                .all_items
+                .iter()
+                .map(|s| format!("{} {}:{}", s.label, s.file, s.line))
+                .collect();
+            let matches = self.searcher.fuzzy_match_files(&query, &haystack);
+            self.filtered_items = matches
+                .into_iter()
+                .filter_map(|(_, m)| {
+                    self.all_items
+                        .iter()
+                        .find(|s| format!("{} {}:{}", s.label, s.file, s.line) == m)
+                        .cloned()
+                })
+                .collect();
+        }
+
+        if !self.filtered_items.is_empty() {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
+    }
+}
+
 impl GitHistoryState {
     pub fn new() -> Self {
         let mut list_state = ListState::default();
@@ -239,6 +302,7 @@ pub struct App<'a> {
     pub list_state: ListState,
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
+    pub symbols_state: SymbolsState<'a>,
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState,
     pub sidebar_focus: SidebarFocus,
@@ -283,6 +347,7 @@ impl<'a> App<'a> {
             list_state,
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
+            symbols_state: SymbolsState::new(),
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
             sidebar_focus: SidebarFocus::None,
@@ -291,6 +356,7 @@ impl<'a> App<'a> {
                 "Git History".to_string(),
                 "File Search".to_string(),
                 "Session Search".to_string(),
+                "Project Symbols".to_string(),
             ],
             channel_state,
             ui_regions: None,
@@ -328,6 +394,7 @@ impl<'a> App<'a> {
         // Load initial git status and diff
         self.refresh_git_sidebar();
         self.refresh_git_history();
+        self.refresh_project_symbols();
         if !self.git_sidebar.files.is_empty() {
             self.git_sidebar.list_state.select(Some(0));
             self.load_git_diff();
@@ -669,6 +736,7 @@ impl<'a> App<'a> {
                 let suffix = match idx {
                     0 => format!(" ({})", self.git_sidebar.files.len()),
                     1 => format!(" ({})", self.git_history.items.len()),
+                    4 => format!(" ({})", self.symbols_state.all_items.len()),
                     _ => String::new(),
                 };
                 ListItem::new(format!("{}{}", name, suffix))
@@ -694,6 +762,7 @@ impl<'a> App<'a> {
         let info_lines = vec![
             Line::from(format!("Git files: {}", self.git_sidebar.files.len())),
             Line::from(format!("Git history: {}", self.git_history.items.len())),
+            Line::from(format!("Symbols: {}", self.symbols_state.all_items.len())),
             Line::from("Enter: open selected channel"),
             Line::from("Inside channel: Enter preview"),
             Line::from("Ctrl+I insert to chat"),
@@ -711,6 +780,7 @@ impl<'a> App<'a> {
             AppMode::SessionSearch => "MODE: SESSION SEARCH",
             AppMode::GitDiffSearch => "MODE: GIT DIFF",
             AppMode::GitHistorySearch => "MODE: GIT HISTORY",
+            AppMode::ProjectSymbolsSearch => "MODE: PROJECT SYMBOLS",
         };
         let focus_text = if self.sidebar_focus == SidebarFocus::Channels {
             "FOCUS: CHANNELS"
@@ -718,11 +788,12 @@ impl<'a> App<'a> {
             "FOCUS: INPUT"
         };
         let status_line = format!(
-            " {} | {} | Git files: {} | History: {} ",
+            " {} | {} | Git files: {} | History: {} | Symbols: {} ",
             mode_text,
             focus_text,
             self.git_sidebar.files.len(),
-            self.git_history.items.len()
+            self.git_history.items.len(),
+            self.symbols_state.all_items.len()
         );
         frame.render_widget(
             Paragraph::new(status_line)
@@ -731,7 +802,7 @@ impl<'a> App<'a> {
         );
 
         let hotkeys_line =
-            " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 RefreshGit  F10 Channels  F12 Quit ";
+            " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 RefreshGit  F6 Symbols  F10 Channels  F12 Quit ";
         frame.render_widget(
             Paragraph::new(hotkeys_line)
                 .style(Style::default().fg(Color::Black).bg(Color::Rgb(180, 180, 180))),
@@ -744,8 +815,64 @@ impl<'a> App<'a> {
             AppMode::SessionSearch => self.draw_session_popup(frame, area),
             AppMode::GitDiffSearch => self.draw_git_diff_popup(frame, area),
             AppMode::GitHistorySearch => self.draw_git_history_popup(frame, area),
+            AppMode::ProjectSymbolsSearch => self.draw_symbols_popup(frame, area),
             AppMode::Chat => {}
         }
+    }
+
+    fn draw_symbols_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 85) / 100;
+        let popup_height = (area.height * 85) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" Project Symbols Channel (Esc close, Enter preview, Ctrl+I insert, Ctrl+O open) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(inner_area);
+
+        frame.render_widget(self.symbols_state.input.widget(), chunks[0]);
+
+        let main = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(chunks[1]);
+
+        let list_items: Vec<ListItem> = if self.symbols_state.filtered_items.is_empty() {
+            vec![ListItem::new("No symbols")]
+        } else {
+            self.symbols_state
+                .filtered_items
+                .iter()
+                .map(|s| ListItem::new(format!("{} ({}:{})", s.label, s.file, s.line)))
+                .collect()
+        };
+
+        let list = List::new(list_items)
+            .block(Block::default().borders(Borders::ALL).title(" Symbols "))
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, main[0], &mut self.symbols_state.list_state);
+
+        let preview = List::new(
+            self.symbols_state
+                .preview_lines
+                .iter()
+                .map(|l| ListItem::new(l.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .block(Block::default().borders(Borders::ALL).title(" Preview "));
+        frame.render_widget(preview, main[1]);
     }
 
     fn draw_git_history_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -1177,6 +1304,78 @@ impl<'a> App<'a> {
         }
     }
 
+    fn refresh_project_symbols(&mut self) {
+        self.symbols_state.all_items.clear();
+        self.symbols_state.filtered_items.clear();
+        self.symbols_state.preview_lines.clear();
+
+        if let Ok(output) = std::process::Command::new("rg")
+            .args([
+                "-n",
+                "^(\\s*pub\\s+)?(async\\s+)?fn\\s+|^\\s*(pub\\s+)?struct\\s+|^\\s*(pub\\s+)?enum\\s+|^\\s*(pub\\s+)?trait\\s+|^\\s*impl\\s+",
+                "crates",
+            ])
+            .output()
+        {
+            let txt = String::from_utf8_lossy(&output.stdout);
+            for line in txt.lines() {
+                let mut parts = line.splitn(3, ':');
+                let file = parts.next().unwrap_or_default().to_string();
+                let line_no = parts
+                    .next()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(1);
+                let code = parts.next().unwrap_or_default().trim().to_string();
+                if !file.is_empty() && !code.is_empty() {
+                    self.symbols_state.all_items.push(SymbolItem {
+                        label: code,
+                        file,
+                        line: line_no,
+                    });
+                }
+            }
+        }
+
+        self.symbols_state.filtered_items = self.symbols_state.all_items.clone();
+        if !self.symbols_state.filtered_items.is_empty() {
+            self.symbols_state.list_state.select(Some(0));
+            self.load_symbol_preview();
+        } else {
+            self.symbols_state.list_state.select(None);
+        }
+    }
+
+    fn load_symbol_preview(&mut self) {
+        self.symbols_state.preview_lines.clear();
+        if let Some(selected) = self.symbols_state.list_state.selected() {
+            if let Some(item) = self.symbols_state.filtered_items.get(selected) {
+                let file = item.file.clone();
+                let line = item.line;
+                self.symbols_state
+                    .preview_lines
+                    .push(Line::from(format!("{}:{}", file, line)).style(Style::default().add_modifier(Modifier::BOLD)));
+                self.symbols_state.preview_lines.push(Line::from(""));
+
+                // Show local context around symbol
+                let start = line.saturating_sub(20);
+                if let Ok(content) = std::fs::read_to_string(&file) {
+                    let all: Vec<&str> = content.lines().collect();
+                    let end = (start + 80).min(all.len());
+                    for (idx, l) in all[start..end].iter().enumerate() {
+                        let actual = start + idx + 1;
+                        let styled = if actual == line {
+                            Line::from(format!("> {:>5} | {}", actual, l))
+                                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        } else {
+                            Line::from(format!("  {:>5} | {}", actual, l))
+                        };
+                        self.symbols_state.preview_lines.push(styled);
+                    }
+                }
+            }
+        }
+    }
+
     fn load_git_diff(&mut self) {
         self.git_sidebar.selected_diff.clear();
         
@@ -1253,6 +1452,56 @@ impl<'a> App<'a> {
             AppMode::SessionSearch => self.handle_session_key_event(key_event, tx, agent).await,
             AppMode::GitDiffSearch => self.handle_git_diff_key_event(key_event, tx).await,
             AppMode::GitHistorySearch => self.handle_git_history_key_event(key_event).await,
+            AppMode::ProjectSymbolsSearch => self.handle_symbols_key_event(key_event, tx).await,
+        }
+    }
+
+    async fn handle_symbols_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.symbols_state.list_state.selected() {
+                    let next = if selected + 1 < self.symbols_state.filtered_items.len() { selected + 1 } else { 0 };
+                    self.symbols_state.list_state.select(Some(next));
+                    self.load_symbol_preview();
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.symbols_state.list_state.selected() {
+                    let prev = if selected > 0 { selected - 1 } else { self.symbols_state.filtered_items.len().saturating_sub(1) };
+                    self.symbols_state.list_state.select(Some(prev));
+                    self.load_symbol_preview();
+                }
+            }
+            KeyCode::Enter => {
+                self.load_symbol_preview();
+            }
+            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.symbols_state.list_state.selected() {
+                    if let Some(item) = self.symbols_state.filtered_items.get(selected) {
+                        let _ = tx.send(AppEvent::SuspendAndRun(item.file.clone(), Some(item.line as i64))).await;
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.symbols_state.list_state.selected() {
+                    if let Some(item) = self.symbols_state.filtered_items.get(selected) {
+                        self.textarea
+                            .insert_str(&format!("{}:{} {}", item.file, item.line, item.label));
+                        self.textarea.insert_str(" ");
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {
+                if self.symbols_state.input.input(Input::from(key_event)) {
+                    self.symbols_state.update_search();
+                    self.load_symbol_preview();
+                }
+            }
         }
     }
 
@@ -1528,6 +1777,14 @@ impl<'a> App<'a> {
                                     }
                                 });
                             }
+                            4 => {
+                                self.mode = AppMode::ProjectSymbolsSearch;
+                                self.symbols_state.input = TextArea::default();
+                                self.symbols_state
+                                    .input
+                                    .set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+                                self.refresh_project_symbols();
+                            }
                             _ => {}
                         }
                     }
@@ -1604,9 +1861,18 @@ impl<'a> App<'a> {
             KeyCode::F(5) => {
                 self.refresh_git_sidebar();
                 self.refresh_git_history();
+                self.refresh_project_symbols();
                 self.messages.push("🔄 Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
+            }
+            KeyCode::F(6) => {
+                self.mode = AppMode::ProjectSymbolsSearch;
+                self.symbols_state.input = TextArea::default();
+                self.symbols_state
+                    .input
+                    .set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+                self.refresh_project_symbols();
             }
             KeyCode::F(10) => {
                 self.sidebar_focus = SidebarFocus::Channels;
