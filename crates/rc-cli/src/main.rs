@@ -1,3 +1,6 @@
+pub mod tui;
+pub mod app;
+
 use anyhow::Result;
 use clap::Parser;
 use rc_core::Agent;
@@ -17,6 +20,7 @@ async fn main() -> Result<()> {
     rc_baml::init();
 
     if let Some(prompt) = args.prompt {
+        // Single prompt headless mode
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
         agent.add_user_message(prompt);
@@ -36,7 +40,17 @@ async fn main() -> Result<()> {
         let result = agent.execute_action(&step.action).await?;
         println!("\nTool Result:\n{}", result);
     } else {
-        println!("TUI mode not yet fully implemented. Try --prompt \"what is in this dir?\"");
+        // Interactive TUI mode
+        let mut terminal = tui::init()?;
+        let mut app = app::App::new();
+        
+        let result = app.run(&mut terminal).await;
+        
+        tui::restore()?;
+        
+        if let Err(err) = result {
+            println!("Error running TUI: {:?}", err);
+        }
     }
     
     Ok(())
