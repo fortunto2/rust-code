@@ -1,5 +1,6 @@
 pub mod tui;
 pub mod app;
+pub mod preview;
 
 use anyhow::Result;
 use clap::Parser;
@@ -70,7 +71,10 @@ async fn main() -> Result<()> {
         println!("{:?}", step.action);
         
         let result = agent.execute_action(&step.action).await?;
-        println!("\nTool Result:\n{}", result);
+        match result {
+            rc_core::AgentEvent::Message(msg) => println!("\nTool Result:\n{}", msg),
+            rc_core::AgentEvent::OpenEditor(path, _) => println!("\nAction requested opening editor for: {}", path),
+        }
     } else {
         // Interactive TUI mode
         let mut terminal = tui::init()?;

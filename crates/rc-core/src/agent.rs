@@ -2,6 +2,11 @@ use anyhow::Result;
 use rc_baml::baml_client::{self, types};
 use rc_tools::{read_file, write_file, run_command, FuzzySearcher};
 
+pub enum AgentEvent {
+    Message(String),
+    OpenEditor(String, Option<i64>),
+}
+
 pub struct Agent {
     history: Vec<types::Message>,
 }
@@ -32,20 +37,20 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&self, action: &types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<String> {
+    pub async fn execute_action(&self, action: &types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
         use types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path).await?;
-                Ok(format!("File contents of {}:\n{}", cmd.path, content))
+                Ok(AgentEvent::Message(format!("File contents of {}:\n{}", cmd.path, content)))
             }
             WriteFileTool(cmd) => {
                 write_file(&cmd.path, &cmd.content).await?;
-                Ok(format!("Successfully wrote to {}", cmd.path))
+                Ok(AgentEvent::Message(format!("Successfully wrote to {}", cmd.path)))
             }
             BashCommandTool(cmd) => {
                 let output = run_command(&cmd.command).await?;
-                Ok(format!("Command output:\n{}", output))
+                Ok(AgentEvent::Message(format!("Command output:\n{}", output)))
             }
             SearchCodeTool(cmd) => {
                 // Implement basic file path search first
@@ -60,17 +65,18 @@ impl Agent {
                 if matches.is_empty() {
                     result.push_str("No matches found.");
                 }
-                Ok(result)
+                Ok(AgentEvent::Message(result))
+            }
+            OpenEditorTool(cmd) => {
+                // We return a special event so the UI layer can suspend itself and open the editor
+                Ok(AgentEvent::OpenEditor(cmd.path.clone(), cmd.line))
             }
             FinishTaskTool(cmd) => {
-                Ok(format!("Task finished: {}", cmd.summary))
+                Ok(AgentEvent::Message(format!("Task finished: {}", cmd.summary)))
             }
             AskUserTool(cmd) => {
                 // In a real TUI, this would yield to the user prompt
-                Ok(format!("Question for user: {}", cmd.question))
-            }
-            _ => {
-                Ok("Tool not fully implemented yet".to_string())
+                Ok(AgentEvent::Message(format!("Question for user: {}", cmd.question)))
             }
         }
     }

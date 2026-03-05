@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 
 use rc_core::Agent;
 use rc_tools::FuzzySearcher;
+use crate::preview::CodeHighlighter;
 
 pub enum AppMode {
     Chat,
@@ -22,7 +23,7 @@ pub enum AppEvent {
     Tick,
     AgentResponse(String),
     FilesLoaded(Vec<String>),
-    PreviewLoaded(String),
+    PreviewLoaded(Vec<Line<'static>>),
 }
 
 pub struct FuzzySearchState<'a> {
@@ -30,7 +31,7 @@ pub struct FuzzySearchState<'a> {
     pub all_files: Vec<String>,
     pub filtered_files: Vec<String>,
     pub list_state: ListState,
-    pub preview_content: String,
+    pub preview_lines: Vec<Line<'static>>,
     pub searcher: FuzzySearcher,
 }
 
@@ -47,7 +48,7 @@ impl<'a> FuzzySearchState<'a> {
             all_files: Vec::new(),
             filtered_files: Vec::new(),
             list_state,
-            preview_content: String::new(),
+            preview_lines: Vec::new(),
             searcher: FuzzySearcher::new(),
         }
     }
@@ -168,8 +169,8 @@ impl<'a> App<'a> {
                         self.fuzzy_state.update_search();
                         self.load_preview(tx.clone());
                     }
-                    AppEvent::PreviewLoaded(content) => {
-                        self.fuzzy_state.preview_content = content;
+                    AppEvent::PreviewLoaded(lines) => {
+                        self.fuzzy_state.preview_lines = lines;
                     }
                     AppEvent::Tick => {
                         // We could update a spinner here if `is_thinking` is true
@@ -233,7 +234,7 @@ impl<'a> App<'a> {
         frame.render_widget(popup_block, popup_area);
         
         // Layout inside popup
-        let inner_area = popup_area.inner(&Margin { vertical: 1, horizontal: 1 });
+        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -268,7 +269,7 @@ impl<'a> App<'a> {
         frame.render_stateful_widget(file_list, bottom_chunks[0], &mut self.fuzzy_state.list_state);
         
         // Render Preview
-        let preview = Paragraph::new(self.fuzzy_state.preview_content.as_str())
+        let preview = Paragraph::new(self.fuzzy_state.preview_lines.clone())
             .block(Block::default().borders(Borders::ALL).title(" Preview "))
             .wrap(Wrap { trim: false });
             
@@ -284,15 +285,31 @@ impl<'a> App<'a> {
                     match rc_tools::read_file(&path).await {
                         Ok(content) => {
                             // Truncate if too long
-                            let preview = if content.chars().count() > 5000 {
+                            let content_to_highlight = if content.chars().count() > 5000 {
                                 format!("{}...\n\n[File truncated for preview]", &content.chars().take(5000).collect::<String>())
                             } else {
                                 content
                             };
-                            let _ = tx.send(AppEvent::PreviewLoaded(preview)).await;
+                            
+                            // Highlight in a blocking task since it's CPU intensive
+                            let lines = tokio::task::spawn_blocking(move || {
+                                let highlighter = CodeHighlighter::new();
+                                // We need to convert Line<'a> to Line<'static> to pass it through the channel
+                                let highlighted = highlighter.highlight(&content_to_highlight, &path);
+                                let static_lines = highlighted.into_iter().map(|line| {
+                                    let static_spans: Vec<Span<'static>> = line.spans.into_iter().map(|span| {
+                                        Span::styled(span.content.to_string(), span.style)
+                                    }).collect();
+                                    Line::from(static_spans)
+                                }).collect();
+                                static_lines
+                            }).await.unwrap_or_default();
+                            
+                            let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
                         }
                         Err(e) => {
-                            let _ = tx.send(AppEvent::PreviewLoaded(format!("Could not read file: {}", e))).await;
+                            let msg = vec![Line::from(format!("Could not read file: {}", e))];
+                            let _ = tx.send(AppEvent::PreviewLoaded(msg)).await;
                         }
                     }
                 });
@@ -427,8 +444,12 @@ impl<'a> App<'a> {
                                 
                                 // Execute the action
                                 match locked_agent.execute_action(&step.action).await {
-                                    Ok(result) => {
+                                    Ok(rc_core::AgentEvent::Message(result)) => {
                                         let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
+                                    }
+                                    Ok(rc_core::AgentEvent::OpenEditor(path, _line)) => {
+                                        // TODO: handle open editor correctly
+                                        let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Editor opened for {}", path))).await;
                                     }
                                     Err(e) => {
                                         let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ Tool Error:\n{}", e))).await;
