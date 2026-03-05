@@ -1292,29 +1292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rc-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm 0.27.0",
- "ratatui",
- "rc-baml",
- "rc-core",
- "rc-tools",
- "serde",
- "serde_json",
- "syntect",
- "syntect-tui",
- "textwrap",
- "tokio",
- "tokio-util",
- "tracing-appender",
- "tracing-subscriber",
- "tui-textarea",
-]
-
-[[package]]
 name = "rc-core"
 version = "0.1.0"
 dependencies = [
@@ -1388,6 +1365,29 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rust-code"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm 0.27.0",
+ "ratatui",
+ "rc-baml",
+ "rc-core",
+ "rc-tools",
+ "serde",
+ "serde_json",
+ "syntect",
+ "syntect-tui",
+ "textwrap",
+ "tokio",
+ "tokio-util",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tui-textarea",
 ]
 
 [[package]]

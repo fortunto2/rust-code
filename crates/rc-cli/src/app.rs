@@ -4,14 +4,14 @@ use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
-use tui_textarea::{Input, TextArea};
-use tokio::sync::mpsc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tui_textarea::{Input, TextArea};
 
+use crate::preview::CodeHighlighter;
 use rc_core::Agent;
 use rc_tools::FuzzySearcher;
-use crate::preview::CodeHighlighter;
 
 pub enum AppMode {
     Chat,
@@ -20,6 +20,7 @@ pub enum AppMode {
     GitDiffSearch,
     GitHistorySearch,
     ProjectSymbolsSearch,
+    BgTasksSearch,
 }
 
 pub enum AppEvent {
@@ -32,6 +33,7 @@ pub enum AppEvent {
     FilesLoaded(Vec<String>),
     PreviewLoaded(Vec<Line<'static>>),
     SuspendAndRun(String, Option<i64>),
+    SuspendAndShell(String),
     SessionsLoaded(Vec<SessionEntry>),
     SessionLoaded,
 }
@@ -49,8 +51,12 @@ pub struct FuzzySearchState<'a> {
 impl<'a> FuzzySearchState<'a> {
     pub fn new() -> Self {
         let mut input = TextArea::default();
-        input.set_block(Block::default().borders(Borders::ALL).title(" Search Files "));
-        
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Files "),
+        );
+
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
@@ -64,7 +70,7 @@ impl<'a> FuzzySearchState<'a> {
             searcher: FuzzySearcher::new(),
         }
     }
-    
+
     pub fn update_search(&mut self) {
         let query = self.input.lines().join("");
         if query.trim().is_empty() {
@@ -73,7 +79,7 @@ impl<'a> FuzzySearchState<'a> {
             let matches = self.searcher.fuzzy_match_files(&query, &self.all_files);
             self.filtered_files = matches.into_iter().map(|(_, path)| path).collect();
         }
-        
+
         // Reset selection
         if !self.filtered_files.is_empty() {
             self.list_state.select(Some(0));
@@ -124,7 +130,11 @@ pub struct SessionSearchState<'a> {
 impl<'a> SessionSearchState<'a> {
     pub fn new() -> Self {
         let mut input = TextArea::default();
-        input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Sessions (Tab to toggle mode) "),
+        );
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
@@ -138,12 +148,12 @@ impl<'a> SessionSearchState<'a> {
             searcher: FuzzySearcher::new(),
         }
     }
-    
+
     pub fn update_search(&mut self) {
         let query = self.input.lines().join("");
-        
+
         let mut candidates = Vec::new();
-        
+
         match self.mode {
             SessionSearchMode::BySession => {
                 for entry in &self.all_entries {
@@ -160,7 +170,10 @@ impl<'a> SessionSearchState<'a> {
                         if msg.role == "user" {
                             candidates.push(SearchListItem {
                                 path: entry.path.clone(),
-                                display: format!("> {}", msg.content.chars().take(80).collect::<String>()),
+                                display: format!(
+                                    "> {}",
+                                    msg.content.chars().take(80).collect::<String>()
+                                ),
                                 search_text: msg.content.clone(),
                             });
                         }
@@ -168,19 +181,22 @@ impl<'a> SessionSearchState<'a> {
                 }
             }
         }
-        
+
         if query.trim().is_empty() {
             self.filtered_items = candidates;
         } else {
             let texts: Vec<String> = candidates.iter().map(|c| c.search_text.clone()).collect();
             let matches = self.searcher.fuzzy_match_files(&query, &texts);
-            
+
             // Re-map matches to items
-            self.filtered_items = matches.into_iter().filter_map(|(_score, text)| {
-                candidates.iter().find(|c| c.search_text == text).cloned()
-            }).collect();
+            self.filtered_items = matches
+                .into_iter()
+                .filter_map(|(_score, text)| {
+                    candidates.iter().find(|c| c.search_text == text).cloned()
+                })
+                .collect();
         }
-        
+
         if !self.filtered_items.is_empty() {
             self.list_state.select(Some(0));
         } else {
@@ -213,7 +229,6 @@ pub struct GitHistoryState {
     pub preview_lines: Vec<Line<'static>>,
 }
 
-
 #[derive(Clone)]
 pub struct SymbolItem {
     pub label: String,
@@ -233,7 +248,11 @@ pub struct SymbolsState<'a> {
 impl<'a> SymbolsState<'a> {
     pub fn new() -> Self {
         let mut input = TextArea::default();
-        input.set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Symbols "),
+        );
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
@@ -276,6 +295,31 @@ impl<'a> SymbolsState<'a> {
     }
 }
 
+#[derive(Clone)]
+pub struct BgTaskItem {
+    pub id: String,
+    pub status: String,
+    pub title: String,
+}
+
+pub struct BgTasksState {
+    pub items: Vec<BgTaskItem>,
+    pub list_state: ListState,
+    pub preview_lines: Vec<Line<'static>>,
+}
+
+impl BgTasksState {
+    pub fn new() -> Self {
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            items: Vec::new(),
+            list_state,
+            preview_lines: Vec::new(),
+        }
+    }
+}
+
 impl GitHistoryState {
     pub fn new() -> Self {
         let mut list_state = ListState::default();
@@ -304,6 +348,7 @@ pub struct App<'a> {
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
     pub symbols_state: SymbolsState<'a>,
+    pub bg_tasks: BgTasksState,
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState,
     pub sidebar_focus: SidebarFocus,
@@ -350,6 +395,7 @@ impl<'a> App<'a> {
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
             symbols_state: SymbolsState::new(),
+            bg_tasks: BgTasksState::new(),
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
             sidebar_focus: SidebarFocus::None,
@@ -378,7 +424,7 @@ impl<'a> App<'a> {
         if resume {
             let _ = agent_instance.load_last_session();
         }
-        
+
         // Load messages from agent history for the UI
         for msg in agent_instance.history() {
             if msg.role == "user" {
@@ -388,7 +434,8 @@ impl<'a> App<'a> {
             }
         }
         if !agent_instance.history().is_empty() {
-            self.messages.push("--- Restored previous session ---".to_string());
+            self.messages
+                .push("--- Restored previous session ---".to_string());
             let len = self.messages.len();
             self.list_state.select(Some(len.saturating_sub(1)));
         }
@@ -399,6 +446,7 @@ impl<'a> App<'a> {
         self.refresh_git_sidebar();
         self.refresh_git_history();
         self.refresh_project_symbols();
+        self.refresh_bg_tasks();
         if !self.git_sidebar.files.is_empty() {
             self.git_sidebar.list_state.select(Some(0));
             self.load_git_diff();
@@ -435,12 +483,17 @@ impl<'a> App<'a> {
 
             if let Some(event) = rx.recv().await {
                 match event {
-                    AppEvent::Ui(Event::Key(key_event)) if key_event.kind == KeyEventKind::Press => {
-                        self.handle_key_event(key_event, tx.clone(), agent.clone()).await;
+                    AppEvent::Ui(Event::Key(key_event))
+                        if key_event.kind == KeyEventKind::Press =>
+                    {
+                        self.handle_key_event(key_event, tx.clone(), agent.clone())
+                            .await;
                     }
                     AppEvent::Ui(Event::Mouse(mouse_event)) => {
                         match mouse_event.kind {
-                            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            crossterm::event::MouseEventKind::Down(
+                                crossterm::event::MouseButton::Left,
+                            ) => {
                                 if let Some(regions) = self.ui_regions {
                                     let col = mouse_event.column;
                                     let row = mouse_event.row;
@@ -480,24 +533,36 @@ impl<'a> App<'a> {
                             }
                             crossterm::event::MouseEventKind::ScrollDown => {
                                 if matches!(self.mode, AppMode::FuzzySearch) {
-                                    let max_scroll = self.fuzzy_state.preview_lines.len().saturating_sub(1) as u16;
-                                    self.fuzzy_state.preview_scroll = (self.fuzzy_state.preview_scroll + 3).min(max_scroll);
+                                    let max_scroll =
+                                        self.fuzzy_state.preview_lines.len().saturating_sub(1)
+                                            as u16;
+                                    self.fuzzy_state.preview_scroll =
+                                        (self.fuzzy_state.preview_scroll + 3).min(max_scroll);
                                 } else if matches!(self.mode, AppMode::SessionSearch) {
-                                    let max_scroll = self.session_state.preview_lines.len().saturating_sub(1) as u16;
-                                    self.session_state.preview_scroll = (self.session_state.preview_scroll + 3).min(max_scroll);
+                                    let max_scroll =
+                                        self.session_state.preview_lines.len().saturating_sub(1)
+                                            as u16;
+                                    self.session_state.preview_scroll =
+                                        (self.session_state.preview_scroll + 3).min(max_scroll);
                                 } else {
                                     // Chat mode list scrolling
                                     if let Some(selected) = self.list_state.selected() {
-                                        let next = if selected + 1 < self.messages.len() { selected + 1 } else { selected };
+                                        let next = if selected + 1 < self.messages.len() {
+                                            selected + 1
+                                        } else {
+                                            selected
+                                        };
                                         self.list_state.select(Some(next));
                                     }
                                 }
                             }
                             crossterm::event::MouseEventKind::ScrollUp => {
                                 if matches!(self.mode, AppMode::FuzzySearch) {
-                                    self.fuzzy_state.preview_scroll = self.fuzzy_state.preview_scroll.saturating_sub(3);
+                                    self.fuzzy_state.preview_scroll =
+                                        self.fuzzy_state.preview_scroll.saturating_sub(3);
                                 } else if matches!(self.mode, AppMode::SessionSearch) {
-                                    self.session_state.preview_scroll = self.session_state.preview_scroll.saturating_sub(3);
+                                    self.session_state.preview_scroll =
+                                        self.session_state.preview_scroll.saturating_sub(3);
                                 } else {
                                     // Chat mode list scrolling
                                     if let Some(selected) = self.list_state.selected() {
@@ -517,9 +582,9 @@ impl<'a> App<'a> {
                                 self.messages.pop();
                             }
                         }
-                        
+
                         self.messages.push(msg);
-                        
+
                         // Auto-scroll to bottom
                         let len = self.messages.len();
                         if len > 0 {
@@ -555,7 +620,7 @@ impl<'a> App<'a> {
                         self.messages.clear();
                         self.messages.push("[SYS] Welcome to rust-code".to_string());
                         self.messages.push("Type your prompt below and press Enter. Press Ctrl+P to search files, Ctrl+H history.".to_string());
-                        
+
                         for msg in locked_agent.history() {
                             if msg.role == "user" {
                                 self.messages.push(format!("> {}", msg.content));
@@ -563,7 +628,8 @@ impl<'a> App<'a> {
                                 self.messages.push(format!("Analysis: {}", msg.content));
                             }
                         }
-                        self.messages.push("--- Restored previous session ---".to_string());
+                        self.messages
+                            .push("--- Restored previous session ---".to_string());
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
@@ -577,20 +643,52 @@ impl<'a> App<'a> {
                     AppEvent::SuspendAndRun(path, line) => {
                         // Suspend TUI
                         crate::tui::restore()?;
-                        
+
                         // Open Editor
                         if let Err(e) = rc_tools::open_in_editor(&path, line) {
                             println!("Error opening editor: {}", e);
                             // Pause slightly so user can see error
                             std::thread::sleep(std::time::Duration::from_secs(2));
                         }
-                        
+
                         // Restore TUI
                         *terminal = crate::tui::init()?;
                         terminal.clear()?;
-                        
+
                         // Add a message about the file being edited
-                        self.messages.push(format!("[TOOL] Opened editor for {}", path));
+                        self.messages
+                            .push(format!("[TOOL] Opened editor for {}", path));
+                        let len = self.messages.len();
+                        self.list_state.select(Some(len.saturating_sub(1)));
+                    }
+                    AppEvent::SuspendAndShell(command) => {
+                        crate::tui::restore()?;
+
+                        let status = std::process::Command::new("sh")
+                            .arg("-lc")
+                            .arg(&command)
+                            .status();
+
+                        let status_message = match status {
+                            Ok(s) if s.success() => {
+                                format!("[TOOL] Ran shell command: {}", command)
+                            }
+                            Ok(s) => format!(
+                                "[ERR] Shell command failed (code {:?}): {}",
+                                s.code(),
+                                command
+                            ),
+                            Err(e) => {
+                                println!("Error running command: {}", e);
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                                format!("[ERR] Failed to run shell command: {}", command)
+                            }
+                        };
+
+                        *terminal = crate::tui::init()?;
+                        terminal.clear()?;
+
+                        self.messages.push(status_message);
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
@@ -615,7 +713,7 @@ impl<'a> App<'a> {
                 Constraint::Length(1),
             ])
             .split(area);
-        
+
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -635,24 +733,29 @@ impl<'a> App<'a> {
         // Style constants inspired by IDEs (like OpenCode)
         let border_style = Style::default().fg(Color::DarkGray);
         let user_color = Color::Rgb(100, 200, 255); // Light Blue
-        let ai_color = Color::Rgb(200, 200, 200);   // Light Gray
+        let ai_color = Color::Rgb(200, 200, 200); // Light Gray
         let _tool_color = Color::Rgb(100, 200, 100); // Green
         let error_color = Color::Rgb(255, 100, 100); // Red
 
-        let items: Vec<ListItem> = self.messages
+        let items: Vec<ListItem> = self
+            .messages
             .iter()
             .map(|m| {
                 // Determine styling based on prefix
                 let style = if m.starts_with(">") {
                     Style::default().fg(user_color).add_modifier(Modifier::BOLD)
                 } else if m.starts_with("[THINK]") {
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC)
                 } else if m.starts_with("Analysis:") {
                     Style::default().fg(ai_color)
                 } else if m.starts_with("[TOOL]") {
                     Style::default().fg(Color::Gray)
                 } else if m.starts_with("[ERR]") {
-                    Style::default().fg(error_color).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(error_color)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -660,29 +763,30 @@ impl<'a> App<'a> {
                 // Word wrap the text to fit within the chat area width.
                 // We subtract 2 for the borders.
                 let max_width = (left_chunks[0].width.saturating_sub(2) as usize).max(10);
-                
+
                 let mut text_lines = Vec::new();
-                
+
                 for original_line in m.lines() {
                     let wrapped_lines = textwrap::wrap(original_line, max_width);
                     for line in wrapped_lines {
                         text_lines.push(Line::from(Span::styled(line.to_string(), style)));
                     }
                 }
-                
+
                 // Add an empty line between messages
                 text_lines.push(Line::from(""));
-                
+
                 ListItem::new(Text::from(text_lines))
             })
             .collect();
-            
-        let chat_list = List::new(items)
-            .block(Block::default()
+
+        let chat_list = List::new(items).block(
+            Block::default()
                 .title(" rust-code :: tty ")
                 .borders(Borders::ALL)
-                .border_style(border_style));
-        
+                .border_style(border_style),
+        );
+
         frame.render_stateful_widget(chat_list, left_chunks[0], &mut self.list_state);
 
         // Input Area
@@ -693,7 +797,7 @@ impl<'a> App<'a> {
                 .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "),
         );
         frame.render_widget(self.textarea.widget(), left_chunks[1]);
-        
+
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -710,21 +814,30 @@ impl<'a> App<'a> {
             input: left_chunks[1],
             channels: sidebar_chunks[1],
         });
-            
+
         // Plan Panel
-        let mut plan_lines = vec![Line::from(Span::styled("Current Plan", Style::default().add_modifier(Modifier::BOLD)))];
+        let mut plan_lines = vec![Line::from(Span::styled(
+            "Current Plan",
+            Style::default().add_modifier(Modifier::BOLD),
+        ))];
         plan_lines.push(Line::from(""));
         for p in &self.agent_plan {
             plan_lines.push(Line::from(format!("- {}", p)).style(Style::default().fg(Color::Gray)));
         }
         if self.agent_plan.is_empty() {
-            plan_lines.push(Line::from("Waiting for task...").style(Style::default().fg(Color::DarkGray)));
+            plan_lines.push(
+                Line::from("Waiting for task...").style(Style::default().fg(Color::DarkGray)),
+            );
         }
-        
-        let plan_widget = Paragraph::new(plan_lines)
-            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" SGR Plan "));
+
+        let plan_widget = Paragraph::new(plan_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(" SGR Plan "),
+        );
         frame.render_widget(plan_widget, sidebar_chunks[0]);
-        
+
         // Channels panel
         let channels_title = if self.sidebar_focus == SidebarFocus::Channels {
             " Channels [FOCUSED - UP/DN select, Enter open] "
@@ -741,6 +854,7 @@ impl<'a> App<'a> {
                     0 => format!(" ({})", self.git_sidebar.files.len()),
                     1 => format!(" ({})", self.git_history.items.len()),
                     4 => format!(" ({})", self.symbols_state.all_items.len()),
+                    5 => format!(" ({})", self.bg_tasks.items.len()),
                     _ => String::new(),
                 };
                 ListItem::new(format!("{}{}", name, suffix))
@@ -758,21 +872,37 @@ impl<'a> App<'a> {
                     })
                     .title(channels_title),
             )
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
         frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
 
         // Channel status panel
         let info_lines = vec![
-            Line::from(format!("git: {}  hist: {}", self.git_sidebar.files.len(), self.git_history.items.len())),
-            Line::from(format!("sym: {}", self.symbols_state.all_items.len())),
+            Line::from(format!(
+                "git: {}  hist: {}",
+                self.git_sidebar.files.len(),
+                self.git_history.items.len()
+            )),
+            Line::from(format!(
+                "sym: {}  bg: {}",
+                self.symbols_state.all_items.len(),
+                self.bg_tasks.items.len()
+            )),
             Line::from("Enter=open channel"),
             Line::from("in channel: Enter=preview"),
             Line::from("Ctrl+I=insert  Ctrl+O=open"),
         ];
         frame.render_widget(
-            Paragraph::new(info_lines)
-                .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Channel Status ")),
+            Paragraph::new(info_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style)
+                    .title(" Channel Status "),
+            ),
             sidebar_chunks[2],
         );
 
@@ -784,6 +914,7 @@ impl<'a> App<'a> {
             AppMode::GitDiffSearch => "MODE: GIT DIFF",
             AppMode::GitHistorySearch => "MODE: GIT HISTORY",
             AppMode::ProjectSymbolsSearch => "MODE: PROJECT SYMBOLS",
+            AppMode::BgTasksSearch => "MODE: BG TASKS",
         };
         let focus_text = if self.sidebar_focus == SidebarFocus::Channels {
             "FOCUS: CHANNELS"
@@ -791,27 +922,29 @@ impl<'a> App<'a> {
             "FOCUS: INPUT"
         };
         let status_line = format!(
-            " {} | {} | Git files: {} | History: {} | Symbols: {} ",
+            " {} | {} | Git: {} | Hist: {} | Sym: {} | BG: {} ",
             mode_text,
             focus_text,
             self.git_sidebar.files.len(),
             self.git_history.items.len(),
-            self.symbols_state.all_items.len()
+            self.symbols_state.all_items.len(),
+            self.bg_tasks.items.len()
         );
         frame.render_widget(
-            Paragraph::new(status_line)
-                .style(Style::default().fg(Color::Black).bg(Color::Gray)),
+            Paragraph::new(status_line).style(Style::default().fg(Color::Black).bg(Color::Gray)),
             root_chunks[1],
         );
 
-        let hotkeys_line =
-            " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 RefreshGit  F6 Symbols  F10 Channels  F12 Quit ";
+        let hotkeys_line = " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 Refresh  F6 Symbols  F7 BG Tasks  F10 Channels  F12 Quit ";
         frame.render_widget(
-            Paragraph::new(hotkeys_line)
-                .style(Style::default().fg(Color::Black).bg(Color::Rgb(180, 180, 180))),
+            Paragraph::new(hotkeys_line).style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 180, 180)),
+            ),
             root_chunks[2],
         );
-        
+
         // Render Popup if active
         match self.mode {
             AppMode::FuzzySearch => self.draw_fuzzy_popup(frame, area),
@@ -819,8 +952,68 @@ impl<'a> App<'a> {
             AppMode::GitDiffSearch => self.draw_git_diff_popup(frame, area),
             AppMode::GitHistorySearch => self.draw_git_history_popup(frame, area),
             AppMode::ProjectSymbolsSearch => self.draw_symbols_popup(frame, area),
+            AppMode::BgTasksSearch => self.draw_bg_tasks_popup(frame, area),
             AppMode::Chat => {}
         }
+    }
+
+    fn draw_bg_tasks_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 85) / 100;
+        let popup_height = (area.height * 85) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" BG Tasks Channel (Esc close, Enter preview, Ctrl+I insert, Ctrl+O attach) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .split(inner_area);
+
+        let items: Vec<ListItem> = if self.bg_tasks.items.is_empty() {
+            vec![ListItem::new("No tasks")]
+        } else {
+            self.bg_tasks
+                .items
+                .iter()
+                .map(|t| ListItem::new(t.title.as_str()))
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Tasks (tmux sessions) "),
+            )
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, chunks[0], &mut self.bg_tasks.list_state);
+
+        let preview = List::new(
+            self.bg_tasks
+                .preview_lines
+                .iter()
+                .map(|l| ListItem::new(l.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .block(Block::default().borders(Borders::ALL).title(" Logs "));
+        frame.render_widget(preview, chunks[1]);
     }
 
     fn draw_symbols_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -833,12 +1026,17 @@ impl<'a> App<'a> {
         frame.render_widget(Clear, popup_area);
 
         let popup_block = Block::default()
-            .title(" Project Symbols Channel (Esc close, Enter preview, Ctrl+I insert, Ctrl+O open) ")
+            .title(
+                " Project Symbols Channel (Esc close, Enter preview, Ctrl+I insert, Ctrl+O open) ",
+            )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
 
-        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)])
@@ -863,7 +1061,11 @@ impl<'a> App<'a> {
 
         let list = List::new(list_items)
             .block(Block::default().borders(Borders::ALL).title(" Symbols "))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
         frame.render_stateful_widget(list, main[0], &mut self.symbols_state.list_state);
 
@@ -893,7 +1095,10 @@ impl<'a> App<'a> {
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
 
-        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -911,7 +1116,11 @@ impl<'a> App<'a> {
 
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(" History "))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
         frame.render_stateful_widget(list, chunks[0], &mut self.git_history.list_state);
 
@@ -941,7 +1150,10 @@ impl<'a> App<'a> {
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
 
-        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -958,8 +1170,16 @@ impl<'a> App<'a> {
         };
 
         let file_list = List::new(file_items)
-            .block(Block::default().borders(Borders::ALL).title(" Changed Files "))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Changed Files "),
+            )
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
         frame.render_stateful_widget(file_list, chunks[0], &mut self.git_sidebar.list_state);
 
@@ -973,95 +1193,120 @@ impl<'a> App<'a> {
                 .collect()
         };
 
-        let preview = List::new(preview_items)
-            .block(Block::default().borders(Borders::ALL).title(" Diff Preview "));
+        let preview = List::new(preview_items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Diff Preview "),
+        );
         frame.render_widget(preview, chunks[1]);
     }
-    
+
     fn draw_session_popup(&mut self, frame: &mut Frame, area: Rect) {
         // Calculate popup area
         let popup_width = (area.width * 80) / 100;
         let popup_height = (area.height * 80) / 100;
         let popup_x = area.x + (area.width - popup_width) / 2;
         let popup_y = area.y + (area.height - popup_height) / 2;
-        
+
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-        
+
         frame.render_widget(Clear, popup_area);
-        
+
         let title = match self.session_state.mode {
-            SessionSearchMode::BySession => " Session History [Mode: Sessions] (Esc cancel, Tab switch mode, Enter load) ",
-            SessionSearchMode::ByMessage => " Session History [Mode: Messages] (Esc cancel, Tab switch mode, Enter load) ",
+            SessionSearchMode::BySession => {
+                " Session History [Mode: Sessions] (Esc cancel, Tab switch mode, Enter load) "
+            }
+            SessionSearchMode::ByMessage => {
+                " Session History [Mode: Messages] (Esc cancel, Tab switch mode, Enter load) "
+            }
         };
 
         let popup_block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Green));
-            
+
         frame.render_widget(popup_block, popup_area);
-        
-        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
-            
+
         frame.render_widget(self.session_state.input.widget(), chunks[0]);
-        
+
         let bottom_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(chunks[1]);
-            
-        let list_items: Vec<ListItem> = self.session_state.filtered_items
+
+        let list_items: Vec<ListItem> = self
+            .session_state
+            .filtered_items
             .iter()
             .map(|item| ListItem::new(item.display.as_str()))
             .collect();
-            
+
         let session_list = List::new(list_items)
             .block(Block::default().borders(Borders::ALL).title(" Sessions "))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
-            
-        frame.render_stateful_widget(session_list, bottom_chunks[0], &mut self.session_state.list_state);
-        
-        let preview_items: Vec<ListItem> = self.session_state.preview_lines
+
+        frame.render_stateful_widget(
+            session_list,
+            bottom_chunks[0],
+            &mut self.session_state.list_state,
+        );
+
+        let preview_items: Vec<ListItem> = self
+            .session_state
+            .preview_lines
             .iter()
             .map(|line| ListItem::new(line.clone()))
             .collect();
-            
+
         let mut list_state = ListState::default();
         list_state.select(Some(self.session_state.preview_scroll as usize));
-            
+
         let preview = List::new(preview_items)
             .block(Block::default().borders(Borders::ALL).title(" Preview "));
-            
+
         frame.render_stateful_widget(preview, bottom_chunks[1], &mut list_state);
     }
-    
+
     fn draw_fuzzy_popup(&mut self, frame: &mut Frame, area: Rect) {
         // Calculate popup area (80% width, 80% height, centered)
         let popup_width = (area.width * 80) / 100;
         let popup_height = (area.height * 80) / 100;
         let popup_x = area.x + (area.width - popup_width) / 2;
         let popup_y = area.y + (area.height - popup_height) / 2;
-        
+
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-        
+
         // Clear the background
         frame.render_widget(Clear, popup_area);
-        
+
         // Draw popup container
         let popup_block = Block::default()
             .title(" Fuzzy File Search (Esc to cancel, Enter to select) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
-            
+
         frame.render_widget(popup_block, popup_area);
-        
+
         // Layout inside popup
-        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1069,10 +1314,10 @@ impl<'a> App<'a> {
                 Constraint::Min(0),    // List & Preview
             ])
             .split(inner_area);
-            
+
         // Render input
         frame.render_widget(self.fuzzy_state.input.widget(), chunks[0]);
-        
+
         // Layout for List & Preview
         let bottom_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -1081,32 +1326,44 @@ impl<'a> App<'a> {
                 Constraint::Percentage(60), // Preview
             ])
             .split(chunks[1]);
-            
+
         // Render List
-        let list_items: Vec<ListItem> = self.fuzzy_state.filtered_files
+        let list_items: Vec<ListItem> = self
+            .fuzzy_state
+            .filtered_files
             .iter()
             .map(|path| ListItem::new(path.as_str()))
             .collect();
-            
+
         let file_list = List::new(list_items)
             .block(Block::default().borders(Borders::ALL).title(" Files "))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
             .highlight_symbol("> ");
-            
-        frame.render_stateful_widget(file_list, bottom_chunks[0], &mut self.fuzzy_state.list_state);
-        
-        let preview_items: Vec<ListItem> = self.fuzzy_state.preview_lines
+
+        frame.render_stateful_widget(
+            file_list,
+            bottom_chunks[0],
+            &mut self.fuzzy_state.list_state,
+        );
+
+        let preview_items: Vec<ListItem> = self
+            .fuzzy_state
+            .preview_lines
             .iter()
             .map(|line| ListItem::new(line.clone()))
             .collect();
-            
+
         let mut list_state = ListState::default();
         list_state.select(Some(self.fuzzy_state.preview_scroll as usize));
-            
+
         // Render Preview
         let preview = List::new(preview_items)
             .block(Block::default().borders(Borders::ALL).title(" Preview "));
-            
+
         frame.render_stateful_widget(preview, bottom_chunks[1], &mut list_state);
     }
 
@@ -1121,25 +1378,38 @@ impl<'a> App<'a> {
                         Ok(content) => {
                             // Truncate if too long
                             let content_to_highlight = if content.chars().count() > 5000 {
-                                format!("{}...\n\n[File truncated for preview]", &content.chars().take(5000).collect::<String>())
+                                format!(
+                                    "{}...\n\n[File truncated for preview]",
+                                    &content.chars().take(5000).collect::<String>()
+                                )
                             } else {
                                 content
                             };
-                            
+
                             // Highlight in a blocking task since it's CPU intensive
                             let lines = tokio::task::spawn_blocking(move || {
                                 let highlighter = CodeHighlighter::new();
                                 // We need to convert Line<'a> to Line<'static> to pass it through the channel
-                                let highlighted = highlighter.highlight(&content_to_highlight, &path);
-                                let static_lines = highlighted.into_iter().map(|line| {
-                                    let static_spans: Vec<Span<'static>> = line.spans.into_iter().map(|span| {
-                                        Span::styled(span.content.to_string(), span.style)
-                                    }).collect();
-                                    Line::from(static_spans)
-                                }).collect();
+                                let highlighted =
+                                    highlighter.highlight(&content_to_highlight, &path);
+                                let static_lines = highlighted
+                                    .into_iter()
+                                    .map(|line| {
+                                        let static_spans: Vec<Span<'static>> = line
+                                            .spans
+                                            .into_iter()
+                                            .map(|span| {
+                                                Span::styled(span.content.to_string(), span.style)
+                                            })
+                                            .collect();
+                                        Line::from(static_spans)
+                                    })
+                                    .collect();
                                 static_lines
-                            }).await.unwrap_or_default();
-                            
+                            })
+                            .await
+                            .unwrap_or_default();
+
                             let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
                         }
                         Err(e) => {
@@ -1158,7 +1428,7 @@ impl<'a> App<'a> {
             if let Some(item) = self.session_state.filtered_items.get(selected) {
                 let path = item.path.clone();
                 let entries = self.session_state.all_entries.clone();
-                
+
                 tokio::spawn(async move {
                     if let Some(entry) = entries.iter().find(|e| e.path == path) {
                         let mut lines = Vec::new();
@@ -1168,9 +1438,12 @@ impl<'a> App<'a> {
                             } else {
                                 ("AGENT", Color::Yellow)
                             };
-                            
-                            lines.push(Line::from(Span::styled(role_str, Style::default().fg(color).add_modifier(Modifier::BOLD))));
-                            
+
+                            lines.push(Line::from(Span::styled(
+                                role_str,
+                                Style::default().fg(color).add_modifier(Modifier::BOLD),
+                            )));
+
                             // Split content by lines and wrap them to 80 chars max for preview
                             for line_str in msg.content.lines() {
                                 let wrapped_lines = textwrap::wrap(line_str, 80);
@@ -1254,7 +1527,9 @@ impl<'a> App<'a> {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if !line.trim().is_empty() {
-                    self.git_history.items.push(format!("commit: {}", line.trim()));
+                    self.git_history
+                        .items
+                        .push(format!("commit: {}", line.trim()));
                 }
             }
         }
@@ -1275,12 +1550,22 @@ impl<'a> App<'a> {
                     let hash = rest.split_whitespace().next().unwrap_or_default();
                     if !hash.is_empty() {
                         if let Ok(output) = std::process::Command::new("git")
-                            .args(["--no-pager", "show", "--no-color", "--stat", "-n", "1", hash])
+                            .args([
+                                "--no-pager",
+                                "show",
+                                "--no-color",
+                                "--stat",
+                                "-n",
+                                "1",
+                                hash,
+                            ])
                             .output()
                         {
                             let txt = String::from_utf8_lossy(&output.stdout);
                             for line in txt.lines().take(80) {
-                                self.git_history.preview_lines.push(Line::from(line.to_string()));
+                                self.git_history
+                                    .preview_lines
+                                    .push(Line::from(line.to_string()));
                             }
                             return;
                         }
@@ -1294,7 +1579,9 @@ impl<'a> App<'a> {
                     {
                         let txt = String::from_utf8_lossy(&output.stdout);
                         for line in txt.lines() {
-                            self.git_history.preview_lines.push(Line::from(line.to_string()));
+                            self.git_history
+                                .preview_lines
+                                .push(Line::from(line.to_string()));
                         }
                         return;
                     }
@@ -1354,12 +1641,14 @@ impl<'a> App<'a> {
             if let Some(item) = self.symbols_state.filtered_items.get(selected) {
                 let file = item.file.clone();
                 let line = item.line;
-                self.symbols_state
-                    .preview_lines
-                    .push(Line::from(format!("{}:{}", file, line)).style(Style::default().add_modifier(Modifier::BOLD)));
-                self.symbols_state
-                    .preview_lines
-                    .push(Line::from(format!("symbol: {}", item.label)).style(Style::default().fg(Color::DarkGray)));
+                self.symbols_state.preview_lines.push(
+                    Line::from(format!("{}:{}", file, line))
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                );
+                self.symbols_state.preview_lines.push(
+                    Line::from(format!("symbol: {}", item.label))
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
                 self.symbols_state.preview_lines.push(Line::from(""));
 
                 // Show local context around symbol with syntax highlighting
@@ -1383,7 +1672,9 @@ impl<'a> App<'a> {
                             format!("  {:>5} | ", actual)
                         };
                         let prefix_style = if actual == line {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::DarkGray)
                         };
@@ -1401,9 +1692,85 @@ impl<'a> App<'a> {
         }
     }
 
+    fn refresh_bg_tasks(&mut self) {
+        self.bg_tasks.items.clear();
+        self.bg_tasks.preview_lines.clear();
+
+        if let Ok(output) = std::process::Command::new("tmux")
+            .args([
+                "list-sessions",
+                "-F",
+                "#{session_name}|#{session_attached}|#{session_windows}",
+            ])
+            .output()
+        {
+            let txt = String::from_utf8_lossy(&output.stdout);
+            for line in txt.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 3 {
+                    let id = parts[0].to_string();
+                    let attached = if parts[1] == "1" {
+                        "attached"
+                    } else {
+                        "detached"
+                    };
+                    let title = format!("{} [{}] ({} win)", parts[0], attached, parts[2]);
+                    self.bg_tasks.items.push(BgTaskItem {
+                        id,
+                        status: attached.to_string(),
+                        title,
+                    });
+                }
+            }
+        }
+
+        if self.bg_tasks.items.is_empty() {
+            self.bg_tasks.preview_lines.push(Line::from(
+                "No tmux sessions. Start one with: tmux new -s mytask",
+            ));
+            self.bg_tasks.list_state.select(None);
+        } else {
+            self.bg_tasks.list_state.select(Some(0));
+            self.load_bg_task_preview();
+        }
+    }
+
+    fn load_bg_task_preview(&mut self) {
+        self.bg_tasks.preview_lines.clear();
+        if let Some(selected) = self.bg_tasks.list_state.selected() {
+            if let Some(item) = self.bg_tasks.items.get(selected) {
+                self.bg_tasks.preview_lines.push(
+                    Line::from(format!("session: {}", item.id))
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                );
+                self.bg_tasks.preview_lines.push(
+                    Line::from(format!("status: {}", item.status))
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+                self.bg_tasks.preview_lines.push(Line::from(""));
+
+                if let Ok(output) = std::process::Command::new("tmux")
+                    .args(["capture-pane", "-pt", &item.id, "-S", "-120"])
+                    .output()
+                {
+                    let txt = String::from_utf8_lossy(&output.stdout);
+                    for line in txt.lines().take(120) {
+                        self.bg_tasks
+                            .preview_lines
+                            .push(Line::from(line.to_string()));
+                    }
+                } else {
+                    self.bg_tasks
+                        .preview_lines
+                        .push(Line::from("Unable to read tmux pane (is tmux installed?)"));
+                }
+            }
+        }
+    }
+
     fn load_git_diff(&mut self) {
         self.git_sidebar.selected_diff.clear();
-        
+
         if let Some(selected) = self.git_sidebar.list_state.selected() {
             if let Some((status, path)) = self.git_sidebar.files.get(selected) {
                 let status = status.clone();
@@ -1411,25 +1778,30 @@ impl<'a> App<'a> {
                 // Load diff synchronously for simplicity in sidebar
                 if status == "?" {
                     // Untracked files have no git diff; preview file content as additions.
-                    self.git_sidebar
-                        .selected_diff
-                        .push(Line::from(format!("Untracked file: {}", path)).style(Style::default().fg(Color::Yellow)));
+                    self.git_sidebar.selected_diff.push(
+                        Line::from(format!("Untracked file: {}", path))
+                            .style(Style::default().fg(Color::Yellow)),
+                    );
                     self.git_sidebar.selected_diff.push(Line::from(""));
                     match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             for line in content.lines().take(50) {
                                 self.git_sidebar.selected_diff.push(
-                                    Line::from(format!("+{}", line)).style(Style::default().fg(Color::Green)),
+                                    Line::from(format!("+{}", line))
+                                        .style(Style::default().fg(Color::Green)),
                                 );
                             }
                             if content.lines().count() > 50 {
-                                self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
+                                self.git_sidebar
+                                    .selected_diff
+                                    .push(Line::from("... (truncated)"));
                             }
                         }
                         Err(e) => {
-                            self.git_sidebar
-                                .selected_diff
-                                .push(Line::from(format!("Error reading file: {}", e)).style(Style::default().fg(Color::Red)));
+                            self.git_sidebar.selected_diff.push(
+                                Line::from(format!("Error reading file: {}", e))
+                                    .style(Style::default().fg(Color::Red)),
+                            );
                         }
                     }
                 } else {
@@ -1441,23 +1813,31 @@ impl<'a> App<'a> {
                         Ok(output) => {
                             let diff = String::from_utf8_lossy(&output.stdout);
                             for line in diff.lines().take(50) {
-                                let styled_line = if line.starts_with('+') && !line.starts_with("+++") {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Green))
-                                } else if line.starts_with('-') && !line.starts_with("---") {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Red))
-                                } else if line.starts_with('@') {
-                                    Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
-                                } else {
-                                    Line::from(line.to_string())
-                                };
+                                let styled_line =
+                                    if line.starts_with('+') && !line.starts_with("+++") {
+                                        Line::from(line.to_string())
+                                            .style(Style::default().fg(Color::Green))
+                                    } else if line.starts_with('-') && !line.starts_with("---") {
+                                        Line::from(line.to_string())
+                                            .style(Style::default().fg(Color::Red))
+                                    } else if line.starts_with('@') {
+                                        Line::from(line.to_string())
+                                            .style(Style::default().fg(Color::Cyan))
+                                    } else {
+                                        Line::from(line.to_string())
+                                    };
                                 self.git_sidebar.selected_diff.push(styled_line);
                             }
                             if diff.lines().count() > 50 {
-                                self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
+                                self.git_sidebar
+                                    .selected_diff
+                                    .push(Line::from("... (truncated)"));
                             }
                         }
                         Err(_) => {
-                            self.git_sidebar.selected_diff.push(Line::from("Error loading diff"));
+                            self.git_sidebar
+                                .selected_diff
+                                .push(Line::from("Error loading diff"));
                         }
                     }
                 }
@@ -1466,10 +1846,10 @@ impl<'a> App<'a> {
     }
 
     async fn handle_key_event(
-        &mut self, 
-        key_event: event::KeyEvent, 
+        &mut self,
+        key_event: event::KeyEvent,
         tx: mpsc::Sender<AppEvent>,
-        agent: Arc<Mutex<Agent>>
+        agent: Arc<Mutex<Agent>>,
     ) {
         match self.mode {
             AppMode::Chat => self.handle_chat_key_event(key_event, tx, agent).await,
@@ -1478,24 +1858,97 @@ impl<'a> App<'a> {
             AppMode::GitDiffSearch => self.handle_git_diff_key_event(key_event, tx).await,
             AppMode::GitHistorySearch => self.handle_git_history_key_event(key_event).await,
             AppMode::ProjectSymbolsSearch => self.handle_symbols_key_event(key_event, tx).await,
+            AppMode::BgTasksSearch => self.handle_bg_tasks_key_event(key_event, tx).await,
         }
     }
 
-    async fn handle_symbols_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+    async fn handle_bg_tasks_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+    ) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    let next = if selected + 1 < self.bg_tasks.items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
+                    self.bg_tasks.list_state.select(Some(next));
+                    self.load_bg_task_preview();
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.bg_tasks.items.len().saturating_sub(1)
+                    };
+                    self.bg_tasks.list_state.select(Some(prev));
+                    self.load_bg_task_preview();
+                }
+            }
+            KeyCode::Enter => {
+                self.load_bg_task_preview();
+            }
+            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    if let Some(item) = self.bg_tasks.items.get(selected) {
+                        let _ = tx
+                            .send(AppEvent::SuspendAndShell(format!(
+                                "tmux attach -t {}",
+                                item.id
+                            )))
+                            .await;
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    if let Some(item) = self.bg_tasks.items.get(selected) {
+                        self.textarea.insert_str(&format!("tmux:{}", item.id));
+                        self.textarea.insert_str(" ");
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {}
+        }
+    }
+
+    async fn handle_symbols_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+    ) {
         match key_event.code {
             KeyCode::Esc => {
                 self.mode = AppMode::Chat;
             }
             KeyCode::Down => {
                 if let Some(selected) = self.symbols_state.list_state.selected() {
-                    let next = if selected + 1 < self.symbols_state.filtered_items.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.symbols_state.filtered_items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
                     self.symbols_state.list_state.select(Some(next));
                     self.load_symbol_preview();
                 }
             }
             KeyCode::Up => {
                 if let Some(selected) = self.symbols_state.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.symbols_state.filtered_items.len().saturating_sub(1) };
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.symbols_state.filtered_items.len().saturating_sub(1)
+                    };
                     self.symbols_state.list_state.select(Some(prev));
                     self.load_symbol_preview();
                 }
@@ -1506,7 +1959,12 @@ impl<'a> App<'a> {
             KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.symbols_state.list_state.selected() {
                     if let Some(item) = self.symbols_state.filtered_items.get(selected) {
-                        let _ = tx.send(AppEvent::SuspendAndRun(item.file.clone(), Some(item.line as i64))).await;
+                        let _ = tx
+                            .send(AppEvent::SuspendAndRun(
+                                item.file.clone(),
+                                Some(item.line as i64),
+                            ))
+                            .await;
                     }
                 }
                 self.mode = AppMode::Chat;
@@ -1537,14 +1995,22 @@ impl<'a> App<'a> {
             }
             KeyCode::Down => {
                 if let Some(selected) = self.git_history.list_state.selected() {
-                    let next = if selected + 1 < self.git_history.items.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.git_history.items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
                     self.git_history.list_state.select(Some(next));
                     self.load_git_history_preview();
                 }
             }
             KeyCode::Up => {
                 if let Some(selected) = self.git_history.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.git_history.items.len().saturating_sub(1) };
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.git_history.items.len().saturating_sub(1)
+                    };
                     self.git_history.list_state.select(Some(prev));
                     self.load_git_history_preview();
                 }
@@ -1565,21 +2031,33 @@ impl<'a> App<'a> {
         }
     }
 
-    async fn handle_git_diff_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+    async fn handle_git_diff_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+    ) {
         match key_event.code {
             KeyCode::Esc => {
                 self.mode = AppMode::Chat;
             }
             KeyCode::Down => {
                 if let Some(selected) = self.git_sidebar.list_state.selected() {
-                    let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.git_sidebar.files.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
                     self.git_sidebar.list_state.select(Some(next));
                     self.load_git_diff();
                 }
             }
             KeyCode::Up => {
                 if let Some(selected) = self.git_sidebar.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.git_sidebar.files.len().saturating_sub(1)
+                    };
                     self.git_sidebar.list_state.select(Some(prev));
                     self.load_git_diff();
                 }
@@ -1608,11 +2086,18 @@ impl<'a> App<'a> {
             _ => {}
         }
     }
-    
-    async fn handle_session_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>, agent: Arc<Mutex<Agent>>) {
+
+    async fn handle_session_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+        agent: Arc<Mutex<Agent>>,
+    ) {
         match key_event.code {
             KeyCode::Esc => self.mode = AppMode::Chat,
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => self.mode = AppMode::Chat,
+            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = AppMode::Chat
+            }
             KeyCode::Tab => {
                 self.session_state.mode = match self.session_state.mode {
                     SessionSearchMode::BySession => SessionSearchMode::ByMessage,
@@ -1621,26 +2106,42 @@ impl<'a> App<'a> {
                 self.session_state.update_search();
                 self.load_session_preview(tx);
             }
-            KeyCode::Down | KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j')
+                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    || key_event.code == KeyCode::Down =>
+            {
                 if let Some(selected) = self.session_state.list_state.selected() {
-                    let next = if selected + 1 < self.session_state.filtered_items.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.session_state.filtered_items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
                     self.session_state.list_state.select(Some(next));
                     self.load_session_preview(tx);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k')
+                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    || key_event.code == KeyCode::Up =>
+            {
                 if let Some(selected) = self.session_state.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.session_state.filtered_items.len().saturating_sub(1) };
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.session_state.filtered_items.len().saturating_sub(1)
+                    };
                     self.session_state.list_state.select(Some(prev));
                     self.load_session_preview(tx);
                 }
             }
             KeyCode::PageDown => {
                 let max_scroll = self.session_state.preview_lines.len().saturating_sub(1) as u16;
-                self.session_state.preview_scroll = (self.session_state.preview_scroll + 10).min(max_scroll);
+                self.session_state.preview_scroll =
+                    (self.session_state.preview_scroll + 10).min(max_scroll);
             }
             KeyCode::PageUp => {
-                self.session_state.preview_scroll = self.session_state.preview_scroll.saturating_sub(10);
+                self.session_state.preview_scroll =
+                    self.session_state.preview_scroll.saturating_sub(10);
             }
             KeyCode::Enter => {
                 if let Some(selected) = self.session_state.list_state.selected() {
@@ -1660,8 +2161,12 @@ impl<'a> App<'a> {
             }
         }
     }
-    
-    async fn handle_fuzzy_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+
+    async fn handle_fuzzy_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+    ) {
         match key_event.code {
             KeyCode::Esc => {
                 self.mode = AppMode::Chat;
@@ -1669,26 +2174,42 @@ impl<'a> App<'a> {
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::Chat;
             }
-            KeyCode::Down | KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j')
+                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    || key_event.code == KeyCode::Down =>
+            {
                 if let Some(selected) = self.fuzzy_state.list_state.selected() {
-                    let next = if selected + 1 < self.fuzzy_state.filtered_files.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.fuzzy_state.filtered_files.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
                     self.fuzzy_state.list_state.select(Some(next));
                     self.load_preview(tx);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k')
+                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    || key_event.code == KeyCode::Up =>
+            {
                 if let Some(selected) = self.fuzzy_state.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.fuzzy_state.filtered_files.len().saturating_sub(1) };
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.fuzzy_state.filtered_files.len().saturating_sub(1)
+                    };
                     self.fuzzy_state.list_state.select(Some(prev));
                     self.load_preview(tx);
                 }
             }
             KeyCode::PageDown => {
                 let max_scroll = self.fuzzy_state.preview_lines.len().saturating_sub(1) as u16;
-                self.fuzzy_state.preview_scroll = (self.fuzzy_state.preview_scroll + 10).min(max_scroll);
+                self.fuzzy_state.preview_scroll =
+                    (self.fuzzy_state.preview_scroll + 10).min(max_scroll);
             }
             KeyCode::PageUp => {
-                self.fuzzy_state.preview_scroll = self.fuzzy_state.preview_scroll.saturating_sub(10);
+                self.fuzzy_state.preview_scroll =
+                    self.fuzzy_state.preview_scroll.saturating_sub(10);
             }
             KeyCode::Enter => {
                 // Select file and insert into chat
@@ -1714,7 +2235,7 @@ impl<'a> App<'a> {
         &mut self,
         key_event: event::KeyEvent,
         tx: mpsc::Sender<AppEvent>,
-        agent: Arc<Mutex<Agent>>
+        agent: Arc<Mutex<Agent>>,
     ) {
         // Handle sidebar-focused mode first
         if self.sidebar_focus == SidebarFocus::Channels {
@@ -1725,14 +2246,22 @@ impl<'a> App<'a> {
                 }
                 KeyCode::Down => {
                     if let Some(selected) = self.channel_state.selected() {
-                        let next = if selected + 1 < self.channel_items.len() { selected + 1 } else { 0 };
+                        let next = if selected + 1 < self.channel_items.len() {
+                            selected + 1
+                        } else {
+                            0
+                        };
                         self.channel_state.select(Some(next));
                     }
                     return;
                 }
                 KeyCode::Up => {
                     if let Some(selected) = self.channel_state.selected() {
-                        let prev = if selected > 0 { selected - 1 } else { self.channel_items.len().saturating_sub(1) };
+                        let prev = if selected > 0 {
+                            selected - 1
+                        } else {
+                            self.channel_items.len().saturating_sub(1)
+                        };
                         self.channel_state.select(Some(prev));
                     }
                     return;
@@ -1754,7 +2283,8 @@ impl<'a> App<'a> {
                                     let tx_clone = tx.clone();
                                     tokio::spawn(async move {
                                         if let Ok(files) = FuzzySearcher::get_all_files().await {
-                                            let _ = tx_clone.send(AppEvent::FilesLoaded(files)).await;
+                                            let _ =
+                                                tx_clone.send(AppEvent::FilesLoaded(files)).await;
                                         }
                                     });
                                 } else {
@@ -1765,21 +2295,39 @@ impl<'a> App<'a> {
                             3 => {
                                 self.mode = AppMode::SessionSearch;
                                 self.session_state.input = TextArea::default();
-                                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
+                                self.session_state.input.set_block(
+                                    Block::default()
+                                        .borders(Borders::ALL)
+                                        .title(" Search Sessions (Tab to toggle mode) "),
+                                );
                                 let tx_clone = tx.clone();
                                 tokio::spawn(async move {
-                                    if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
+                                    if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await
+                                    {
                                         let mut sessions = Vec::new();
                                         while let Ok(Some(entry)) = entries.next_entry().await {
                                             let path = entry.path();
-                                            if path.extension().map_or(false, |ext| ext == "jsonl") {
-                                                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                                            if path.extension().map_or(false, |ext| ext == "jsonl")
+                                            {
+                                                if let Ok(content) =
+                                                    tokio::fs::read_to_string(&path).await
+                                                {
                                                     let mut all_messages = Vec::new();
                                                     let mut first_message = String::new();
                                                     for line in content.lines() {
-                                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
-                                                            if first_message.is_empty() && msg.role == "user" {
-                                                                first_message = msg.content.chars().take(80).collect();
+                                                        if let Ok(msg) =
+                                                            serde_json::from_str::<HistoryMessage>(
+                                                                line,
+                                                            )
+                                                        {
+                                                            if first_message.is_empty()
+                                                                && msg.role == "user"
+                                                            {
+                                                                first_message = msg
+                                                                    .content
+                                                                    .chars()
+                                                                    .take(80)
+                                                                    .collect();
                                                             }
                                                             all_messages.push(msg);
                                                         }
@@ -1798,17 +2346,24 @@ impl<'a> App<'a> {
                                             }
                                         }
                                         sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-                                        let _ = tx_clone.send(AppEvent::SessionsLoaded(sessions)).await;
+                                        let _ =
+                                            tx_clone.send(AppEvent::SessionsLoaded(sessions)).await;
                                     }
                                 });
                             }
                             4 => {
                                 self.mode = AppMode::ProjectSymbolsSearch;
                                 self.symbols_state.input = TextArea::default();
-                                self.symbols_state
-                                    .input
-                                    .set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+                                self.symbols_state.input.set_block(
+                                    Block::default()
+                                        .borders(Borders::ALL)
+                                        .title(" Search Symbols "),
+                                );
                                 self.refresh_project_symbols();
+                            }
+                            5 => {
+                                self.mode = AppMode::BgTasksSearch;
+                                self.refresh_bg_tasks();
                             }
                             _ => {}
                         }
@@ -1846,7 +2401,11 @@ impl<'a> App<'a> {
             KeyCode::F(4) => {
                 self.mode = AppMode::SessionSearch;
                 self.session_state.input = TextArea::default();
-                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
+                self.session_state.input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Search Sessions (Tab to toggle mode) "),
+                );
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
                     if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
@@ -1858,9 +2417,12 @@ impl<'a> App<'a> {
                                     let mut all_messages = Vec::new();
                                     let mut first_message = String::new();
                                     for line in content.lines() {
-                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
+                                        if let Ok(msg) =
+                                            serde_json::from_str::<HistoryMessage>(line)
+                                        {
                                             if first_message.is_empty() && msg.role == "user" {
-                                                first_message = msg.content.chars().take(80).collect();
+                                                first_message =
+                                                    msg.content.chars().take(80).collect();
                                             }
                                             all_messages.push(msg);
                                         }
@@ -1868,7 +2430,17 @@ impl<'a> App<'a> {
                                     if first_message.is_empty() {
                                         first_message = "Empty session".to_string();
                                     }
-                                    let timestamp = entry.metadata().await.map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH).duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
+                                    let timestamp = entry
+                                        .metadata()
+                                        .await
+                                        .map(|m| {
+                                            m.modified()
+                                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs()
+                                        })
+                                        .unwrap_or(0);
                                     sessions.push(SessionEntry {
                                         path: path.to_string_lossy().to_string(),
                                         timestamp,
@@ -1887,6 +2459,7 @@ impl<'a> App<'a> {
                 self.refresh_git_sidebar();
                 self.refresh_git_history();
                 self.refresh_project_symbols();
+                self.refresh_bg_tasks();
                 self.messages.push("[SYS] Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
@@ -1894,10 +2467,16 @@ impl<'a> App<'a> {
             KeyCode::F(6) => {
                 self.mode = AppMode::ProjectSymbolsSearch;
                 self.symbols_state.input = TextArea::default();
-                self.symbols_state
-                    .input
-                    .set_block(Block::default().borders(Borders::ALL).title(" Search Symbols "));
+                self.symbols_state.input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Search Symbols "),
+                );
                 self.refresh_project_symbols();
+            }
+            KeyCode::F(7) => {
+                self.mode = AppMode::BgTasksSearch;
+                self.refresh_bg_tasks();
             }
             KeyCode::F(10) => {
                 self.sidebar_focus = SidebarFocus::Channels;
@@ -1911,7 +2490,8 @@ impl<'a> App<'a> {
                     if let Some(task) = self.agent_task.take() {
                         task.abort();
                         self.is_thinking = false;
-                        self.messages.push("[ERR] Task interrupted by user.".to_string());
+                        self.messages
+                            .push("[ERR] Task interrupted by user.".to_string());
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
@@ -1936,8 +2516,12 @@ impl<'a> App<'a> {
             KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::SessionSearch;
                 self.session_state.input = TextArea::default();
-                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
-                
+                self.session_state.input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Search Sessions (Tab to toggle mode) "),
+                );
+
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
                     if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
@@ -1948,22 +2532,35 @@ impl<'a> App<'a> {
                                 if let Ok(content) = tokio::fs::read_to_string(&path).await {
                                     let mut all_messages = Vec::new();
                                     let mut first_message = String::new();
-                                    
+
                                     for line in content.lines() {
-                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
+                                        if let Ok(msg) =
+                                            serde_json::from_str::<HistoryMessage>(line)
+                                        {
                                             if first_message.is_empty() && msg.role == "user" {
-                                                first_message = msg.content.chars().take(80).collect();
+                                                first_message =
+                                                    msg.content.chars().take(80).collect();
                                             }
                                             all_messages.push(msg);
                                         }
                                     }
-                                    
+
                                     if first_message.is_empty() {
                                         first_message = "Empty session".to_string();
                                     }
-                                    
-                                    let timestamp = entry.metadata().await.map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH).duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
-                                    
+
+                                    let timestamp = entry
+                                        .metadata()
+                                        .await
+                                        .map(|m| {
+                                            m.modified()
+                                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs()
+                                        })
+                                        .unwrap_or(0);
+
                                     sessions.push(SessionEntry {
                                         path: path.to_string_lossy().to_string(),
                                         timestamp,
@@ -1981,11 +2578,15 @@ impl<'a> App<'a> {
             KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Switch to fuzzy search
                 self.mode = AppMode::FuzzySearch;
-                
+
                 // Clear input
                 self.fuzzy_state.input = TextArea::default();
-                self.fuzzy_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Files "));
-                
+                self.fuzzy_state.input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Search Files "),
+                );
+
                 // Load files if we haven't already
                 if self.fuzzy_state.all_files.is_empty() {
                     let tx_clone = tx.clone();
@@ -2003,34 +2604,33 @@ impl<'a> App<'a> {
                 // Send message
                 let input_lines = self.textarea.lines().to_vec();
                 let prompt = input_lines.join("\n");
-                
+
                 if !prompt.trim().is_empty() && !self.is_thinking {
                     self.messages.push(format!("> {}", prompt));
                     self.textarea = TextArea::default();
-                    self.textarea.set_block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) "),
-                    );
-                    
+                    self.textarea
+                        .set_block(Block::default().borders(Borders::ALL).title(
+                            " Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) ",
+                        ));
+
                     self.is_thinking = true;
                     self.messages.push("[THINK] Working...".to_string());
-                    
+
                     // Auto-scroll to bottom after adding thinking message
                     let len = self.messages.len();
                     if len > 0 {
                         self.list_state.select(Some(len - 1));
                     }
-                    
+
                     // Spawn agent task to prevent UI freezing
                     let agent_tx = tx.clone();
                     let prompt_clone = prompt.clone();
                     let pending_notes = self.pending_notes.clone();
-                    
+
                     self.agent_task = Some(tokio::spawn(async move {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.add_user_message(prompt_clone);
-                        
+
                         loop {
                             // Inject any queued user notes between reasoning steps
                             let queued_notes = {
@@ -2058,16 +2658,19 @@ impl<'a> App<'a> {
                                 Ok(step) => {
                                     // Only output Analysis in the chat, plan goes to the sidebar
                                     let analysis_str = format!("Analysis: {}", step.analysis);
-                                    
-                                    let _ = agent_tx.send(AppEvent::AgentPlan(step.plan_updates.clone())).await;
-                                    let _ = agent_tx.send(AppEvent::AgentResponse(analysis_str)).await;
-                                    
+
+                                    let _ = agent_tx
+                                        .send(AppEvent::AgentPlan(step.plan_updates.clone()))
+                                        .await;
+                                    let _ =
+                                        agent_tx.send(AppEvent::AgentResponse(analysis_str)).await;
+
                                     // Record the agent's thought process and intended action
                                     locked_agent.add_assistant_message(format!(
-                                        "Analysis: {}\nAction: {:?}", 
+                                        "Analysis: {}\nAction: {:?}",
                                         step.analysis, step.action
                                     ));
-                                    
+
                                     let is_done = matches!(
                                         step.action,
                                         rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
@@ -2084,35 +2687,63 @@ impl<'a> App<'a> {
                                             if let rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
-                                            
-                                            locked_agent.add_user_message(format!("Tool result:\n{}", result));
-                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("[TOOL]\n{}", result))).await;
+
+                                            locked_agent.add_user_message(format!(
+                                                "Tool result:\n{}",
+                                                result
+                                            ));
+                                            let _ = agent_tx
+                                                .send(AppEvent::AgentResponse(format!(
+                                                    "[TOOL]\n{}",
+                                                    result
+                                                )))
+                                                .await;
                                         }
                                         Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
-                                            locked_agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
+                                            locked_agent.add_user_message(format!(
+                                                "Tool result:\nUser opened editor for {}",
+                                                path
+                                            ));
                                             // Request the main thread to suspend TUI and open the editor
-                                            let _ = agent_tx.send(AppEvent::SuspendAndRun(path, line)).await;
+                                            let _ = agent_tx
+                                                .send(AppEvent::SuspendAndRun(path, line))
+                                                .await;
                                         }
                                         Err(e) => {
-                                            locked_agent.add_user_message(format!("Tool error:\n{}", e));
-                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("[ERR] Tool Error\n{}", e))).await;
+                                            locked_agent
+                                                .add_user_message(format!("Tool error:\n{}", e));
+                                            let _ = agent_tx
+                                                .send(AppEvent::AgentResponse(format!(
+                                                    "[ERR] Tool Error\n{}",
+                                                    e
+                                                )))
+                                                .await;
                                         }
                                     }
-                                    
+
                                     if is_done {
                                         break;
                                     } else {
                                         // Agent needs to continue thinking
-                                        let _ = agent_tx.send(AppEvent::AgentResponse("[THINK] Next step...".to_string())).await;
+                                        let _ = agent_tx
+                                            .send(AppEvent::AgentResponse(
+                                                "[THINK] Next step...".to_string(),
+                                            ))
+                                            .await;
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = agent_tx.send(AppEvent::AgentResponse(format!("[ERR] AI Error: {}", e))).await;
+                                    let _ = agent_tx
+                                        .send(AppEvent::AgentResponse(format!(
+                                            "[ERR] AI Error: {}",
+                                            e
+                                        )))
+                                        .await;
                                     break;
                                 }
                             }
                         }
-                        
+
                         let _ = agent_tx.send(AppEvent::AgentDone).await;
                     }));
                 } else if !prompt.trim().is_empty() && self.is_thinking {
@@ -2121,13 +2752,13 @@ impl<'a> App<'a> {
                         q.push(prompt.clone());
                     }
 
-                    self.messages.push(format!("[NOTE] Queued note: {}", prompt));
+                    self.messages
+                        .push(format!("[NOTE] Queued note: {}", prompt));
                     self.textarea = TextArea::default();
-                    self.textarea.set_block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) "),
-                    );
+                    self.textarea
+                        .set_block(Block::default().borders(Borders::ALL).title(
+                            " Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) ",
+                        ));
                     let len = self.messages.len();
                     if len > 0 {
                         self.list_state.select(Some(len - 1));

@@ -105,6 +105,14 @@ function GetNextStep(history: Message[]) -> NextStep {
     - Verify with tools (cargo check, git status)
     - Report errors immediately
 
+    ### 6. Background Tasks and Logs
+    - For long-running services (web server, watcher, tests), prefer running them in tmux sessions.
+    - Use BashCommandTool with tmux commands when needed:
+      - Start: `tmux new-session -d -s <name> '<command>'`
+      - Logs: `tmux capture-pane -pt <name> -S -120`
+      - List: `tmux list-sessions`
+    - If user asks to monitor logs, periodically fetch logs and summarize key events instead of dumping huge output.
+
     {# Loop through conversation history #}
     {% for msg in history %}
     {{ _.role(msg.role) }}

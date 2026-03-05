@@ -1,7 +1,11 @@
 [package]
-name = "rc-cli"
+name = "rust-code"
 version = "0.1.0"
 edition = "2024"
+description = "AI-powered TUI coding agent written in Rust"
+license = "MIT"
+readme = "../../README.md"
+repository = "https://github.com/fortunto2/rust-code"
 
 [dependencies]
 tokio.workspace = true
@@ -12,8 +16,8 @@ tui-textarea.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-rc-core = { path = "../rc-core" }
-rc-baml = { path = "../rc-baml" }
+rc-core = { version = "0.1.0", path = "../rc-core" }
+rc-baml = { version = "0.1.0", path = "../rc-baml" }
 tracing-subscriber = "0.3.22"
 tracing-appender = "0.2.4"
 rc-tools = { version = "0.1.0", path = "../rc-tools" }
