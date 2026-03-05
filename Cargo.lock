@@ -1095,6 +1095,7 @@ dependencies = [
  "ratatui",
  "rc-baml",
  "rc-core",
+ "rc-tools",
  "tokio",
  "tracing-appender",
  "tracing-subscriber",

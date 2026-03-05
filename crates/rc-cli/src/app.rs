@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use tui_textarea::{Input, TextArea};
 use tokio::sync::mpsc;
@@ -10,19 +10,74 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use rc_core::Agent;
+use rc_tools::FuzzySearcher;
+
+pub enum AppMode {
+    Chat,
+    FuzzySearch,
+}
 
 pub enum AppEvent {
     Ui(Event),
     Tick,
     AgentResponse(String),
+    FilesLoaded(Vec<String>),
+    PreviewLoaded(String),
+}
+
+pub struct FuzzySearchState<'a> {
+    pub input: TextArea<'a>,
+    pub all_files: Vec<String>,
+    pub filtered_files: Vec<String>,
+    pub list_state: ListState,
+    pub preview_content: String,
+    pub searcher: FuzzySearcher,
+}
+
+impl<'a> FuzzySearchState<'a> {
+    pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(Block::default().borders(Borders::ALL).title(" Search Files "));
+        
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+
+        Self {
+            input,
+            all_files: Vec::new(),
+            filtered_files: Vec::new(),
+            list_state,
+            preview_content: String::new(),
+            searcher: FuzzySearcher::new(),
+        }
+    }
+    
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_files = self.all_files.clone();
+        } else {
+            let matches = self.searcher.fuzzy_match_files(&query, &self.all_files);
+            self.filtered_files = matches.into_iter().map(|(_, path)| path).collect();
+        }
+        
+        // Reset selection
+        if !self.filtered_files.is_empty() {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
+    }
 }
 
 pub struct App<'a> {
     pub exit: bool,
+    pub mode: AppMode,
     pub textarea: TextArea<'a>,
     pub messages: Vec<String>,
     pub is_thinking: bool,
     pub list_state: ListState,
+    pub fuzzy_state: FuzzySearchState<'a>,
 }
 
 impl<'a> App<'a> {
@@ -31,7 +86,7 @@ impl<'a> App<'a> {
         textarea.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Message (Enter to send, Ctrl+C to quit) "),
+                .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) "),
         );
 
         let mut list_state = ListState::default();
@@ -39,13 +94,15 @@ impl<'a> App<'a> {
 
         Self {
             exit: false,
+            mode: AppMode::Chat,
             textarea,
             messages: vec![
                 "Welcome to rust-code! 🤖".to_string(),
-                "Type your prompt below and press Enter.".to_string(),
+                "Type your prompt below and press Enter. Press Ctrl+P to search files.".to_string(),
             ],
             is_thinking: false,
             list_state,
+            fuzzy_state: FuzzySearchState::new(),
         }
     }
 
@@ -106,6 +163,14 @@ impl<'a> App<'a> {
                             self.list_state.select(Some(len - 1));
                         }
                     }
+                    AppEvent::FilesLoaded(files) => {
+                        self.fuzzy_state.all_files = files;
+                        self.fuzzy_state.update_search();
+                        self.load_preview(tx.clone());
+                    }
+                    AppEvent::PreviewLoaded(content) => {
+                        self.fuzzy_state.preview_content = content;
+                    }
                     AppEvent::Tick => {
                         // We could update a spinner here if `is_thinking` is true
                     }
@@ -117,13 +182,15 @@ impl<'a> App<'a> {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
+        let area = frame.size();
+        
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
                 Constraint::Length(5), // Text area height
             ])
-            .split(frame.size());
+            .split(area);
 
         // Chat History using List
         let items: Vec<ListItem> = self.messages
@@ -138,6 +205,99 @@ impl<'a> App<'a> {
 
         // Input Area
         frame.render_widget(self.textarea.widget(), chunks[1]);
+        
+        // Render Fuzzy Search Popup if active
+        if matches!(self.mode, AppMode::FuzzySearch) {
+            self.draw_fuzzy_popup(frame, area);
+        }
+    }
+    
+    fn draw_fuzzy_popup(&mut self, frame: &mut Frame, area: Rect) {
+        // Calculate popup area (80% width, 80% height, centered)
+        let popup_width = (area.width * 80) / 100;
+        let popup_height = (area.height * 80) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+        
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        
+        // Clear the background
+        frame.render_widget(Clear, popup_area);
+        
+        // Draw popup container
+        let popup_block = Block::default()
+            .title(" Fuzzy File Search (Esc to cancel, Enter to select) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+            
+        frame.render_widget(popup_block, popup_area);
+        
+        // Layout inside popup
+        let inner_area = popup_area.inner(&Margin { vertical: 1, horizontal: 1 });
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Input
+                Constraint::Min(0),    // List & Preview
+            ])
+            .split(inner_area);
+            
+        // Render input
+        frame.render_widget(self.fuzzy_state.input.widget(), chunks[0]);
+        
+        // Layout for List & Preview
+        let bottom_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(40), // List
+                Constraint::Percentage(60), // Preview
+            ])
+            .split(chunks[1]);
+            
+        // Render List
+        let list_items: Vec<ListItem> = self.fuzzy_state.filtered_files
+            .iter()
+            .map(|path| ListItem::new(path.as_str()))
+            .collect();
+            
+        let file_list = List::new(list_items)
+            .block(Block::default().borders(Borders::ALL).title(" Files "))
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+            
+        frame.render_stateful_widget(file_list, bottom_chunks[0], &mut self.fuzzy_state.list_state);
+        
+        // Render Preview
+        let preview = Paragraph::new(self.fuzzy_state.preview_content.as_str())
+            .block(Block::default().borders(Borders::ALL).title(" Preview "))
+            .wrap(Wrap { trim: false });
+            
+        frame.render_widget(preview, bottom_chunks[1]);
+    }
+
+    fn load_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
+        if let Some(selected) = self.fuzzy_state.list_state.selected() {
+            if let Some(path) = self.fuzzy_state.filtered_files.get(selected) {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    // Try to read first part of the file
+                    match rc_tools::read_file(&path).await {
+                        Ok(content) => {
+                            // Truncate if too long
+                            let preview = if content.chars().count() > 5000 {
+                                format!("{}...\n\n[File truncated for preview]", &content.chars().take(5000).collect::<String>())
+                            } else {
+                                content
+                            };
+                            let _ = tx.send(AppEvent::PreviewLoaded(preview)).await;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::PreviewLoaded(format!("Could not read file: {}", e))).await;
+                        }
+                    }
+                });
+            }
+        }
     }
 
     async fn handle_key_event(
@@ -146,9 +306,84 @@ impl<'a> App<'a> {
         tx: mpsc::Sender<AppEvent>,
         agent: Arc<Mutex<Agent>>
     ) {
+        match self.mode {
+            AppMode::Chat => self.handle_chat_key_event(key_event, tx, agent).await,
+            AppMode::FuzzySearch => self.handle_fuzzy_key_event(key_event, tx).await,
+        }
+    }
+    
+    async fn handle_fuzzy_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down | KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.fuzzy_state.list_state.selected() {
+                    let next = if selected + 1 < self.fuzzy_state.filtered_files.len() { selected + 1 } else { 0 };
+                    self.fuzzy_state.list_state.select(Some(next));
+                    self.load_preview(tx);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.fuzzy_state.list_state.selected() {
+                    let prev = if selected > 0 { selected - 1 } else { self.fuzzy_state.filtered_files.len().saturating_sub(1) };
+                    self.fuzzy_state.list_state.select(Some(prev));
+                    self.load_preview(tx);
+                }
+            }
+            KeyCode::Enter => {
+                // Select file and insert into chat
+                if let Some(selected) = self.fuzzy_state.list_state.selected() {
+                    if let Some(path) = self.fuzzy_state.filtered_files.get(selected) {
+                        self.textarea.insert_str(path);
+                        self.textarea.insert_str(" ");
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {
+                // Pass other keys to the search input and update fuzzy matches
+                if self.fuzzy_state.input.input(Input::from(key_event)) {
+                    self.fuzzy_state.update_search();
+                    self.load_preview(tx);
+                }
+            }
+        }
+    }
+
+    async fn handle_chat_key_event(
+        &mut self, 
+        key_event: event::KeyEvent, 
+        tx: mpsc::Sender<AppEvent>,
+        agent: Arc<Mutex<Agent>>
+    ) {
         match key_event.code {
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.exit = true;
+            }
+            KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Switch to fuzzy search
+                self.mode = AppMode::FuzzySearch;
+                
+                // Clear input
+                self.fuzzy_state.input = TextArea::default();
+                self.fuzzy_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Files "));
+                
+                // Load files if we haven't already
+                if self.fuzzy_state.all_files.is_empty() {
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        if let Ok(files) = FuzzySearcher::get_all_files().await {
+                            let _ = tx_clone.send(AppEvent::FilesLoaded(files)).await;
+                        }
+                    });
+                } else {
+                    self.fuzzy_state.update_search();
+                    self.load_preview(tx.clone());
+                }
             }
             KeyCode::Enter if !key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                 // Send message
@@ -161,7 +396,7 @@ impl<'a> App<'a> {
                     self.textarea.set_block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(" Message (Enter to send, Ctrl+C to quit) "),
+                            .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) "),
                     );
                     
                     self.is_thinking = true;
@@ -213,3 +448,4 @@ impl<'a> App<'a> {
         }
     }
 }
+

@@ -15,3 +15,4 @@ rc-core = { path = "../rc-core" }
 rc-baml = { path = "../rc-baml" }
 tracing-subscriber = "0.3.22"
 tracing-appender = "0.2.4"
+rc-tools = { version = "0.1.0", path = "../rc-tools" }
