@@ -186,6 +186,24 @@ impl<'a> SessionSearchState<'a> {
     }
 }
 
+pub struct GitSidebarState {
+    pub files: Vec<(String, String)>, // (status, path) - status: "M", "A", "??", etc.
+    pub list_state: ListState,
+    pub selected_diff: Vec<Line<'static>>,
+}
+
+impl GitSidebarState {
+    pub fn new() -> Self {
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            files: Vec::new(),
+            list_state,
+            selected_diff: Vec::new(),
+        }
+    }
+}
+
 pub struct App<'a> {
     pub exit: bool,
     pub mode: AppMode,
@@ -195,6 +213,8 @@ pub struct App<'a> {
     pub list_state: ListState,
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
+    pub git_sidebar: GitSidebarState,
+    pub sidebar_focused: bool, // true when user is navigating sidebar
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
@@ -206,7 +226,7 @@ impl<'a> App<'a> {
         textarea.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+H history, Ctrl+C quit) "),
+                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab sidebar, Ctrl+C quit) "),
         );
 
         let mut list_state = ListState::default();
@@ -218,12 +238,14 @@ impl<'a> App<'a> {
             textarea,
             messages: vec![
                 "Welcome to rust-code! 🤖".to_string(),
-                "Type your prompt below and press Enter. Press Ctrl+P to search files.".to_string(),
+                "Type your prompt below and press Enter. Press Ctrl+P to search files, Ctrl+G refresh git, Tab to focus sidebar.".to_string(),
             ],
             is_thinking: false,
             list_state,
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
+            git_sidebar: GitSidebarState::new(),
+            sidebar_focused: false,
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
@@ -254,6 +276,9 @@ impl<'a> App<'a> {
         }
 
         let agent = Arc::new(Mutex::new(agent_instance));
+
+        // Load initial git status
+        self.refresh_git_sidebar();
 
         // UI Event Task
         let ui_tx = tx.clone();
@@ -510,19 +535,56 @@ impl<'a> App<'a> {
             .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" SGR Plan "));
         frame.render_widget(plan_widget, sidebar_chunks[0]);
         
-        // Modified Files Panel
-        let mut file_lines = vec![Line::from(Span::styled("▼ Modified Files", Style::default().add_modifier(Modifier::BOLD)))];
-        file_lines.push(Line::from(""));
-        for f in &self.modified_files {
-            file_lines.push(Line::from(format!("+ {}", f)).style(Style::default().fg(tool_color)));
-        }
-        if self.modified_files.is_empty() {
-            file_lines.push(Line::from("No files modified yet").style(Style::default().fg(Color::DarkGray)));
-        }
+        // Git Files Panel
+        let git_title = if self.sidebar_focused {
+            " Git Files [FOCUSED - ↑↓ navigate, Enter diff, Ctrl+O open] "
+        } else {
+            " Git Files [Ctrl+G refresh, Tab focus] "
+        };
         
-        let files_widget = Paragraph::new(file_lines)
-            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Session "));
-        frame.render_widget(files_widget, sidebar_chunks[1]);
+        let git_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
+            vec![ListItem::new("No git changes").style(Style::default().fg(Color::DarkGray))]
+        } else {
+            self.git_sidebar.files
+                .iter()
+                .map(|(status, path)| {
+                    let status_color = match status.as_str() {
+                        "M" => Color::Yellow,
+                        "A" => Color::Green,
+                        "?" => Color::Gray,
+                        _ => Color::White,
+                    };
+                    let content = format!("[{}] {}", status, path);
+                    ListItem::new(content).style(Style::default().fg(status_color))
+                })
+                .collect()
+        };
+        
+        let git_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(if self.sidebar_focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                border_style
+            })
+            .title(git_title);
+        
+        let git_list = List::new(git_items)
+            .block(git_block)
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+        
+        frame.render_stateful_widget(git_list, sidebar_chunks[1], &mut self.git_sidebar.list_state);
+        
+        // Show diff preview if sidebar is focused and we have a selection
+        if self.sidebar_focused && !self.git_sidebar.files.is_empty() {
+            if let Some(selected) = self.git_sidebar.list_state.selected() {
+                if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                    // Show mini preview in the sidebar area or as a popup
+                    // For now, we'll add the diff to the chat
+                }
+            }
+        }
         
         // Render Popup if active
         match self.mode {
@@ -741,6 +803,71 @@ impl<'a> App<'a> {
         }
     }
 
+    fn refresh_git_sidebar(&mut self) {
+        use rc_tools::git::git_status;
+        
+        if let Ok(Some(status)) = git_status() {
+            self.git_sidebar.files.clear();
+            
+            // Add modified files
+            for file in &status.modified_files {
+                self.git_sidebar.files.push(("M".to_string(), file.clone()));
+            }
+            // Add staged files
+            for file in &status.staged_files {
+                self.git_sidebar.files.push(("A".to_string(), file.clone()));
+            }
+            // Add untracked files
+            for file in &status.untracked_files {
+                self.git_sidebar.files.push(("?".to_string(), file.clone()));
+            }
+            
+            // Reset selection
+            if !self.git_sidebar.files.is_empty() {
+                self.git_sidebar.list_state.select(Some(0));
+            } else {
+                self.git_sidebar.list_state.select(None);
+            }
+        }
+    }
+
+    fn load_git_diff(&mut self, tx: mpsc::Sender<AppEvent>) {
+        if let Some(selected) = self.git_sidebar.list_state.selected() {
+            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    match rc_tools::git::git_diff(Some(&path), false) {
+                        Ok(diff) => {
+                            let mut lines = Vec::new();
+                            lines.push(Line::from(format!("Diff for {}:", path)).style(Style::default().add_modifier(Modifier::BOLD)));
+                            lines.push(Line::from(""));
+                            
+                            for line in diff.lines() {
+                                let styled_line = if line.starts_with('+') {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Green))
+                                } else if line.starts_with('-') {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Red))
+                                } else if line.starts_with('@') {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
+                                } else {
+                                    Line::from(line.to_string())
+                                };
+                                lines.push(styled_line);
+                            }
+                            
+                            let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::PreviewLoaded(vec![
+                                Line::from(format!("Error loading diff: {}", e))
+                            ])).await;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     async fn handle_key_event(
         &mut self, 
         key_event: event::KeyEvent, 
@@ -856,11 +983,58 @@ impl<'a> App<'a> {
     }
 
     async fn handle_chat_key_event(
-        &mut self, 
-        key_event: event::KeyEvent, 
+        &mut self,
+        key_event: event::KeyEvent,
         tx: mpsc::Sender<AppEvent>,
         agent: Arc<Mutex<Agent>>
     ) {
+        // Handle sidebar-focused mode first
+        if self.sidebar_focused {
+            match key_event.code {
+                KeyCode::Esc | KeyCode::Tab => {
+                    self.sidebar_focused = false;
+                    return;
+                }
+                KeyCode::Down => {
+                    if let Some(selected) = self.git_sidebar.list_state.selected() {
+                        let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
+                        self.git_sidebar.list_state.select(Some(next));
+                        self.load_git_diff(tx.clone());
+                    }
+                    return;
+                }
+                KeyCode::Up => {
+                    if let Some(selected) = self.git_sidebar.list_state.selected() {
+                        let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
+                        self.git_sidebar.list_state.select(Some(prev));
+                        self.load_git_diff(tx.clone());
+                    }
+                    return;
+                }
+                KeyCode::Enter => {
+                    // Show diff in chat
+                    if let Some(selected) = self.git_sidebar.list_state.selected() {
+                        if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                            let _ = agent.lock().await.add_user_message(format!("Show me git diff for {}", path));
+                        }
+                    }
+                    self.sidebar_focused = false;
+                    return;
+                }
+                KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Open file in editor
+                    if let Some(selected) = self.git_sidebar.list_state.selected() {
+                        if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                            let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                        }
+                    }
+                    self.sidebar_focused = false;
+                    return;
+                }
+                _ => return, // Ignore other keys in sidebar mode
+            }
+        }
+
         match key_event.code {
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_thinking {
@@ -875,6 +1049,22 @@ impl<'a> App<'a> {
                 } else {
                     self.exit = true;
                 }
+            }
+            KeyCode::Tab => {
+                // Toggle sidebar focus
+                if !self.git_sidebar.files.is_empty() {
+                    self.sidebar_focused = !self.sidebar_focused;
+                    if self.sidebar_focused {
+                        self.load_git_diff(tx.clone());
+                    }
+                }
+            }
+            KeyCode::Char('g') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Refresh git status
+                self.refresh_git_sidebar();
+                self.messages.push("🔄 Git status refreshed".to_string());
+                let len = self.messages.len();
+                self.list_state.select(Some(len.saturating_sub(1)));
             }
             KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::SessionSearch;
