@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Linux CLI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p rust-code
+
+      - name: Package
+        run: |
+          strip target/release/rust-code
+          mkdir -p dist/rust-code-linux-x86_64
+          cp target/release/rust-code dist/rust-code-linux-x86_64/
+          cp README.md dist/rust-code-linux-x86_64/
+          cp LICENSE dist/rust-code-linux-x86_64/
+          cd dist
+          tar czf ../rust-code-linux-x86_64.tar.gz rust-code-linux-x86_64
+
+      - name: Checksums
+        run: sha256sum rust-code-linux-x86_64.tar.gz > rust-code-linux-x86_64.tar.gz.sha256
+
+      - name: Show assets
+        run: ls -lh rust-code-linux-x86_64.tar.gz rust-code-linux-x86_64.tar.gz.sha256
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rust-code-linux-x86_64.tar.gz
+            rust-code-linux-x86_64.tar.gz.sha256

@@ -12,6 +12,28 @@ From crates.io:
 cargo install rust-code
 ```
 
+Linux release binary:
+
+```bash
+curl -L https://github.com/fortunto2/rust-code/releases/latest/download/rust-code-linux-x86_64.tar.gz | tar xz
+sudo install rust-code-linux-x86_64/rust-code /usr/local/bin/rust-code
+```
+
+macOS:
+
+```bash
+cargo install rust-code
+```
+
+If you prefer local builds on macOS:
+
+```bash
+git clone https://github.com/fortunto2/rust-code.git
+cd rust-code
+cargo build --release -p rust-code
+./target/release/rust-code
+```
+
 Run it:
 
 ```bash
@@ -200,3 +222,5 @@ cargo test
 The crate is published on crates.io:
 
 - https://crates.io/crates/rust-code
+
+Linux release artifacts are published by GitHub Actions when you push a tag matching `v*`, for example `v0.1.1`.
