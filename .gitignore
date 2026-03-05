@@ -3,7 +3,8 @@
 .DS_Store
 .env
 .rust-code.jsonl
-.rust-code/
+.rust-code/*
+!.rust-code/context/
 agent/
 vtcode/
 rust-code.log
