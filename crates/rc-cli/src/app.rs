@@ -309,6 +309,7 @@ pub struct App<'a> {
     pub channel_items: Vec<String>,
     pub channel_state: ListState,
     pub ui_regions: Option<UiRegions>,
+    pub pending_notes: Arc<Mutex<Vec<String>>>,
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
@@ -340,7 +341,7 @@ impl<'a> App<'a> {
             mode: AppMode::Chat,
             textarea,
             messages: vec![
-                "Welcome to rust-code! 🤖".to_string(),
+                "[SYS] Welcome to rust-code".to_string(),
                 "Type your prompt below and press Enter. Press Ctrl+P to search files, Ctrl+G refresh git, Tab to focus sidebar.".to_string(),
             ],
             is_thinking: false,
@@ -360,6 +361,7 @@ impl<'a> App<'a> {
             ],
             channel_state,
             ui_regions: None,
+            pending_notes: Arc::new(Mutex::new(Vec::new())),
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
@@ -509,7 +511,7 @@ impl<'a> App<'a> {
                     AppEvent::AgentResponse(msg) => {
                         // Remove "Thinking..." message if it's the last one
                         if let Some(last) = self.messages.last() {
-                            if last.starts_with("🤖 Thinking") {
+                            if last.starts_with("[THINK]") {
                                 self.messages.pop();
                             }
                         }
@@ -549,7 +551,7 @@ impl<'a> App<'a> {
                     AppEvent::SessionLoaded => {
                         let locked_agent = agent.lock().await;
                         self.messages.clear();
-                        self.messages.push("Welcome to rust-code! 🤖".to_string());
+                        self.messages.push("[SYS] Welcome to rust-code".to_string());
                         self.messages.push("Type your prompt below and press Enter. Press Ctrl+P to search files, Ctrl+H history.".to_string());
                         
                         for msg in locked_agent.history() {
@@ -586,7 +588,7 @@ impl<'a> App<'a> {
                         terminal.clear()?;
                         
                         // Add a message about the file being edited
-                        self.messages.push(format!("🛠️ Opened editor for {}", path));
+                        self.messages.push(format!("[TOOL] Opened editor for {}", path));
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
@@ -641,13 +643,13 @@ impl<'a> App<'a> {
                 // Determine styling based on prefix
                 let style = if m.starts_with(">") {
                     Style::default().fg(user_color).add_modifier(Modifier::BOLD)
-                } else if m.starts_with("🤖 Thinking") {
+                } else if m.starts_with("[THINK]") {
                     Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
                 } else if m.starts_with("Analysis:") {
                     Style::default().fg(ai_color)
-                } else if m.starts_with("🛠️ Tool Result:") {
+                } else if m.starts_with("[TOOL]") {
                     Style::default().fg(Color::Gray)
-                } else if m.starts_with("❌") {
+                } else if m.starts_with("[ERR]") {
                     Style::default().fg(error_color).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
@@ -675,7 +677,7 @@ impl<'a> App<'a> {
             
         let chat_list = List::new(items)
             .block(Block::default()
-                .title(" 🤖 rust-code ")
+                .title(" rust-code :: tty ")
                 .borders(Borders::ALL)
                 .border_style(border_style));
         
@@ -711,7 +713,7 @@ impl<'a> App<'a> {
         let mut plan_lines = vec![Line::from(Span::styled("Current Plan", Style::default().add_modifier(Modifier::BOLD)))];
         plan_lines.push(Line::from(""));
         for p in &self.agent_plan {
-            plan_lines.push(Line::from(format!("• {}", p)).style(Style::default().fg(Color::Gray)));
+            plan_lines.push(Line::from(format!("- {}", p)).style(Style::default().fg(Color::Gray)));
         }
         if self.agent_plan.is_empty() {
             plan_lines.push(Line::from("Waiting for task...").style(Style::default().fg(Color::DarkGray)));
@@ -723,7 +725,7 @@ impl<'a> App<'a> {
         
         // Channels panel
         let channels_title = if self.sidebar_focus == SidebarFocus::Channels {
-            " Channels [FOCUSED - ↑↓ select, Enter open] "
+            " Channels [FOCUSED - UP/DN select, Enter open] "
         } else {
             " Channels [Tab focus] "
         };
@@ -1161,9 +1163,9 @@ impl<'a> App<'a> {
                         let mut lines = Vec::new();
                         for msg in &entry.all_messages {
                             let (role_str, color) = if msg.role == "user" {
-                                ("👤 User", Color::Cyan)
+                                ("USER", Color::Cyan)
                             } else {
-                                ("🤖 Agent", Color::Yellow)
+                                ("AGENT", Color::Yellow)
                             };
                             
                             lines.push(Line::from(Span::styled(role_str, Style::default().fg(color).add_modifier(Modifier::BOLD))));
@@ -1354,22 +1356,44 @@ impl<'a> App<'a> {
                 self.symbols_state
                     .preview_lines
                     .push(Line::from(format!("{}:{}", file, line)).style(Style::default().add_modifier(Modifier::BOLD)));
+                self.symbols_state
+                    .preview_lines
+                    .push(Line::from(format!("symbol: {}", item.label)).style(Style::default().fg(Color::DarkGray)));
                 self.symbols_state.preview_lines.push(Line::from(""));
 
-                // Show local context around symbol
+                // Show local context around symbol with syntax highlighting
                 let start = line.saturating_sub(20);
                 if let Ok(content) = std::fs::read_to_string(&file) {
                     let all: Vec<&str> = content.lines().collect();
                     let end = (start + 80).min(all.len());
-                    for (idx, l) in all[start..end].iter().enumerate() {
+
+                    let snippet = all[start..end].join("\n");
+                    let highlighter = CodeHighlighter::new();
+                    let highlighted = highlighter.highlight(&snippet, &file);
+
+                    for (idx, line_spans) in highlighted.into_iter().enumerate() {
                         let actual = start + idx + 1;
-                        let styled = if actual == line {
-                            Line::from(format!("> {:>5} | {}", actual, l))
-                                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        let mut spans: Vec<Span<'static>> = Vec::new();
+
+                        // Prefix with line number
+                        let prefix = if actual == line {
+                            format!("> {:>5} | ", actual)
                         } else {
-                            Line::from(format!("  {:>5} | {}", actual, l))
+                            format!("  {:>5} | ", actual)
                         };
-                        self.symbols_state.preview_lines.push(styled);
+                        let prefix_style = if actual == line {
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        spans.push(Span::styled(prefix, prefix_style));
+
+                        // Convert highlighted spans to static
+                        for s in line_spans.spans {
+                            spans.push(Span::styled(s.content.to_string(), s.style));
+                        }
+
+                        self.symbols_state.preview_lines.push(Line::from(spans));
                     }
                 }
             }
@@ -1862,7 +1886,7 @@ impl<'a> App<'a> {
                 self.refresh_git_sidebar();
                 self.refresh_git_history();
                 self.refresh_project_symbols();
-                self.messages.push("🔄 Git status refreshed".to_string());
+                self.messages.push("[SYS] Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
             }
@@ -1886,7 +1910,7 @@ impl<'a> App<'a> {
                     if let Some(task) = self.agent_task.take() {
                         task.abort();
                         self.is_thinking = false;
-                        self.messages.push("❌ Task interrupted by user.".to_string());
+                        self.messages.push("[ERR] Task interrupted by user.".to_string());
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
@@ -1904,7 +1928,7 @@ impl<'a> App<'a> {
                 // Refresh git status
                 self.refresh_git_sidebar();
                 self.refresh_git_history();
-                self.messages.push("🔄 Git status refreshed".to_string());
+                self.messages.push("[SYS] Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
             }
@@ -1989,7 +2013,7 @@ impl<'a> App<'a> {
                     );
                     
                     self.is_thinking = true;
-                    self.messages.push("🤖 Thinking...".to_string());
+                    self.messages.push("[THINK] Working...".to_string());
                     
                     // Auto-scroll to bottom after adding thinking message
                     let len = self.messages.len();
@@ -2000,12 +2024,35 @@ impl<'a> App<'a> {
                     // Spawn agent task to prevent UI freezing
                     let agent_tx = tx.clone();
                     let prompt_clone = prompt.clone();
+                    let pending_notes = self.pending_notes.clone();
                     
                     self.agent_task = Some(tokio::spawn(async move {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.add_user_message(prompt_clone);
                         
                         loop {
+                            // Inject any queued user notes between reasoning steps
+                            let queued_notes = {
+                                let mut q = pending_notes.lock().await;
+                                if q.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    std::mem::take(&mut *q)
+                                }
+                            };
+
+                            for note in queued_notes {
+                                locked_agent.add_user_message(format!(
+                                    "User note while task is running:\n{}",
+                                    note
+                                ));
+                                let _ = agent_tx
+                                    .send(AppEvent::AgentResponse(
+                                        "[NOTE] Queued note injected into current task".to_string(),
+                                    ))
+                                    .await;
+                            }
+
                             match locked_agent.step().await {
                                 Ok(step) => {
                                     // Only output Analysis in the chat, plan goes to the sidebar
@@ -2038,7 +2085,7 @@ impl<'a> App<'a> {
                                             }
                                             
                                             locked_agent.add_user_message(format!("Tool result:\n{}", result));
-                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("🛠️ Tool Result:\n{}", result))).await;
+                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("[TOOL]\n{}", result))).await;
                                         }
                                         Ok(rc_core::AgentEvent::OpenEditor(path, line)) => {
                                             locked_agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
@@ -2047,7 +2094,7 @@ impl<'a> App<'a> {
                                         }
                                         Err(e) => {
                                             locked_agent.add_user_message(format!("Tool error:\n{}", e));
-                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ Tool Error:\n{}", e))).await;
+                                            let _ = agent_tx.send(AppEvent::AgentResponse(format!("[ERR] Tool Error\n{}", e))).await;
                                         }
                                     }
                                     
@@ -2055,11 +2102,11 @@ impl<'a> App<'a> {
                                         break;
                                     } else {
                                         // Agent needs to continue thinking
-                                        let _ = agent_tx.send(AppEvent::AgentResponse("🤖 Thinking next step...".to_string())).await;
+                                        let _ = agent_tx.send(AppEvent::AgentResponse("[THINK] Next step...".to_string())).await;
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = agent_tx.send(AppEvent::AgentResponse(format!("❌ AI Error: {}", e))).await;
+                                    let _ = agent_tx.send(AppEvent::AgentResponse(format!("[ERR] AI Error: {}", e))).await;
                                     break;
                                 }
                             }
@@ -2067,6 +2114,23 @@ impl<'a> App<'a> {
                         
                         let _ = agent_tx.send(AppEvent::AgentDone).await;
                     }));
+                } else if !prompt.trim().is_empty() && self.is_thinking {
+                    {
+                        let mut q = self.pending_notes.lock().await;
+                        q.push(prompt.clone());
+                    }
+
+                    self.messages.push(format!("[NOTE] Queued note: {}", prompt));
+                    self.textarea = TextArea::default();
+                    self.textarea.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) "),
+                    );
+                    let len = self.messages.len();
+                    if len > 0 {
+                        self.list_state.select(Some(len - 1));
+                    }
                 }
             }
             _ => {
