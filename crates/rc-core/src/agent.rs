@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rc_baml::baml_client::{self, types};
-use rc_tools::{read_file, write_file, run_command};
+use rc_tools::{read_file, write_file, run_command, FuzzySearcher};
 
 pub struct Agent {
     history: Vec<types::Message>,
@@ -46,6 +46,21 @@ impl Agent {
             BashCommandTool(cmd) => {
                 let output = run_command(&cmd.command).await?;
                 Ok(format!("Command output:\n{}", output))
+            }
+            SearchCodeTool(cmd) => {
+                // Implement basic file path search first
+                let files = FuzzySearcher::get_all_files().await?;
+                let mut searcher = FuzzySearcher::new();
+                let matches = searcher.fuzzy_match_files(&cmd.query, &files);
+                
+                let mut result = format!("Search results for '{}':\n", cmd.query);
+                for (score, path) in matches.iter().take(10) {
+                    result.push_str(&format!("{} (score: {})\n", path, score));
+                }
+                if matches.is_empty() {
+                    result.push_str("No matches found.");
+                }
+                Ok(result)
             }
             FinishTaskTool(cmd) => {
                 Ok(format!("Task finished: {}", cmd.summary))
