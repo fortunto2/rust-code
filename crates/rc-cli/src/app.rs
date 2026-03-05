@@ -279,6 +279,17 @@ impl<'a> App<'a> {
 
         // Load initial git status
         self.refresh_git_sidebar();
+        
+        // Show git status in chat on startup if there are changes
+        if !self.git_sidebar.files.is_empty() {
+            let mut git_msg = String::from("📁 Git status on startup:\n");
+            for (status, path) in &self.git_sidebar.files {
+                git_msg.push_str(&format!("  [{}] {}\n", status, path));
+            }
+            self.messages.push(git_msg);
+            let len = self.messages.len();
+            self.list_state.select(Some(len.saturating_sub(1)));
+        }
 
         // UI Event Task
         let ui_tx = tx.clone();
