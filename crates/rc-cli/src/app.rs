@@ -280,15 +280,34 @@ impl<'a> App<'a> {
         // Load initial git status
         self.refresh_git_sidebar();
         
-        // Show git status in chat on startup if there are changes
-        if !self.git_sidebar.files.is_empty() {
-            let mut git_msg = String::from("📁 Git status on startup:\n");
-            for (status, path) in &self.git_sidebar.files {
-                git_msg.push_str(&format!("  [{}] {}\n", status, path));
+        // Debug: always show git check result
+        use rc_tools::git::git_status;
+        match git_status() {
+            Ok(Some(status)) => {
+                if !status.modified_files.is_empty() || !status.staged_files.is_empty() || !status.untracked_files.is_empty() {
+                    let mut git_msg = String::from("📁 Git changes detected:\n");
+                    for file in &status.modified_files {
+                        git_msg.push_str(&format!("  [M] {}\n", file));
+                    }
+                    for file in &status.staged_files {
+                        git_msg.push_str(&format!("  [A] {}\n", file));
+                    }
+                    for file in &status.untracked_files {
+                        git_msg.push_str(&format!("  [?] {}\n", file));
+                    }
+                    self.messages.push(git_msg);
+                    let len = self.messages.len();
+                    self.list_state.select(Some(len.saturating_sub(1)));
+                } else {
+                    self.messages.push("📁 No git changes (working tree clean)".to_string());
+                }
             }
-            self.messages.push(git_msg);
-            let len = self.messages.len();
-            self.list_state.select(Some(len.saturating_sub(1)));
+            Ok(None) => {
+                self.messages.push("⚠️ Not a git repository".to_string());
+            }
+            Err(e) => {
+                self.messages.push(format!("⚠️ Git error: {}", e));
+            }
         }
 
         // UI Event Task
