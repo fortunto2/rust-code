@@ -244,9 +244,17 @@ pub struct App<'a> {
     pub sidebar_focus: SidebarFocus,
     pub channel_items: Vec<String>,
     pub channel_state: ListState,
+    pub ui_regions: Option<UiRegions>,
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+pub struct UiRegions {
+    pub chat: Rect,
+    pub input: Rect,
+    pub channels: Rect,
 }
 
 impl<'a> App<'a> {
@@ -285,6 +293,7 @@ impl<'a> App<'a> {
                 "Session Search".to_string(),
             ],
             channel_state,
+            ui_regions: None,
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
@@ -360,6 +369,44 @@ impl<'a> App<'a> {
                     }
                     AppEvent::Ui(Event::Mouse(mouse_event)) => {
                         match mouse_event.kind {
+                            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                                if let Some(regions) = self.ui_regions {
+                                    let col = mouse_event.column;
+                                    let row = mouse_event.row;
+
+                                    // Click on channels panel -> focus channels and select clicked channel
+                                    if col >= regions.channels.x
+                                        && col < regions.channels.x + regions.channels.width
+                                        && row >= regions.channels.y
+                                        && row < regions.channels.y + regions.channels.height
+                                    {
+                                        self.sidebar_focus = SidebarFocus::Channels;
+
+                                        // Estimate clicked item index inside bordered list
+                                        let inner_y = regions.channels.y.saturating_add(1);
+                                        if row >= inner_y {
+                                            let idx = row.saturating_sub(inner_y) as usize;
+                                            if idx < self.channel_items.len() {
+                                                self.channel_state.select(Some(idx));
+                                            }
+                                        }
+                                    } else if col >= regions.input.x
+                                        && col < regions.input.x + regions.input.width
+                                        && row >= regions.input.y
+                                        && row < regions.input.y + regions.input.height
+                                    {
+                                        // Click input -> return focus to input
+                                        self.sidebar_focus = SidebarFocus::None;
+                                    } else if col >= regions.chat.x
+                                        && col < regions.chat.x + regions.chat.width
+                                        && row >= regions.chat.y
+                                        && row < regions.chat.y + regions.chat.height
+                                    {
+                                        // Click chat -> return focus to chat/input
+                                        self.sidebar_focus = SidebarFocus::None;
+                                    }
+                                }
+                            }
                             crossterm::event::MouseEventKind::ScrollDown => {
                                 if matches!(self.mode, AppMode::FuzzySearch) {
                                     let max_scroll = self.fuzzy_state.preview_lines.len().saturating_sub(1) as u16;
@@ -487,6 +534,16 @@ impl<'a> App<'a> {
 
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+
+        // Overall layout: main content + 2 bottom status lines (Norton-style)
+        let root_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(area);
         
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -494,13 +551,12 @@ impl<'a> App<'a> {
                 Constraint::Percentage(75), // Chat area
                 Constraint::Percentage(25), // Sidebar
             ])
-            .split(area);
+            .split(root_chunks[0]);
 
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
-                Constraint::Length(1), // mini status bar
                 Constraint::Length(5), // Text area height
             ])
             .split(horizontal_chunks[0]);
@@ -558,23 +614,6 @@ impl<'a> App<'a> {
         
         frame.render_stateful_widget(chat_list, left_chunks[0], &mut self.list_state);
 
-        // Mini status bar (Norton Commander style)
-        let status = match self.mode {
-            AppMode::Chat => "Mode: Chat",
-            AppMode::FuzzySearch => "Mode: File Search Channel",
-            AppMode::SessionSearch => "Mode: Session History Channel",
-            AppMode::GitDiffSearch => "Mode: Git Diff Channel",
-            AppMode::GitHistorySearch => "Mode: Git History Channel",
-        };
-        let status_text = format!(
-            "{}  | F1 GitDiff  F2 GitHistory  F3 Files  F4 Sessions  F5 RefreshGit  F10 Sidebar  F12 Quit",
-            status
-        );
-        frame.render_widget(
-            Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray)),
-            left_chunks[1],
-        );
-
         // Input Area
         self.textarea.set_block(
             Block::default()
@@ -582,7 +621,7 @@ impl<'a> App<'a> {
                 .border_style(border_style)
                 .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "),
         );
-        frame.render_widget(self.textarea.widget(), left_chunks[2]);
+        frame.render_widget(self.textarea.widget(), left_chunks[1]);
         
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
@@ -593,6 +632,13 @@ impl<'a> App<'a> {
                 Constraint::Min(8),     // Channel status
             ])
             .split(horizontal_chunks[1]);
+
+        // Save regions for mouse/touchpad hit testing
+        self.ui_regions = Some(UiRegions {
+            chat: left_chunks[0],
+            input: left_chunks[1],
+            channels: sidebar_chunks[1],
+        });
             
         // Plan Panel
         let mut plan_lines = vec![Line::from(Span::styled("Current Plan", Style::default().add_modifier(Modifier::BOLD)))];
@@ -656,6 +702,40 @@ impl<'a> App<'a> {
             Paragraph::new(info_lines)
                 .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Channel Status ")),
             sidebar_chunks[2],
+        );
+
+        // Bottom status bars (Norton Commander inspired)
+        let mode_text = match self.mode {
+            AppMode::Chat => "MODE: CHAT",
+            AppMode::FuzzySearch => "MODE: FILE SEARCH",
+            AppMode::SessionSearch => "MODE: SESSION SEARCH",
+            AppMode::GitDiffSearch => "MODE: GIT DIFF",
+            AppMode::GitHistorySearch => "MODE: GIT HISTORY",
+        };
+        let focus_text = if self.sidebar_focus == SidebarFocus::Channels {
+            "FOCUS: CHANNELS"
+        } else {
+            "FOCUS: INPUT"
+        };
+        let status_line = format!(
+            " {} | {} | Git files: {} | History: {} ",
+            mode_text,
+            focus_text,
+            self.git_sidebar.files.len(),
+            self.git_history.items.len()
+        );
+        frame.render_widget(
+            Paragraph::new(status_line)
+                .style(Style::default().fg(Color::Black).bg(Color::Gray)),
+            root_chunks[1],
+        );
+
+        let hotkeys_line =
+            " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 RefreshGit  F10 Channels  F12 Quit ";
+        frame.render_widget(
+            Paragraph::new(hotkeys_line)
+                .style(Style::default().fg(Color::Black).bg(Color::Rgb(180, 180, 180))),
+            root_chunks[2],
         );
         
         // Render Popup if active
