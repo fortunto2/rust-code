@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 use tui_textarea::{Input, TextArea};
 use tokio::sync::mpsc;
@@ -22,6 +22,7 @@ pub struct App<'a> {
     pub textarea: TextArea<'a>,
     pub messages: Vec<String>,
     pub is_thinking: bool,
+    pub list_state: ListState,
 }
 
 impl<'a> App<'a> {
@@ -33,6 +34,9 @@ impl<'a> App<'a> {
                 .title(" Message (Enter to send, Ctrl+C to quit) "),
         );
 
+        let mut list_state = ListState::default();
+        list_state.select(Some(1));
+
         Self {
             exit: false,
             textarea,
@@ -41,6 +45,7 @@ impl<'a> App<'a> {
                 "Type your prompt below and press Enter.".to_string(),
             ],
             is_thinking: false,
+            list_state,
         }
     }
 
@@ -85,8 +90,21 @@ impl<'a> App<'a> {
                         self.handle_key_event(key_event, tx.clone(), agent.clone()).await;
                     }
                     AppEvent::AgentResponse(msg) => {
+                        // Remove "Thinking..." message if it's the last one
+                        if let Some(last) = self.messages.last() {
+                            if last == "🤖 Thinking..." {
+                                self.messages.pop();
+                            }
+                        }
+                        
                         self.messages.push(msg);
                         self.is_thinking = false;
+                        
+                        // Auto-scroll to bottom
+                        let len = self.messages.len();
+                        if len > 0 {
+                            self.list_state.select(Some(len - 1));
+                        }
                     }
                     AppEvent::Tick => {
                         // We could update a spinner here if `is_thinking` is true
@@ -107,13 +125,16 @@ impl<'a> App<'a> {
             ])
             .split(frame.size());
 
-        // Chat History
-        let chat_text: String = self.messages.join("\n\n");
-        let chat_block = Paragraph::new(chat_text)
-            .block(Block::default().title(" rust-code 🦀 ").borders(Borders::ALL))
-            .wrap(Wrap { trim: true });
+        // Chat History using List
+        let items: Vec<ListItem> = self.messages
+            .iter()
+            .map(|m| ListItem::new(Text::from(m.as_str())))
+            .collect();
+            
+        let chat_list = List::new(items)
+            .block(Block::default().title(" rust-code 🦀 ").borders(Borders::ALL));
         
-        frame.render_widget(chat_block, chunks[0]);
+        frame.render_stateful_widget(chat_list, chunks[0], &mut self.list_state);
 
         // Input Area
         frame.render_widget(self.textarea.widget(), chunks[1]);
@@ -145,6 +166,12 @@ impl<'a> App<'a> {
                     
                     self.is_thinking = true;
                     self.messages.push("🤖 Thinking...".to_string());
+                    
+                    // Auto-scroll to bottom after adding thinking message
+                    let len = self.messages.len();
+                    if len > 0 {
+                        self.list_state.select(Some(len - 1));
+                    }
                     
                     // Spawn agent task to prevent UI freezing
                     let agent_tx = tx.clone();

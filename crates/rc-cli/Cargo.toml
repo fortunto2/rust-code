@@ -13,3 +13,5 @@ tui-textarea.workspace = true
 
 rc-core = { path = "../rc-core" }
 rc-baml = { path = "../rc-baml" }
+tracing-subscriber = "0.3.22"
+tracing-appender = "0.2.4"

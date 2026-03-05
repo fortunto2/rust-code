@@ -4,6 +4,7 @@ pub mod app;
 use anyhow::Result;
 use clap::Parser;
 use rc_core::Agent;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -12,9 +13,40 @@ struct Args {
     prompt: Option<String>,
 }
 
+fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
+    let file_appender = tracing_appender::rolling::never(".", "rust-code.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
+        .init();
+        
+    // Also suppress BAML's default stdout logging
+    unsafe {
+        std::env::set_var("BAML_LOG", "off");
+    }
+    
+    guard
+}
+
+fn setup_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal so panic message is readable
+        let _ = tui::restore();
+        original_hook(panic_info);
+    }));
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // Initialize file logging (keeps stdout clean for TUI)
+    let _log_guard = init_logging();
+    
+    // Setup panic hook to restore terminal
+    setup_panic_hook();
     
     // Initialize BAML runtime
     rc_baml::init();
