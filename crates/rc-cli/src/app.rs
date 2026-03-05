@@ -183,7 +183,7 @@ impl<'a> App<'a> {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let area = frame.size();
+        let area = frame.area();
         
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -196,11 +196,32 @@ impl<'a> App<'a> {
         // Chat History using List
         let items: Vec<ListItem> = self.messages
             .iter()
-            .map(|m| ListItem::new(Text::from(m.as_str())))
+            .map(|m| {
+                // Basic syntax coloring based on message prefix
+                if m.starts_with(">") {
+                    // User prompt
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Cyan)))
+                } else if m.starts_with("🤖 Thinking") {
+                    // Agent thinking
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)))
+                } else if m.starts_with("Analysis:") {
+                    // Agent response
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::White)))
+                } else if m.starts_with("🛠️ Tool Result:") {
+                    // Tool output
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Green)))
+                } else if m.starts_with("❌") {
+                    // Error
+                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)))
+                } else {
+                    // Default
+                    ListItem::new(Text::from(m.as_str()))
+                }
+            })
             .collect();
             
         let chat_list = List::new(items)
-            .block(Block::default().title(" rust-code 🦀 ").borders(Borders::ALL));
+            .block(Block::default().title(" rust-code 🤖 ").borders(Borders::ALL).border_style(Style::default().fg(Color::Blue)));
         
         frame.render_stateful_widget(chat_list, chunks[0], &mut self.list_state);
 

@@ -24,3 +24,14 @@
 [2m2026-03-05T01:39:43.414221Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
 [2m2026-03-05T01:39:43.414509Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
 [2m2026-03-05T01:39:43.414594Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T01:53:30.887569Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T01:53:30.887656Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T01:53:50.368914Z[0m [35mTRACE[0m [2mignore::walk[0m[2m:[0m automatically discovered CWD: /Users/rustam/startups/shared/rust-code
+[2m2026-03-05T01:53:50.376278Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: /Users/rustam/.config/git/ignore
+[2m2026-03-05T01:53:50.376618Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 0 basenames, 0 extensions, 0 prefixes, 1 suffixes, 0 required extensions, 0 regexes
+[2m2026-03-05T01:53:50.378022Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.gitignore
+[2m2026-03-05T01:53:50.378320Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 2 basenames, 0 extensions, 0 prefixes, 0 suffixes, 1 required extensions, 0 regexes
+[2m2026-03-05T01:53:50.378732Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.git/info/exclude
+[2m2026-03-05T01:53:50.381585Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T01:53:50.381939Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T01:53:50.382040Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
