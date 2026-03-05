@@ -338,14 +338,6 @@ impl<'a> App<'a> {
                             self.list_state.select(Some(len - 1));
                         }
                     }
-                    AppEvent::AgentPlan(plan) => {
-                        self.agent_plan = plan;
-                    }
-                    AppEvent::FileModified(path) => {
-                        if !self.modified_files.contains(&path) {
-                            self.modified_files.push(path);
-                        }
-                    }
                     AppEvent::AgentDone => {
                         self.is_thinking = false;
                         self.agent_task = None;
@@ -440,24 +432,41 @@ impl<'a> App<'a> {
         let tool_color = Color::Rgb(100, 200, 100); // Green
         let error_color = Color::Rgb(255, 100, 100); // Red
 
-        // Chat History using List
         let items: Vec<ListItem> = self.messages
             .iter()
             .map(|m| {
-                if m.starts_with(">") {
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(user_color).add_modifier(Modifier::BOLD)))
+                // Determine styling based on prefix
+                let style = if m.starts_with(">") {
+                    Style::default().fg(user_color).add_modifier(Modifier::BOLD)
                 } else if m.starts_with("🤖 Thinking") {
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)))
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
                 } else if m.starts_with("Analysis:") {
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(ai_color)))
+                    Style::default().fg(ai_color)
                 } else if m.starts_with("🛠️ Tool Result:") {
-                    // Make tool results slightly dimmed so they don't distract from conversation
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(Color::Gray)))
+                    Style::default().fg(Color::Gray)
                 } else if m.starts_with("❌") {
-                    ListItem::new(Text::from(m.as_str()).style(Style::default().fg(error_color).add_modifier(Modifier::BOLD)))
+                    Style::default().fg(error_color).add_modifier(Modifier::BOLD)
                 } else {
-                    ListItem::new(Text::from(m.as_str()))
+                    Style::default()
+                };
+
+                // Word wrap the text to fit within the chat area width.
+                // We subtract 2 for the borders.
+                let max_width = left_chunks[0].width.saturating_sub(2) as usize;
+                
+                let mut text_lines = Vec::new();
+                
+                for original_line in m.lines() {
+                    let wrapped_lines = textwrap::wrap(original_line, max_width);
+                    for line in wrapped_lines {
+                        text_lines.push(Line::from(Span::styled(line.to_string(), style)));
+                    }
                 }
+                
+                // Add an empty line between messages
+                text_lines.push(Line::from(""));
+                
+                ListItem::new(Text::from(text_lines))
             })
             .collect();
             
