@@ -3,7 +3,7 @@ use rc_baml::baml_client::{self, types};
 use rc_tools::{read_file, write_file, run_command, FuzzySearcher};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub enum AgentEvent {
     Message(String),
@@ -18,16 +18,60 @@ struct PersistedMessage {
 
 pub struct Agent {
     history: Vec<types::Message>,
+    session_file: PathBuf,
 }
 
 impl Agent {
     pub fn new() -> Self {
-        let mut agent = Self {
+        let _ = std::fs::create_dir_all(".rust-code");
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        let session_file = PathBuf::from(format!(".rust-code/session_{}.jsonl", timestamp));
+
+        Self {
             history: Vec::new(),
-        };
-        // Attempt to load existing history
-        let _ = agent.load_history();
-        agent
+            session_file,
+        }
+    }
+
+    pub fn load_last_session(&mut self) -> Result<()> {
+        if !Path::new(".rust-code").exists() {
+            return Ok(());
+        }
+        
+        let mut entries: Vec<_> = std::fs::read_dir(".rust-code")?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "jsonl"))
+            .collect();
+            
+        entries.sort_by_key(|e| e.file_name());
+        
+        if let Some(latest) = entries.last() {
+            self.load_session_file(&latest.path())?;
+        }
+        Ok(())
+    }
+
+    pub fn load_session_file(&mut self, path: &Path) -> Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        self.history.clear();
+
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if let Ok(persisted) = serde_json::from_str::<PersistedMessage>(&line) {
+                self.history.push(types::Message {
+                    role: persisted.role,
+                    content: persisted.content,
+                });
+            }
+        }
+        
+        self.session_file = path.to_path_buf();
+        Ok(())
     }
 
     pub fn history(&self) -> &[types::Message] {
@@ -62,30 +106,9 @@ impl Agent {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(".rust-code.jsonl")?;
+            .open(&self.session_file)?;
             
         writeln!(file, "{}", json)?;
-        Ok(())
-    }
-
-    fn load_history(&mut self) -> Result<()> {
-        let path = Path::new(".rust-code.jsonl");
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            let line = line?;
-            if let Ok(persisted) = serde_json::from_str::<PersistedMessage>(&line) {
-                self.history.push(types::Message {
-                    role: persisted.role,
-                    content: persisted.content,
-                });
-            }
-        }
         Ok(())
     }
 

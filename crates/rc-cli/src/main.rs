@@ -12,6 +12,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct Args {
     #[arg(short, long)]
     prompt: Option<String>,
+    
+    #[arg(short, long, default_value_t = false)]
+    resume: bool,
 }
 
 fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
@@ -56,6 +59,9 @@ async fn main() -> Result<()> {
         // Single prompt headless mode
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
+        if args.resume {
+            let _ = agent.load_last_session();
+        }
         agent.add_user_message(prompt);
         
         loop {
@@ -104,7 +110,7 @@ async fn main() -> Result<()> {
         let mut terminal = tui::init()?;
         let mut app = app::App::new();
         
-        let result = app.run(&mut terminal).await;
+        let result = app.run(&mut terminal, args.resume).await;
         
         tui::restore()?;
         

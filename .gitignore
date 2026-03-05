@@ -3,3 +3,4 @@
 .DS_Store
 .env
 .rust-code.jsonl
+.rust-code/
