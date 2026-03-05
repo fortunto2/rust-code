@@ -1,0 +1,15 @@
+[package]
+name = "rc-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tui-textarea.workspace = true
+
+rc-core = { path = "../rc-core" }
+rc-baml = { path = "../rc-baml" }
