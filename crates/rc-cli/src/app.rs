@@ -37,6 +37,7 @@ pub struct FuzzySearchState<'a> {
     pub filtered_files: Vec<String>,
     pub list_state: ListState,
     pub preview_lines: Vec<Line<'static>>,
+    pub preview_scroll: u16,
     pub searcher: FuzzySearcher,
 }
 
@@ -54,6 +55,7 @@ impl<'a> FuzzySearchState<'a> {
             filtered_files: Vec::new(),
             list_state,
             preview_lines: Vec::new(),
+            preview_scroll: 0,
             searcher: FuzzySearcher::new(),
         }
     }
@@ -110,6 +112,7 @@ pub struct SessionSearchState<'a> {
     pub filtered_items: Vec<SearchListItem>,
     pub list_state: ListState,
     pub preview_lines: Vec<Line<'static>>,
+    pub preview_scroll: u16,
     pub searcher: FuzzySearcher,
 }
 
@@ -126,6 +129,7 @@ impl<'a> SessionSearchState<'a> {
             filtered_items: Vec::new(),
             list_state,
             preview_lines: Vec::new(),
+            preview_scroll: 0,
             searcher: FuzzySearcher::new(),
         }
     }
@@ -278,6 +282,39 @@ impl<'a> App<'a> {
                 match event {
                     AppEvent::Ui(Event::Key(key_event)) if key_event.kind == KeyEventKind::Press => {
                         self.handle_key_event(key_event, tx.clone(), agent.clone()).await;
+                    }
+                    AppEvent::Ui(Event::Mouse(mouse_event)) => {
+                        match mouse_event.kind {
+                            crossterm::event::MouseEventKind::ScrollDown => {
+                                if matches!(self.mode, AppMode::FuzzySearch) {
+                                    let max_scroll = self.fuzzy_state.preview_lines.len().saturating_sub(1) as u16;
+                                    self.fuzzy_state.preview_scroll = (self.fuzzy_state.preview_scroll + 3).min(max_scroll);
+                                } else if matches!(self.mode, AppMode::SessionSearch) {
+                                    let max_scroll = self.session_state.preview_lines.len().saturating_sub(1) as u16;
+                                    self.session_state.preview_scroll = (self.session_state.preview_scroll + 3).min(max_scroll);
+                                } else {
+                                    // Chat mode list scrolling
+                                    if let Some(selected) = self.list_state.selected() {
+                                        let next = if selected + 1 < self.messages.len() { selected + 1 } else { selected };
+                                        self.list_state.select(Some(next));
+                                    }
+                                }
+                            }
+                            crossterm::event::MouseEventKind::ScrollUp => {
+                                if matches!(self.mode, AppMode::FuzzySearch) {
+                                    self.fuzzy_state.preview_scroll = self.fuzzy_state.preview_scroll.saturating_sub(3);
+                                } else if matches!(self.mode, AppMode::SessionSearch) {
+                                    self.session_state.preview_scroll = self.session_state.preview_scroll.saturating_sub(3);
+                                } else {
+                                    // Chat mode list scrolling
+                                    if let Some(selected) = self.list_state.selected() {
+                                        let prev = selected.saturating_sub(1);
+                                        self.list_state.select(Some(prev));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     AppEvent::AgentResponse(msg) => {
                         // Remove "Thinking..." message if it's the last one
@@ -467,7 +504,8 @@ impl<'a> App<'a> {
         
         let preview = Paragraph::new(self.session_state.preview_lines.clone())
             .block(Block::default().borders(Borders::ALL).title(" Preview "))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.session_state.preview_scroll, 0));
             
         frame.render_widget(preview, bottom_chunks[1]);
     }
@@ -530,12 +568,14 @@ impl<'a> App<'a> {
         // Render Preview
         let preview = Paragraph::new(self.fuzzy_state.preview_lines.clone())
             .block(Block::default().borders(Borders::ALL).title(" Preview "))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.fuzzy_state.preview_scroll, 0));
             
         frame.render_widget(preview, bottom_chunks[1]);
     }
 
     fn load_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
+        self.fuzzy_state.preview_scroll = 0;
         if let Some(selected) = self.fuzzy_state.list_state.selected() {
             if let Some(path) = self.fuzzy_state.filtered_files.get(selected) {
                 let path = path.clone();
@@ -577,6 +617,7 @@ impl<'a> App<'a> {
     }
 
     fn load_session_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
+        self.session_state.preview_scroll = 0;
         if let Some(selected) = self.session_state.list_state.selected() {
             if let Some(item) = self.session_state.filtered_items.get(selected) {
                 let path = item.path.clone();
@@ -646,6 +687,13 @@ impl<'a> App<'a> {
                     self.load_session_preview(tx);
                 }
             }
+            KeyCode::PageDown => {
+                let max_scroll = self.session_state.preview_lines.len().saturating_sub(1) as u16;
+                self.session_state.preview_scroll = (self.session_state.preview_scroll + 10).min(max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.session_state.preview_scroll = self.session_state.preview_scroll.saturating_sub(10);
+            }
             KeyCode::Enter => {
                 if let Some(selected) = self.session_state.list_state.selected() {
                     if let Some(item) = self.session_state.filtered_items.get(selected) {
@@ -686,6 +734,13 @@ impl<'a> App<'a> {
                     self.fuzzy_state.list_state.select(Some(prev));
                     self.load_preview(tx);
                 }
+            }
+            KeyCode::PageDown => {
+                let max_scroll = self.fuzzy_state.preview_lines.len().saturating_sub(1) as u16;
+                self.fuzzy_state.preview_scroll = (self.fuzzy_state.preview_scroll + 10).min(max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.fuzzy_state.preview_scroll = self.fuzzy_state.preview_scroll.saturating_sub(10);
             }
             KeyCode::Enter => {
                 // Select file and insert into chat
