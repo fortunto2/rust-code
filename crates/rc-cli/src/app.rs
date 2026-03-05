@@ -548,7 +548,14 @@ impl<'a> App<'a> {
         };
         
         let git_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
-            vec![ListItem::new("No git changes").style(Style::default().fg(Color::DarkGray))]
+            // Debug: show why it's empty
+            use rc_tools::git::git_status;
+            let debug_msg = match git_status() {
+                Ok(Some(_)) => "No changes (clean)",
+                Ok(None) => "Not a git repo",
+                Err(_) => "Git error",
+            };
+            vec![ListItem::new(format!("{} - Ctrl+G to refresh", debug_msg)).style(Style::default().fg(Color::DarkGray))]
         } else {
             self.git_sidebar.files
                 .iter()
