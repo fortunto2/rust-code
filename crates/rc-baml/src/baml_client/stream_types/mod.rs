@@ -23,6 +23,8 @@ pub enum StreamTypes {
 
     BashCommandTool(BashCommandTool),
 
+    EditFileTool(EditFileTool),
+
     FinishTaskTool(FinishTaskTool),
 
     Message(Message),
@@ -38,7 +40,7 @@ pub enum StreamTypes {
     WriteFileTool(WriteFileTool),
 
 
-    Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
 }
 
@@ -53,6 +55,8 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::AskUserTool(_) => "AskUserTool",
 
             StreamTypes::BashCommandTool(_) => "BashCommandTool",
+
+            StreamTypes::EditFileTool(_) => "EditFileTool",
 
             StreamTypes::FinishTaskTool(_) => "FinishTaskTool",
 
@@ -69,7 +73,7 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::WriteFileTool(_) => "WriteFileTool",
 
 
-            StreamTypes::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            StreamTypes::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
 
         }

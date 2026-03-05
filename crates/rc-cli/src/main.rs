@@ -58,22 +58,46 @@ async fn main() -> Result<()> {
         let mut agent = Agent::new();
         agent.add_user_message(prompt);
         
-        println!("Thinking...");
-        let step = agent.step("You are a helpful coding assistant. Use the tools provided.").await?;
-        
-        println!("\nAnalysis: {}", step.analysis);
-        println!("Plan updates:");
-        for p in step.plan_updates {
-            println!(" - {}", p);
-        }
-        
-        println!("\nAction:");
-        println!("{:?}", step.action);
-        
-        let result = agent.execute_action(&step.action).await?;
-        match result {
-            rc_core::AgentEvent::Message(msg) => println!("\nTool Result:\n{}", msg),
-            rc_core::AgentEvent::OpenEditor(path, _) => println!("\nAction requested opening editor for: {}", path),
+        loop {
+            println!("Thinking...");
+            let step = agent.step().await?;
+            
+            println!("\nAnalysis: {}", step.analysis);
+            println!("Plan updates:");
+            for p in &step.plan_updates {
+                println!(" - {}", p);
+            }
+            
+            println!("\nAction:");
+            println!("{:?}", step.action);
+            
+            agent.add_assistant_message(format!(
+                "Analysis: {}\nAction: {:?}", 
+                step.analysis, step.action
+            ));
+            
+            let is_done = matches!(
+                step.action,
+                rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+            );
+
+            let result = agent.execute_action(&step.action).await?;
+            match result {
+                rc_core::AgentEvent::Message(msg) => {
+                    println!("\nTool Result:\n{}", msg);
+                    agent.add_user_message(format!("Tool result:\n{}", msg));
+                }
+                rc_core::AgentEvent::OpenEditor(path, _) => {
+                    println!("\nAction requested opening editor for: {}", path);
+                    agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
+                }
+            }
+            
+            if is_done {
+                break;
+            }
+            println!("----------------------------------------");
         }
     } else {
         // Interactive TUI mode

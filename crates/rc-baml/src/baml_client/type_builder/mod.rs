@@ -69,6 +69,15 @@ impl TypeBuilder {
     }
 
 
+    /// Access the `EditFileTool` class builder.
+    pub fn EditFileTool(&self) -> EditFileToolClassBuilder {
+        EditFileToolClassBuilder::new(
+            self.inner.get_class("EditFileTool")
+                .expect("class EditFileTool is defined in schema")
+        )
+    }
+
+
     /// Access the `FinishTaskTool` class builder.
     pub fn FinishTaskTool(&self) -> FinishTaskToolClassBuilder {
         FinishTaskToolClassBuilder::new(

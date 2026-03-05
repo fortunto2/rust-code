@@ -9,12 +9,18 @@ class WriteFileTool {
   content string @description("Full content of the file")
 }
 
+class EditFileTool {
+  path string @description("Absolute or relative path to the file")
+  old_string string @description("The exact exact string to replace (must match exactly, including indentation)")
+  new_string string @description("The new string to replace it with")
+}
+
 class BashCommandTool {
   command string @description("Shell command to execute")
 }
 
 class SearchCodeTool {
-  query string @description("Text or regex to search in the codebase")
+  query string @description("Text or regex to search in file contents across the codebase (uses ripgrep)")
 }
 
 class OpenEditorTool {
@@ -33,7 +39,7 @@ class FinishTaskTool {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | BashCommandTool | SearchCodeTool | OpenEditorTool | AskUserTool | FinishTaskTool @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | OpenEditorTool | AskUserTool | FinishTaskTool @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt

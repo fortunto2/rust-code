@@ -94,8 +94,8 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&self, action: &types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&self, action: &types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
+        use types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path).await?;
@@ -105,23 +105,59 @@ impl Agent {
                 write_file(&cmd.path, &cmd.content).await?;
                 Ok(AgentEvent::Message(format!("Successfully wrote to {}", cmd.path)))
             }
+            EditFileTool(cmd) => {
+                rc_tools::fs::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
+                Ok(AgentEvent::Message(format!("Successfully edited {}", cmd.path)))
+            }
             BashCommandTool(cmd) => {
                 let output = run_command(&cmd.command).await?;
                 Ok(AgentEvent::Message(format!("Command output:\n{}", output)))
             }
             SearchCodeTool(cmd) => {
-                // Implement basic file path search first
-                let files = FuzzySearcher::get_all_files().await?;
-                let mut searcher = FuzzySearcher::new();
-                let matches = searcher.fuzzy_match_files(&cmd.query, &files);
+                // First, try fuzzy path matching just in case they are looking for a file
+                let mut result = String::new();
                 
-                let mut result = format!("Search results for '{}':\n", cmd.query);
-                for (score, path) in matches.iter().take(10) {
-                    result.push_str(&format!("{} (score: {})\n", path, score));
+                if let Ok(files) = FuzzySearcher::get_all_files().await {
+                    let mut searcher = FuzzySearcher::new();
+                    let matches = searcher.fuzzy_match_files(&cmd.query, &files);
+                    if !matches.is_empty() {
+                        result.push_str(&format!("File path matches for '{}':\n", cmd.query));
+                        for (score, path) in matches.iter().take(5) {
+                            if *score > 50 { // only show good matches
+                                result.push_str(&format!("- {}\n", path));
+                            }
+                        }
+                        result.push_str("\n");
+                    }
                 }
-                if matches.is_empty() {
-                    result.push_str("No matches found.");
+                
+                // Then, do a full text search using ripgrep (rg) if available, fallback to grep
+                result.push_str(&format!("Content search results for '{}':\n", cmd.query));
+                
+                // Escape quotes for bash
+                let safe_query = cmd.query.replace("'", "'\\''");
+                
+                let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
+                match run_command(&search_cmd).await {
+                    Ok(output) => {
+                        if output.trim().is_empty() {
+                            result.push_str("No content matches found.");
+                        } else {
+                            // truncate to avoid flooding context
+                            let lines: Vec<&str> = output.lines().collect();
+                            if lines.len() > 100 {
+                                result.push_str(&lines[..100].join("\n"));
+                                result.push_str(&format!("\n...[Truncated {} more lines]...", lines.len() - 100));
+                            } else {
+                                result.push_str(&output);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        result.push_str("No content matches found or search tool failed.");
+                    }
                 }
+                
                 Ok(AgentEvent::Message(result))
             }
             OpenEditorTool(cmd) => {

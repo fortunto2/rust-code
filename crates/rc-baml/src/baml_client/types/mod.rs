@@ -28,6 +28,8 @@ pub enum Types {
 
     BashCommandTool(BashCommandTool),
 
+    EditFileTool(EditFileTool),
+
     FinishTaskTool(FinishTaskTool),
 
     Message(Message),
@@ -44,7 +46,7 @@ pub enum Types {
 
 
 
-    Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
 }
 
@@ -59,6 +61,8 @@ impl baml::KnownTypes for Types {
             Types::AskUserTool(_) => "AskUserTool",
 
             Types::BashCommandTool(_) => "BashCommandTool",
+
+            Types::EditFileTool(_) => "EditFileTool",
 
             Types::FinishTaskTool(_) => "FinishTaskTool",
 
@@ -76,7 +80,7 @@ impl baml::KnownTypes for Types {
 
 
 
-            Types::Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            Types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
 
         }

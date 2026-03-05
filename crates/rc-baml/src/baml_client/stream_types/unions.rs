@@ -11,16 +11,19 @@ use crate::baml_client::types;
 use super::*;
 
 
-/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.BashCommandTool | Streaming.SearchCodeTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | null)
+/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.SearchCodeTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | null)
 #[derive(Debug, Clone, BamlDecode)]
 #[baml(union)]
-pub enum Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+pub enum Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
 
     #[baml(name = "ReadFileTool",)]
     ReadFileTool(ReadFileTool),
     
     #[baml(name = "WriteFileTool",)]
     WriteFileTool(WriteFileTool),
+    
+    #[baml(name = "EditFileTool",)]
+    EditFileTool(EditFileTool),
     
     #[baml(name = "BashCommandTool",)]
     BashCommandTool(BashCommandTool),
@@ -39,13 +42,13 @@ pub enum Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrRea
     
 }
 
-impl AsRef<Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
-    fn as_ref(&self) -> &Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl AsRef<Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+    fn as_ref(&self) -> &Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
         self
     }
 }
 
-impl Default for Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl Default for Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
     fn default() -> Self {
         
            

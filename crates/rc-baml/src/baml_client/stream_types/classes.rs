@@ -63,6 +63,36 @@ impl AsRef<BashCommandTool> for BashCommandTool {
 
 #[derive(Debug, Clone, Default, BamlDecode)]
 
+pub struct EditFileTool {
+
+
+
+    pub path: Option<String>,
+
+
+
+    pub old_string: Option<String>,
+
+
+
+    pub new_string: Option<String>,
+
+
+}
+
+
+
+impl AsRef<EditFileTool> for EditFileTool {
+    fn as_ref(&self) -> &EditFileTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlDecode)]
+
 pub struct FinishTaskTool {
 
 
@@ -123,7 +153,7 @@ pub struct NextStep {
 
 
 
-    pub action: Option<Union7AskUserToolOrBashCommandToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
+    pub action: Option<Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
 
 
 }
