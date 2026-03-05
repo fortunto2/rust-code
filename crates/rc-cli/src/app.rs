@@ -454,7 +454,7 @@ impl<'a> App<'a> {
         let border_style = Style::default().fg(Color::DarkGray);
         let user_color = Color::Rgb(100, 200, 255); // Light Blue
         let ai_color = Color::Rgb(200, 200, 200);   // Light Gray
-        let tool_color = Color::Rgb(100, 200, 100); // Green
+        let _tool_color = Color::Rgb(100, 200, 100); // Green
         let error_color = Color::Rgb(255, 100, 100); // Red
 
         let items: Vec<ListItem> = self.messages
@@ -579,7 +579,7 @@ impl<'a> App<'a> {
         // Show diff preview if sidebar is focused and we have a selection
         if self.sidebar_focused && !self.git_sidebar.files.is_empty() {
             if let Some(selected) = self.git_sidebar.list_state.selected() {
-                if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                if let Some((_, _path)) = self.git_sidebar.files.get(selected) {
                     // Show mini preview in the sidebar area or as a popup
                     // For now, we'll add the diff to the chat
                 }
