@@ -69,14 +69,13 @@ pub fn git_status() -> Result<Option<GitStatus>> {
 }
 
 pub fn git_diff(path: Option<&str>, cached: bool) -> Result<String> {
-    let mut args = vec!["diff"];
+    let mut args = vec!["--no-pager", "diff"];
 
     if cached {
         args.push("--cached");
     }
 
     args.push("--no-color");
-    args.push("--no-pager");
 
     if let Some(p) = path {
         args.push("--");

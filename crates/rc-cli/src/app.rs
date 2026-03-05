@@ -17,6 +17,7 @@ pub enum AppMode {
     Chat,
     FuzzySearch,
     SessionSearch,
+    GitDiffSearch,
 }
 
 pub enum AppEvent {
@@ -351,6 +352,7 @@ impl<'a> App<'a> {
                             _ => {}
                         }
                     }
+                    AppEvent::Ui(_) => {}
                     AppEvent::AgentResponse(msg) => {
                         // Remove "Thinking..." message if it's the last one
                         if let Some(last) = self.messages.last() {
@@ -366,6 +368,15 @@ impl<'a> App<'a> {
                         if len > 0 {
                             self.list_state.select(Some(len - 1));
                         }
+                    }
+                    AppEvent::AgentPlan(plan) => {
+                        self.agent_plan = plan;
+                    }
+                    AppEvent::FileModified(path) => {
+                        if !self.modified_files.contains(&path) {
+                            self.modified_files.push(path);
+                        }
+                        self.refresh_git_sidebar();
                     }
                     AppEvent::AgentDone => {
                         self.is_thinking = false;
@@ -428,7 +439,6 @@ impl<'a> App<'a> {
                     AppEvent::Tick => {
                         // We could update a spinner here if `is_thinking` is true
                     }
-                    _ => {}
                 }
             }
         }
@@ -521,8 +531,7 @@ impl<'a> App<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(8),  // Plan (fixed height)
-                Constraint::Length(12), // Git Files List
-                Constraint::Min(10),    // Diff Preview
+                Constraint::Min(10),    // Git Files List
             ])
             .split(horizontal_chunks[1]);
             
@@ -542,20 +551,13 @@ impl<'a> App<'a> {
         
         // Git Files Panel
         let git_title = if self.sidebar_focused {
-            " Git Files [FOCUSED - ↑↓ navigate, Ctrl+O open] "
+            " Git Files [FOCUSED - ↑↓ navigate, Enter preview, Ctrl+O open] "
         } else {
             " Git Files [Ctrl+G refresh, Tab focus] "
         };
         
         let git_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
-            // Debug: show why it's empty
-            use rc_tools::git::git_status;
-            let debug_msg = match git_status() {
-                Ok(Some(_)) => "No changes (clean)",
-                Ok(None) => "Not a git repo",
-                Err(_) => "Git error",
-            };
-            vec![ListItem::new(format!("{} - Ctrl+G to refresh", debug_msg)).style(Style::default().fg(Color::DarkGray))]
+            vec![ListItem::new("No git changes - Ctrl+G to refresh").style(Style::default().fg(Color::DarkGray))]
         } else {
             self.git_sidebar.files
                 .iter()
@@ -588,28 +590,65 @@ impl<'a> App<'a> {
         
         frame.render_stateful_widget(git_list, sidebar_chunks[1], &mut self.git_sidebar.list_state);
         
-        // Diff Preview Panel
-        let diff_preview = if self.sidebar_focused && !self.git_sidebar.selected_diff.is_empty() {
-            List::new(
-                self.git_sidebar.selected_diff
-                    .iter()
-                    .map(|line| ListItem::new(line.clone()))
-                    .collect::<Vec<_>>()
-            )
-            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Diff Preview "))
-        } else {
-            List::new(vec![ListItem::new("Select a file to see diff")])
-                .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Diff Preview "))
-        };
-        
-        frame.render_widget(diff_preview, sidebar_chunks[2]);
-        
         // Render Popup if active
         match self.mode {
             AppMode::FuzzySearch => self.draw_fuzzy_popup(frame, area),
             AppMode::SessionSearch => self.draw_session_popup(frame, area),
+            AppMode::GitDiffSearch => self.draw_git_diff_popup(frame, area),
             AppMode::Chat => {}
         }
+    }
+
+    fn draw_git_diff_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 80) / 100;
+        let popup_height = (area.height * 80) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" Git Diff Preview (Esc close, Enter insert path, Ctrl+O open) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(inner_area);
+
+        let file_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
+            vec![ListItem::new("No git changes")]
+        } else {
+            self.git_sidebar
+                .files
+                .iter()
+                .map(|(status, path)| ListItem::new(format!("[{}] {}", status, path)))
+                .collect()
+        };
+
+        let file_list = List::new(file_items)
+            .block(Block::default().borders(Borders::ALL).title(" Changed Files "))
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(file_list, chunks[0], &mut self.git_sidebar.list_state);
+
+        let preview_items: Vec<ListItem> = if self.git_sidebar.selected_diff.is_empty() {
+            vec![ListItem::new("Select a file to see diff")]
+        } else {
+            self.git_sidebar
+                .selected_diff
+                .iter()
+                .map(|line| ListItem::new(line.clone()))
+                .collect()
+        };
+
+        let preview = List::new(preview_items)
+            .block(Block::default().borders(Borders::ALL).title(" Diff Preview "));
+        frame.render_widget(preview, chunks[1]);
     }
     
     fn draw_session_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -822,32 +861,43 @@ impl<'a> App<'a> {
     }
 
     fn refresh_git_sidebar(&mut self) {
-        use rc_tools::git::git_status;
-        
-        if let Ok(Some(status)) = git_status() {
-            self.git_sidebar.files.clear();
-            
-            // Add modified files
-            for file in &status.modified_files {
-                self.git_sidebar.files.push(("M".to_string(), file.clone()));
+        self.git_sidebar.files.clear();
+
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .output();
+
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.len() < 3 {
+                    continue;
+                }
+
+                let code = &line[0..2];
+                let path = line[3..].to_string();
+                let label = if code == "??" {
+                    "?".to_string()
+                } else if code.contains('A') {
+                    "A".to_string()
+                } else if code.contains('D') {
+                    "D".to_string()
+                } else if code.contains('R') {
+                    "R".to_string()
+                } else {
+                    "M".to_string()
+                };
+
+                self.git_sidebar.files.push((label, path));
             }
-            // Add staged files
-            for file in &status.staged_files {
-                self.git_sidebar.files.push(("A".to_string(), file.clone()));
-            }
-            // Add untracked files
-            for file in &status.untracked_files {
-                self.git_sidebar.files.push(("?".to_string(), file.clone()));
-            }
-            
-            // Reset selection and load diff for first file
-            if !self.git_sidebar.files.is_empty() {
-                self.git_sidebar.list_state.select(Some(0));
-                self.load_git_diff();
-            } else {
-                self.git_sidebar.list_state.select(None);
-                self.git_sidebar.selected_diff.clear();
-            }
+        }
+
+        if !self.git_sidebar.files.is_empty() {
+            self.git_sidebar.list_state.select(Some(0));
+            self.load_git_diff();
+        } else {
+            self.git_sidebar.list_state.select(None);
+            self.git_sidebar.selected_diff.clear();
         }
     }
 
@@ -859,7 +909,7 @@ impl<'a> App<'a> {
                 let path = path.clone();
                 // Load diff synchronously for simplicity in sidebar
                 match std::process::Command::new("git")
-                    .args(["diff", "--no-color", "--no-pager", "--", &path])
+                    .args(["--no-pager", "diff", "--no-color", "--", &path])
                     .env("GIT_PAGER", "cat")
                     .output() 
                 {
@@ -899,6 +949,47 @@ impl<'a> App<'a> {
             AppMode::Chat => self.handle_chat_key_event(key_event, tx, agent).await,
             AppMode::FuzzySearch => self.handle_fuzzy_key_event(key_event, tx).await,
             AppMode::SessionSearch => self.handle_session_key_event(key_event, tx, agent).await,
+            AppMode::GitDiffSearch => self.handle_git_diff_key_event(key_event, tx).await,
+        }
+    }
+
+    async fn handle_git_diff_key_event(&mut self, key_event: event::KeyEvent, tx: mpsc::Sender<AppEvent>) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.git_sidebar.list_state.selected() {
+                    let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
+                    self.git_sidebar.list_state.select(Some(next));
+                    self.load_git_diff();
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.git_sidebar.list_state.selected() {
+                    let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
+                    self.git_sidebar.list_state.select(Some(prev));
+                    self.load_git_diff();
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(selected) = self.git_sidebar.list_state.selected() {
+                    if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                        self.textarea.insert_str(path);
+                        self.textarea.insert_str(" ");
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.git_sidebar.list_state.selected() {
+                    if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                        let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {}
         }
     }
     
@@ -1033,8 +1124,10 @@ impl<'a> App<'a> {
                     return;
                 }
                 KeyCode::Enter => {
-                    // Just unfocus, diff is already shown in preview
+                    // Open git diff popup (fuzzy-like view)
+                    self.load_git_diff();
                     self.sidebar_focused = false;
+                    self.mode = AppMode::GitDiffSearch;
                     return;
                 }
                 KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1249,4 +1342,3 @@ impl<'a> App<'a> {
         }
     }
 }
-
