@@ -87,6 +87,42 @@ impl TypeBuilder {
     }
 
 
+    /// Access the `GitAddTool` class builder.
+    pub fn GitAddTool(&self) -> GitAddToolClassBuilder {
+        GitAddToolClassBuilder::new(
+            self.inner.get_class("GitAddTool")
+                .expect("class GitAddTool is defined in schema")
+        )
+    }
+
+
+    /// Access the `GitCommitTool` class builder.
+    pub fn GitCommitTool(&self) -> GitCommitToolClassBuilder {
+        GitCommitToolClassBuilder::new(
+            self.inner.get_class("GitCommitTool")
+                .expect("class GitCommitTool is defined in schema")
+        )
+    }
+
+
+    /// Access the `GitDiffTool` class builder.
+    pub fn GitDiffTool(&self) -> GitDiffToolClassBuilder {
+        GitDiffToolClassBuilder::new(
+            self.inner.get_class("GitDiffTool")
+                .expect("class GitDiffTool is defined in schema")
+        )
+    }
+
+
+    /// Access the `GitStatusTool` class builder.
+    pub fn GitStatusTool(&self) -> GitStatusToolClassBuilder {
+        GitStatusToolClassBuilder::new(
+            self.inner.get_class("GitStatusTool")
+                .expect("class GitStatusTool is defined in schema")
+        )
+    }
+
+
     /// Access the `Message` class builder.
     pub fn Message(&self) -> MessageClassBuilder {
         MessageClassBuilder::new(

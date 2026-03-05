@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rc_baml::baml_client::{self, types};
-use rc_tools::{read_file, write_file, run_command, FuzzySearcher};
+use rc_tools::{read_file, write_file, run_command, FuzzySearcher, git_status, git_diff, git_add, git_commit};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -117,11 +117,11 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&self, action: &types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&self, action: &types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
+        use types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
-                let content = read_file(&cmd.path).await?;
+                let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
                 Ok(AgentEvent::Message(format!("File contents of {}:\n{}", cmd.path, content)))
             }
             WriteFileTool(cmd) => {
@@ -182,6 +182,49 @@ impl Agent {
                 }
                 
                 Ok(AgentEvent::Message(result))
+            }
+            GitStatusTool(_cmd) => {
+                match git_status()? {
+                    Some(status) => {
+                        let mut result = format!("Git Status:\nBranch: {}\nDirty: {}\n", status.branch, status.dirty);
+                        if !status.modified_files.is_empty() {
+                            result.push_str("\nModified files:\n");
+                            for f in &status.modified_files {
+                                result.push_str(&format!("  - {}\n", f));
+                            }
+                        }
+                        if !status.staged_files.is_empty() {
+                            result.push_str("\nStaged files:\n");
+                            for f in &status.staged_files {
+                                result.push_str(&format!("  + {}\n", f));
+                            }
+                        }
+                        if !status.untracked_files.is_empty() {
+                            result.push_str("\nUntracked files:\n");
+                            for f in &status.untracked_files {
+                                result.push_str(&format!("  ? {}\n", f));
+                            }
+                        }
+                        Ok(AgentEvent::Message(result))
+                    }
+                    None => Ok(AgentEvent::Message("Not in a git repository".to_string())),
+                }
+            }
+            GitDiffTool(cmd) => {
+                let diff = git_diff(cmd.path.as_deref(), cmd.cached.unwrap_or(false))?;
+                if diff.is_empty() {
+                    Ok(AgentEvent::Message("No changes to show".to_string()))
+                } else {
+                    Ok(AgentEvent::Message(format!("Git Diff:\n{}", diff)))
+                }
+            }
+            GitAddTool(cmd) => {
+                git_add(&cmd.paths)?;
+                Ok(AgentEvent::Message(format!("Added {} files to staging", cmd.paths.len())))
+            }
+            GitCommitTool(cmd) => {
+                git_commit(&cmd.message)?;
+                Ok(AgentEvent::Message(format!("Committed: {}", cmd.message)))
             }
             OpenEditorTool(cmd) => {
                 // We return a special event so the UI layer can suspend itself and open the editor

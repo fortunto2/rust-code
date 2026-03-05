@@ -32,6 +32,14 @@ pub enum Types {
 
     FinishTaskTool(FinishTaskTool),
 
+    GitAddTool(GitAddTool),
+
+    GitCommitTool(GitCommitTool),
+
+    GitDiffTool(GitDiffTool),
+
+    GitStatusTool(GitStatusTool),
+
     Message(Message),
 
     NextStep(NextStep),
@@ -46,7 +54,7 @@ pub enum Types {
 
 
 
-    Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
 }
 
@@ -66,6 +74,14 @@ impl baml::KnownTypes for Types {
 
             Types::FinishTaskTool(_) => "FinishTaskTool",
 
+            Types::GitAddTool(_) => "GitAddTool",
+
+            Types::GitCommitTool(_) => "GitCommitTool",
+
+            Types::GitDiffTool(_) => "GitDiffTool",
+
+            Types::GitStatusTool(_) => "GitStatusTool",
+
             Types::Message(_) => "Message",
 
             Types::NextStep(_) => "NextStep",
@@ -80,7 +96,7 @@ impl baml::KnownTypes for Types {
 
 
 
-            Types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            Types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
 
         }

@@ -2,6 +2,8 @@
 
 class ReadFileTool {
   path string @description("Absolute or relative path to the file")
+  offset int? @description("Optional: line number to start reading from (0-indexed)")
+  limit int? @description("Optional: maximum number of lines to read (default 1000)")
 }
 
 class WriteFileTool {
@@ -23,6 +25,23 @@ class SearchCodeTool {
   query string @description("Text or regex to search in file contents across the codebase (uses ripgrep)")
 }
 
+class GitStatusTool {
+  dummy string? @description("Empty tool - just call it to get git status")
+}
+
+class GitDiffTool {
+  path string? @description("Optional specific file to diff. If not provided, shows all changes")
+  cached bool? @description("If true, shows staged changes")
+}
+
+class GitAddTool {
+  paths string[] @description("Files to add to staging area")
+}
+
+class GitCommitTool {
+  message string @description("Commit message")
+}
+
 class OpenEditorTool {
   path string @description("File to open in user's editor")
   line int? @description("Optional line number to jump to")
@@ -39,7 +58,7 @@ class FinishTaskTool {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | OpenEditorTool | AskUserTool | FinishTaskTool @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt

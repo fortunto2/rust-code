@@ -671,7 +671,7 @@ impl<'a> App<'a> {
                 let path = path.clone();
                 tokio::spawn(async move {
                     // Try to read first part of the file
-                    match rc_tools::read_file(&path).await {
+                    match rc_tools::read_file(&path, None, None).await {
                         Ok(content) => {
                             // Truncate if too long
                             let content_to_highlight = if content.chars().count() > 5000 {
@@ -990,18 +990,18 @@ impl<'a> App<'a> {
                                     
                                     let is_done = matches!(
                                         step.action,
-                                        rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                        rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                        rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                        rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
                                     );
 
                                     // Execute the action
                                     match locked_agent.execute_action(&step.action).await {
                                         Ok(rc_core::AgentEvent::Message(result)) => {
                                             // Check if it was an edit/write action to update sidebar
-                                            if let rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
+                                            if let rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
-                                            if let rc_baml::baml_client::types::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
+                                            if let rc_baml::baml_client::types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
                                             

@@ -11,10 +11,10 @@ use crate::baml_client::types;
 use super::*;
 
 
-/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.SearchCodeTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | null)
+/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.SearchCodeTool | Streaming.GitStatusTool | Streaming.GitDiffTool | Streaming.GitAddTool | Streaming.GitCommitTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | null)
 #[derive(Debug, Clone, BamlDecode)]
 #[baml(union)]
-pub enum Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+pub enum Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
 
     #[baml(name = "ReadFileTool",)]
     ReadFileTool(ReadFileTool),
@@ -31,6 +31,18 @@ pub enum Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenE
     #[baml(name = "SearchCodeTool",)]
     SearchCodeTool(SearchCodeTool),
     
+    #[baml(name = "GitStatusTool",)]
+    GitStatusTool(GitStatusTool),
+    
+    #[baml(name = "GitDiffTool",)]
+    GitDiffTool(GitDiffTool),
+    
+    #[baml(name = "GitAddTool",)]
+    GitAddTool(GitAddTool),
+    
+    #[baml(name = "GitCommitTool",)]
+    GitCommitTool(GitCommitTool),
+    
     #[baml(name = "OpenEditorTool",)]
     OpenEditorTool(OpenEditorTool),
     
@@ -42,13 +54,13 @@ pub enum Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenE
     
 }
 
-impl AsRef<Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
-    fn as_ref(&self) -> &Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl AsRef<Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+    fn as_ref(&self) -> &Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
         self
     }
 }
 
-impl Default for Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl Default for Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
     fn default() -> Self {
         
            

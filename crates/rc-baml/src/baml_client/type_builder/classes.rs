@@ -184,6 +184,177 @@ impl FinishTaskToolClassBuilder {
 }
 
 
+/// Wrapper for the `GitAddTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct GitAddToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl GitAddToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("GitAddTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `paths` field builder.
+    pub fn property_paths(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("paths")
+            .expect("GitAddTool.paths is statically defined in .baml and should always be present")
+    }
+
+}
+
+
+/// Wrapper for the `GitCommitTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct GitCommitToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl GitCommitToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("GitCommitTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `message` field builder.
+    pub fn property_message(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("message")
+            .expect("GitCommitTool.message is statically defined in .baml and should always be present")
+    }
+
+}
+
+
+/// Wrapper for the `GitDiffTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct GitDiffToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl GitDiffToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("GitDiffTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `path` field builder.
+    pub fn property_path(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("path")
+            .expect("GitDiffTool.path is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `cached` field builder.
+    pub fn property_cached(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("cached")
+            .expect("GitDiffTool.cached is statically defined in .baml and should always be present")
+    }
+
+}
+
+
+/// Wrapper for the `GitStatusTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct GitStatusToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl GitStatusToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("GitStatusTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `dummy` field builder.
+    pub fn property_dummy(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("dummy")
+            .expect("GitStatusTool.dummy is statically defined in .baml and should always be present")
+    }
+
+}
+
+
 /// Wrapper for the `Message` class builder.
 ///
 /// Provides type-safe method access to fields defined in the schema.
@@ -371,6 +542,20 @@ impl ReadFileToolClassBuilder {
     pub fn property_path(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("path")
             .expect("ReadFileTool.path is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `offset` field builder.
+    pub fn property_offset(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("offset")
+            .expect("ReadFileTool.offset is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `limit` field builder.
+    pub fn property_limit(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("limit")
+            .expect("ReadFileTool.limit is statically defined in .baml and should always be present")
     }
 
 }

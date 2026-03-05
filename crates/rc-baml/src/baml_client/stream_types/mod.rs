@@ -27,6 +27,14 @@ pub enum StreamTypes {
 
     FinishTaskTool(FinishTaskTool),
 
+    GitAddTool(GitAddTool),
+
+    GitCommitTool(GitCommitTool),
+
+    GitDiffTool(GitDiffTool),
+
+    GitStatusTool(GitStatusTool),
+
     Message(Message),
 
     NextStep(NextStep),
@@ -40,7 +48,7 @@ pub enum StreamTypes {
     WriteFileTool(WriteFileTool),
 
 
-    Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
 }
 
@@ -60,6 +68,14 @@ impl baml::KnownTypes for StreamTypes {
 
             StreamTypes::FinishTaskTool(_) => "FinishTaskTool",
 
+            StreamTypes::GitAddTool(_) => "GitAddTool",
+
+            StreamTypes::GitCommitTool(_) => "GitCommitTool",
+
+            StreamTypes::GitDiffTool(_) => "GitDiffTool",
+
+            StreamTypes::GitStatusTool(_) => "GitStatusTool",
+
             StreamTypes::Message(_) => "Message",
 
             StreamTypes::NextStep(_) => "NextStep",
@@ -73,7 +89,7 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::WriteFileTool(_) => "WriteFileTool",
 
 
-            StreamTypes::Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            StreamTypes::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
 
         }

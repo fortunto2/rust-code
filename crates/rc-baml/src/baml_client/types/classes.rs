@@ -110,6 +110,98 @@ impl AsRef<FinishTaskTool> for FinishTaskTool {
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
+pub struct GitAddTool {
+
+
+
+    pub paths: Vec<String>,
+
+
+}
+
+
+
+impl AsRef<GitAddTool> for GitAddTool {
+    fn as_ref(&self) -> &GitAddTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
+pub struct GitCommitTool {
+
+
+
+    pub message: String,
+
+
+}
+
+
+
+impl AsRef<GitCommitTool> for GitCommitTool {
+    fn as_ref(&self) -> &GitCommitTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
+pub struct GitDiffTool {
+
+
+
+    pub path: Option<String>,
+
+
+
+    pub cached: Option<bool>,
+
+
+}
+
+
+
+impl AsRef<GitDiffTool> for GitDiffTool {
+    fn as_ref(&self) -> &GitDiffTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
+pub struct GitStatusTool {
+
+
+
+    pub dummy: Option<String>,
+
+
+}
+
+
+
+impl AsRef<GitStatusTool> for GitStatusTool {
+    fn as_ref(&self) -> &GitStatusTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
 pub struct Message {
 
 
@@ -148,7 +240,7 @@ pub struct NextStep {
 
 
 
-    pub action: Union8AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool,
+    pub action: Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool,
 
 
 }
@@ -197,6 +289,14 @@ pub struct ReadFileTool {
 
 
     pub path: String,
+
+
+
+    pub offset: Option<i64>,
+
+
+
+    pub limit: Option<i64>,
 
 
 }
