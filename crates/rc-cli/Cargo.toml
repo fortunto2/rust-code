@@ -9,6 +9,8 @@ anyhow.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 tui-textarea.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 rc-core = { path = "../rc-core" }
 rc-baml = { path = "../rc-baml" }

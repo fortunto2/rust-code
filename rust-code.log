@@ -126,3 +126,55 @@
 [2m2026-03-05T14:24:28.615297Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(40882063488), interests=READABLE | WRITABLE
 [2m2026-03-05T14:24:28.631060Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
 [2m2026-03-05T14:24:28.631118Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:41:42.992051Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T14:41:42.992211Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T14:41:50.995843Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(43872554368), interests=READABLE | WRITABLE
+[2m2026-03-05T14:41:50.995896Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(43872554112), interests=READABLE | WRITABLE
+[2m2026-03-05T14:41:59.645148Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:41:59.645199Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:51:50.569984Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(46053495424), interests=READABLE | WRITABLE
+[2m2026-03-05T14:51:50.570075Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(46053495680), interests=READABLE | WRITABLE
+[2m2026-03-05T14:51:59.381793Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:51:59.381826Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:57:32.568740Z[0m [35mTRACE[0m [2mignore::walk[0m[2m:[0m automatically discovered CWD: /Users/rustam/startups/shared/rust-code
+[2m2026-03-05T14:57:32.574287Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: /Users/rustam/.config/git/ignore
+[2m2026-03-05T14:57:32.574621Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 0 basenames, 0 extensions, 0 prefixes, 1 suffixes, 0 required extensions, 0 regexes
+[2m2026-03-05T14:57:32.575601Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.gitignore
+[2m2026-03-05T14:57:32.575833Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 3 basenames, 0 extensions, 0 prefixes, 0 suffixes, 1 required extensions, 0 regexes
+[2m2026-03-05T14:57:32.576131Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.git/info/exclude
+[2m2026-03-05T14:57:32.578049Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T14:57:32.578268Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.rust-code.jsonl: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: ".rust-code.jsonl", actual: "**/.rust-code.jsonl", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T14:57:32.578304Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T14:57:32.578366Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T14:57:32.580647Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(42257637248), interests=READABLE | WRITABLE
+[2m2026-03-05T14:57:32.580698Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(42257641088), interests=READABLE | WRITABLE
+[2m2026-03-05T14:57:32.627970Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T14:57:32.628005Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:01:19.924078Z[0m [35mTRACE[0m [2mignore::walk[0m[2m:[0m automatically discovered CWD: /Users/rustam/startups/shared/rust-code
+[2m2026-03-05T15:01:19.928424Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: /Users/rustam/.config/git/ignore
+[2m2026-03-05T15:01:19.928695Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 0 basenames, 0 extensions, 0 prefixes, 1 suffixes, 0 required extensions, 0 regexes
+[2m2026-03-05T15:01:19.929472Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.gitignore
+[2m2026-03-05T15:01:19.929675Z[0m [34mDEBUG[0m [2mglobset[0m[2m:[0m built glob set; 1 literals, 3 basenames, 0 extensions, 0 prefixes, 0 suffixes, 1 required extensions, 0 regexes
+[2m2026-03-05T15:01:19.929925Z[0m [34mDEBUG[0m [2mignore::gitignore[0m[2m:[0m opened gitignore file: ./.git/info/exclude
+[2m2026-03-05T15:01:19.931653Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./target: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: "/target", actual: "target", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T15:01:19.931855Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.rust-code.jsonl: Ignore(IgnoreMatch(Gitignore(Glob { from: Some("./.gitignore"), original: ".rust-code.jsonl", actual: "**/.rust-code.jsonl", is_whitelist: false, is_only_dir: false })))
+[2m2026-03-05T15:01:19.931888Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.gitignore: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T15:01:19.931943Z[0m [34mDEBUG[0m [2mignore::walk[0m[2m:[0m ignoring ./.git: Ignore(IgnoreMatch(Hidden))
+[2m2026-03-05T15:01:19.934235Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(51719987328), interests=READABLE | WRITABLE
+[2m2026-03-05T15:01:19.934303Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(51719988608), interests=READABLE | WRITABLE
+[2m2026-03-05T15:01:19.969256Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:01:19.969292Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:31:05.762449Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(47429376640), interests=READABLE | WRITABLE
+[2m2026-03-05T15:31:05.762546Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(47429376896), interests=READABLE | WRITABLE
+[2m2026-03-05T15:31:05.846824Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:31:05.846879Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:41:26.151288Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(0), interests=READABLE
+[2m2026-03-05T15:41:26.151389Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(1), interests=READABLE
+[2m2026-03-05T15:42:51.225663Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(53003476608), interests=READABLE | WRITABLE
+[2m2026-03-05T15:42:51.225781Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(53003480960), interests=READABLE | WRITABLE
+[2m2026-03-05T15:42:51.434708Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:42:51.434748Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:42:57.046057Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(53003478144), interests=READABLE | WRITABLE
+[2m2026-03-05T15:42:57.046123Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m registering event source with poller: token=Token(53003482752), interests=READABLE | WRITABLE
+[2m2026-03-05T15:46:18.420916Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller
+[2m2026-03-05T15:46:18.420978Z[0m [35mTRACE[0m [2mmio::poll[0m[2m:[0m deregistering event source from poller

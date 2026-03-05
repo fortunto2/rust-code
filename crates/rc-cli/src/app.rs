@@ -27,7 +27,7 @@ pub enum AppEvent {
     FilesLoaded(Vec<String>),
     PreviewLoaded(Vec<Line<'static>>),
     SuspendAndRun(String, Option<i64>),
-    SessionsLoaded(Vec<String>),
+    SessionsLoaded(Vec<SessionEntry>),
     SessionLoaded,
 }
 
@@ -76,10 +76,38 @@ impl<'a> FuzzySearchState<'a> {
     }
 }
 
+#[derive(serde::Deserialize, Clone)]
+pub struct HistoryMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Clone)]
+pub struct SessionEntry {
+    pub path: String,
+    pub timestamp: u64,
+    pub first_message: String,
+    pub all_messages: Vec<HistoryMessage>,
+}
+
+#[derive(Clone)]
+pub struct SearchListItem {
+    pub path: String,
+    pub display: String,
+    pub search_text: String,
+}
+
+#[derive(PartialEq)]
+pub enum SessionSearchMode {
+    BySession,
+    ByMessage,
+}
+
 pub struct SessionSearchState<'a> {
     pub input: TextArea<'a>,
-    pub all_sessions: Vec<String>,
-    pub filtered_sessions: Vec<String>,
+    pub mode: SessionSearchMode,
+    pub all_entries: Vec<SessionEntry>,
+    pub filtered_items: Vec<SearchListItem>,
     pub list_state: ListState,
     pub preview_lines: Vec<Line<'static>>,
     pub searcher: FuzzySearcher,
@@ -88,13 +116,14 @@ pub struct SessionSearchState<'a> {
 impl<'a> SessionSearchState<'a> {
     pub fn new() -> Self {
         let mut input = TextArea::default();
-        input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions "));
+        input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
             input,
-            all_sessions: Vec::new(),
-            filtered_sessions: Vec::new(),
+            mode: SessionSearchMode::BySession,
+            all_entries: Vec::new(),
+            filtered_items: Vec::new(),
             list_state,
             preview_lines: Vec::new(),
             searcher: FuzzySearcher::new(),
@@ -103,13 +132,47 @@ impl<'a> SessionSearchState<'a> {
     
     pub fn update_search(&mut self) {
         let query = self.input.lines().join("");
-        if query.trim().is_empty() {
-            self.filtered_sessions = self.all_sessions.clone();
-        } else {
-            let matches = self.searcher.fuzzy_match_files(&query, &self.all_sessions);
-            self.filtered_sessions = matches.into_iter().map(|(_, path)| path).collect();
+        
+        let mut candidates = Vec::new();
+        
+        match self.mode {
+            SessionSearchMode::BySession => {
+                for entry in &self.all_entries {
+                    candidates.push(SearchListItem {
+                        path: entry.path.clone(),
+                        display: format!("{} ({})", entry.first_message, entry.path),
+                        search_text: entry.first_message.clone(),
+                    });
+                }
+            }
+            SessionSearchMode::ByMessage => {
+                for entry in &self.all_entries {
+                    for msg in &entry.all_messages {
+                        if msg.role == "user" {
+                            candidates.push(SearchListItem {
+                                path: entry.path.clone(),
+                                display: format!("> {}", msg.content.chars().take(80).collect::<String>()),
+                                search_text: msg.content.clone(),
+                            });
+                        }
+                    }
+                }
+            }
         }
-        if !self.filtered_sessions.is_empty() {
+        
+        if query.trim().is_empty() {
+            self.filtered_items = candidates;
+        } else {
+            let texts: Vec<String> = candidates.iter().map(|c| c.search_text.clone()).collect();
+            let matches = self.searcher.fuzzy_match_files(&query, &texts);
+            
+            // Re-map matches to items
+            self.filtered_items = matches.into_iter().filter_map(|(_score, text)| {
+                candidates.iter().find(|c| c.search_text == text).cloned()
+            }).collect();
+        }
+        
+        if !self.filtered_items.is_empty() {
             self.list_state.select(Some(0));
         } else {
             self.list_state.select(None);
@@ -242,7 +305,7 @@ impl<'a> App<'a> {
                         self.load_preview(tx.clone());
                     }
                     AppEvent::SessionsLoaded(sessions) => {
-                        self.session_state.all_sessions = sessions;
+                        self.session_state.all_entries = sessions;
                         self.session_state.update_search();
                         self.load_session_preview(tx.clone());
                     }
@@ -365,8 +428,13 @@ impl<'a> App<'a> {
         
         frame.render_widget(Clear, popup_area);
         
+        let title = match self.session_state.mode {
+            SessionSearchMode::BySession => " Session History [Mode: Sessions] (Esc cancel, Tab switch mode, Enter load) ",
+            SessionSearchMode::ByMessage => " Session History [Mode: Messages] (Esc cancel, Tab switch mode, Enter load) ",
+        };
+
         let popup_block = Block::default()
-            .title(" Session History (Esc cancel, Enter load) ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Green));
             
@@ -385,9 +453,9 @@ impl<'a> App<'a> {
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(chunks[1]);
             
-        let list_items: Vec<ListItem> = self.session_state.filtered_sessions
+        let list_items: Vec<ListItem> = self.session_state.filtered_items
             .iter()
-            .map(|path| ListItem::new(path.as_str()))
+            .map(|item| ListItem::new(item.display.as_str()))
             .collect();
             
         let session_list = List::new(list_items)
@@ -510,28 +578,29 @@ impl<'a> App<'a> {
 
     fn load_session_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
         if let Some(selected) = self.session_state.list_state.selected() {
-            if let Some(path) = self.session_state.filtered_sessions.get(selected) {
-                let path = path.clone();
+            if let Some(item) = self.session_state.filtered_items.get(selected) {
+                let path = item.path.clone();
+                let entries = self.session_state.all_entries.clone();
+                
                 tokio::spawn(async move {
-                    match rc_tools::read_file(&path).await {
-                        Ok(content) => {
-                            let content_to_highlight = if content.chars().count() > 3000 {
-                                format!("{}...\n\n[Truncated]", &content.chars().take(3000).collect::<String>())
+                    if let Some(entry) = entries.iter().find(|e| e.path == path) {
+                        let mut lines = Vec::new();
+                        for msg in &entry.all_messages {
+                            let (role_str, color) = if msg.role == "user" {
+                                ("👤 User", Color::Cyan)
                             } else {
-                                content
+                                ("🤖 Agent", Color::Yellow)
                             };
-                            let lines = tokio::task::spawn_blocking(move || {
-                                let highlighter = CodeHighlighter::new();
-                                let highlighted = highlighter.highlight(&content_to_highlight, "history.jsonl");
-                                highlighted.into_iter().map(|line| {
-                                    Line::from(line.spans.into_iter().map(|span| Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>())
-                                }).collect::<Vec<_>>()
-                            }).await.unwrap_or_default();
-                            let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
+                            
+                            lines.push(Line::from(Span::styled(role_str, Style::default().fg(color).add_modifier(Modifier::BOLD))));
+                            
+                            // Split content by lines and add them
+                            for line_str in msg.content.lines() {
+                                lines.push(Line::from(line_str.to_string()));
+                            }
+                            lines.push(Line::from("")); // empty line between messages
                         }
-                        Err(e) => {
-                            let _ = tx.send(AppEvent::PreviewLoaded(vec![Line::from(format!("Error: {}", e))])).await;
-                        }
+                        let _ = tx.send(AppEvent::PreviewLoaded(lines)).await;
                     }
                 });
             }
@@ -555,25 +624,33 @@ impl<'a> App<'a> {
         match key_event.code {
             KeyCode::Esc => self.mode = AppMode::Chat,
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => self.mode = AppMode::Chat,
+            KeyCode::Tab => {
+                self.session_state.mode = match self.session_state.mode {
+                    SessionSearchMode::BySession => SessionSearchMode::ByMessage,
+                    SessionSearchMode::ByMessage => SessionSearchMode::BySession,
+                };
+                self.session_state.update_search();
+                self.load_session_preview(tx);
+            }
             KeyCode::Down | KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Down => {
                 if let Some(selected) = self.session_state.list_state.selected() {
-                    let next = if selected + 1 < self.session_state.filtered_sessions.len() { selected + 1 } else { 0 };
+                    let next = if selected + 1 < self.session_state.filtered_items.len() { selected + 1 } else { 0 };
                     self.session_state.list_state.select(Some(next));
                     self.load_session_preview(tx);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) || key_event.code == KeyCode::Up => {
                 if let Some(selected) = self.session_state.list_state.selected() {
-                    let prev = if selected > 0 { selected - 1 } else { self.session_state.filtered_sessions.len().saturating_sub(1) };
+                    let prev = if selected > 0 { selected - 1 } else { self.session_state.filtered_items.len().saturating_sub(1) };
                     self.session_state.list_state.select(Some(prev));
                     self.load_session_preview(tx);
                 }
             }
             KeyCode::Enter => {
                 if let Some(selected) = self.session_state.list_state.selected() {
-                    if let Some(path) = self.session_state.filtered_sessions.get(selected) {
+                    if let Some(item) = self.session_state.filtered_items.get(selected) {
                         let mut locked = agent.lock().await;
-                        let _ = locked.load_session_file(std::path::Path::new(path));
+                        let _ = locked.load_session_file(std::path::Path::new(&item.path));
                         let _ = tx.send(AppEvent::SessionLoaded).await;
                     }
                 }
@@ -654,19 +731,45 @@ impl<'a> App<'a> {
             KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::SessionSearch;
                 self.session_state.input = TextArea::default();
-                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions "));
+                self.session_state.input.set_block(Block::default().borders(Borders::ALL).title(" Search Sessions (Tab to toggle mode) "));
                 
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
                     if let Ok(mut entries) = tokio::fs::read_dir(".rust-code").await {
-                        let mut files = Vec::new();
+                        let mut sessions = Vec::new();
                         while let Ok(Some(entry)) = entries.next_entry().await {
-                            if entry.path().extension().map_or(false, |ext| ext == "jsonl") {
-                                files.push(entry.path().to_string_lossy().to_string());
+                            let path = entry.path();
+                            if path.extension().map_or(false, |ext| ext == "jsonl") {
+                                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                                    let mut all_messages = Vec::new();
+                                    let mut first_message = String::new();
+                                    
+                                    for line in content.lines() {
+                                        if let Ok(msg) = serde_json::from_str::<HistoryMessage>(line) {
+                                            if first_message.is_empty() && msg.role == "user" {
+                                                first_message = msg.content.chars().take(80).collect();
+                                            }
+                                            all_messages.push(msg);
+                                        }
+                                    }
+                                    
+                                    if first_message.is_empty() {
+                                        first_message = "Empty session".to_string();
+                                    }
+                                    
+                                    let timestamp = entry.metadata().await.map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH).duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
+                                    
+                                    sessions.push(SessionEntry {
+                                        path: path.to_string_lossy().to_string(),
+                                        timestamp,
+                                        first_message,
+                                        all_messages,
+                                    });
+                                }
                             }
                         }
-                        files.sort_by(|a, b| b.cmp(a)); // Reverse sort (newest first)
-                        let _ = tx_clone.send(AppEvent::SessionsLoaded(files)).await;
+                        sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Newest first
+                        let _ = tx_clone.send(AppEvent::SessionsLoaded(sessions)).await;
                     }
                 });
             }
