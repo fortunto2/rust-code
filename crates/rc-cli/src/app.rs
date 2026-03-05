@@ -205,6 +205,29 @@ impl GitSidebarState {
     }
 }
 
+pub struct GitHistoryState {
+    pub items: Vec<String>,
+    pub list_state: ListState,
+}
+
+impl GitHistoryState {
+    pub fn new() -> Self {
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            items: Vec::new(),
+            list_state,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SidebarFocus {
+    None,
+    GitFiles,
+    GitHistory,
+}
+
 pub struct App<'a> {
     pub exit: bool,
     pub mode: AppMode,
@@ -215,7 +238,8 @@ pub struct App<'a> {
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
     pub git_sidebar: GitSidebarState,
-    pub sidebar_focused: bool, // true when user is navigating sidebar
+    pub git_history: GitHistoryState,
+    pub sidebar_focus: SidebarFocus,
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
@@ -246,7 +270,8 @@ impl<'a> App<'a> {
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
             git_sidebar: GitSidebarState::new(),
-            sidebar_focused: false,
+            git_history: GitHistoryState::new(),
+            sidebar_focus: SidebarFocus::None,
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
@@ -280,6 +305,7 @@ impl<'a> App<'a> {
 
         // Load initial git status and diff
         self.refresh_git_sidebar();
+        self.refresh_git_history();
         if !self.git_sidebar.files.is_empty() {
             self.git_sidebar.list_state.select(Some(0));
             self.load_git_diff();
@@ -377,6 +403,7 @@ impl<'a> App<'a> {
                             self.modified_files.push(path);
                         }
                         self.refresh_git_sidebar();
+                        self.refresh_git_history();
                     }
                     AppEvent::AgentDone => {
                         self.is_thinking = false;
@@ -530,8 +557,9 @@ impl<'a> App<'a> {
         let sidebar_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),  // Plan (fixed height)
-                Constraint::Min(10),    // Git Files List
+                Constraint::Length(14), // Plan (bigger)
+                Constraint::Length(10), // Git files
+                Constraint::Min(8),     // Git history
             ])
             .split(horizontal_chunks[1]);
             
@@ -550,10 +578,10 @@ impl<'a> App<'a> {
         frame.render_widget(plan_widget, sidebar_chunks[0]);
         
         // Git Files Panel
-        let git_title = if self.sidebar_focused {
-            " Git Files [FOCUSED - ↑↓ navigate, Enter preview, Ctrl+O open] "
+        let git_title = if self.sidebar_focus == SidebarFocus::GitFiles {
+            " Git Files [FOCUSED - ↑↓, Enter insert, D diff, Ctrl+O open] "
         } else {
-            " Git Files [Ctrl+G refresh, Tab focus] "
+            " Git Files [Ctrl+G refresh, Tab cycle focus] "
         };
         
         let git_items: Vec<ListItem> = if self.git_sidebar.files.is_empty() {
@@ -576,7 +604,7 @@ impl<'a> App<'a> {
         
         let git_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(if self.sidebar_focused {
+            .border_style(if self.sidebar_focus == SidebarFocus::GitFiles {
                 Style::default().fg(Color::Yellow)
             } else {
                 border_style
@@ -589,6 +617,46 @@ impl<'a> App<'a> {
             .highlight_symbol("> ");
         
         frame.render_stateful_widget(git_list, sidebar_chunks[1], &mut self.git_sidebar.list_state);
+
+        // Git history / branches panel
+        let history_title = if self.sidebar_focus == SidebarFocus::GitHistory {
+            " Git History [FOCUSED - ↑↓ navigate, Enter insert] "
+        } else {
+            " Git History (commits + branches) "
+        };
+
+        let history_items: Vec<ListItem> = if self.git_history.items.is_empty() {
+            vec![ListItem::new("No history available").style(Style::default().fg(Color::DarkGray))]
+        } else {
+            self.git_history
+                .items
+                .iter()
+                .map(|item| {
+                    let style = if item.starts_with("branch:") {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+                    ListItem::new(item.as_str()).style(style)
+                })
+                .collect()
+        };
+
+        let history_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(if self.sidebar_focus == SidebarFocus::GitHistory {
+                Style::default().fg(Color::Yellow)
+            } else {
+                border_style
+            })
+            .title(history_title);
+
+        let history_list = List::new(history_items)
+            .block(history_block)
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+
+        frame.render_stateful_widget(history_list, sidebar_chunks[2], &mut self.git_history.list_state);
         
         // Render Popup if active
         match self.mode {
@@ -901,6 +969,43 @@ impl<'a> App<'a> {
         }
     }
 
+    fn refresh_git_history(&mut self) {
+        self.git_history.items.clear();
+
+        // Branches
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["branch", "--all", "--no-color"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines().take(8) {
+                let cleaned = line.trim().trim_start_matches('*').trim();
+                if !cleaned.is_empty() {
+                    self.git_history.items.push(format!("branch: {}", cleaned));
+                }
+            }
+        }
+
+        // Recent commits
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["log", "--oneline", "-n", "12"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if !line.trim().is_empty() {
+                    self.git_history.items.push(format!("commit: {}", line.trim()));
+                }
+            }
+        }
+
+        if self.git_history.items.is_empty() {
+            self.git_history.list_state.select(None);
+        } else {
+            self.git_history.list_state.select(Some(0));
+        }
+    }
+
     fn load_git_diff(&mut self) {
         self.git_sidebar.selected_diff.clear();
         
@@ -1101,43 +1206,90 @@ impl<'a> App<'a> {
         agent: Arc<Mutex<Agent>>
     ) {
         // Handle sidebar-focused mode first
-        if self.sidebar_focused {
+        if self.sidebar_focus != SidebarFocus::None {
             match key_event.code {
-                KeyCode::Esc | KeyCode::Tab => {
-                    self.sidebar_focused = false;
+                KeyCode::Esc => {
+                    self.sidebar_focus = SidebarFocus::None;
+                    return;
+                }
+                KeyCode::Tab => {
+                    self.sidebar_focus = match self.sidebar_focus {
+                        SidebarFocus::GitFiles => SidebarFocus::GitHistory,
+                        SidebarFocus::GitHistory => SidebarFocus::None,
+                        SidebarFocus::None => SidebarFocus::GitFiles,
+                    };
                     return;
                 }
                 KeyCode::Down => {
-                    if let Some(selected) = self.git_sidebar.list_state.selected() {
-                        let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
-                        self.git_sidebar.list_state.select(Some(next));
-                        self.load_git_diff();
+                    if self.sidebar_focus == SidebarFocus::GitFiles {
+                        if let Some(selected) = self.git_sidebar.list_state.selected() {
+                            let next = if selected + 1 < self.git_sidebar.files.len() { selected + 1 } else { 0 };
+                            self.git_sidebar.list_state.select(Some(next));
+                            self.load_git_diff();
+                        }
+                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
+                        if let Some(selected) = self.git_history.list_state.selected() {
+                            let next = if selected + 1 < self.git_history.items.len() { selected + 1 } else { 0 };
+                            self.git_history.list_state.select(Some(next));
+                        }
                     }
                     return;
                 }
                 KeyCode::Up => {
-                    if let Some(selected) = self.git_sidebar.list_state.selected() {
-                        let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
-                        self.git_sidebar.list_state.select(Some(prev));
-                        self.load_git_diff();
+                    if self.sidebar_focus == SidebarFocus::GitFiles {
+                        if let Some(selected) = self.git_sidebar.list_state.selected() {
+                            let prev = if selected > 0 { selected - 1 } else { self.git_sidebar.files.len().saturating_sub(1) };
+                            self.git_sidebar.list_state.select(Some(prev));
+                            self.load_git_diff();
+                        }
+                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
+                        if let Some(selected) = self.git_history.list_state.selected() {
+                            let prev = if selected > 0 { selected - 1 } else { self.git_history.items.len().saturating_sub(1) };
+                            self.git_history.list_state.select(Some(prev));
+                        }
                     }
                     return;
                 }
                 KeyCode::Enter => {
-                    // Open git diff popup (fuzzy-like view)
-                    self.load_git_diff();
-                    self.sidebar_focused = false;
-                    self.mode = AppMode::GitDiffSearch;
+                    if self.sidebar_focus == SidebarFocus::GitFiles {
+                        // Insert selected file path into chat input
+                        if let Some(selected) = self.git_sidebar.list_state.selected() {
+                            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                                self.textarea.insert_str(path);
+                                self.textarea.insert_str(" ");
+                            }
+                        }
+                        self.sidebar_focus = SidebarFocus::None;
+                    } else if self.sidebar_focus == SidebarFocus::GitHistory {
+                        // Insert selected commit/branch into chat input
+                        if let Some(selected) = self.git_history.list_state.selected() {
+                            if let Some(item) = self.git_history.items.get(selected) {
+                                self.textarea.insert_str(item);
+                                self.textarea.insert_str(" ");
+                            }
+                        }
+                        self.sidebar_focus = SidebarFocus::None;
+                    }
+                    return;
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    if self.sidebar_focus == SidebarFocus::GitFiles {
+                        self.load_git_diff();
+                        self.sidebar_focus = SidebarFocus::None;
+                        self.mode = AppMode::GitDiffSearch;
+                    }
                     return;
                 }
                 KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     // Open file in editor
-                    if let Some(selected) = self.git_sidebar.list_state.selected() {
-                        if let Some((_, path)) = self.git_sidebar.files.get(selected) {
-                            let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                    if self.sidebar_focus == SidebarFocus::GitFiles {
+                        if let Some(selected) = self.git_sidebar.list_state.selected() {
+                            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+                                let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                            }
                         }
                     }
-                    self.sidebar_focused = false;
+                    self.sidebar_focus = SidebarFocus::None;
                     return;
                 }
                 _ => return, // Ignore other keys in sidebar mode
@@ -1160,17 +1312,20 @@ impl<'a> App<'a> {
                 }
             }
             KeyCode::Tab => {
-                // Toggle sidebar focus
-                if !self.git_sidebar.files.is_empty() {
-                    self.sidebar_focused = !self.sidebar_focused;
-                    if self.sidebar_focused {
-                        self.load_git_diff();
-                    }
+                // Cycle sidebar focus: none -> files -> history -> none
+                self.sidebar_focus = match self.sidebar_focus {
+                    SidebarFocus::None => SidebarFocus::GitFiles,
+                    SidebarFocus::GitFiles => SidebarFocus::GitHistory,
+                    SidebarFocus::GitHistory => SidebarFocus::None,
+                };
+                if self.sidebar_focus == SidebarFocus::GitFiles {
+                    self.load_git_diff();
                 }
             }
             KeyCode::Char('g') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Refresh git status
                 self.refresh_git_sidebar();
+                self.refresh_git_history();
                 self.messages.push("🔄 Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
