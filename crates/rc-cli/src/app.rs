@@ -320,14 +320,14 @@ impl<'a> App<'a> {
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::Chat;
             }
-            KeyCode::Down | KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down => {
                 if let Some(selected) = self.fuzzy_state.list_state.selected() {
                     let next = if selected + 1 < self.fuzzy_state.filtered_files.len() { selected + 1 } else { 0 };
                     self.fuzzy_state.list_state.select(Some(next));
                     self.load_preview(tx);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up => {
                 if let Some(selected) = self.fuzzy_state.list_state.selected() {
                     let prev = if selected > 0 { selected - 1 } else { self.fuzzy_state.filtered_files.len().saturating_sub(1) };
                     self.fuzzy_state.list_state.select(Some(prev));
