@@ -18,6 +18,7 @@ pub enum AppMode {
     FuzzySearch,
     SessionSearch,
     GitDiffSearch,
+    GitHistorySearch,
 }
 
 pub enum AppEvent {
@@ -208,6 +209,7 @@ impl GitSidebarState {
 pub struct GitHistoryState {
     pub items: Vec<String>,
     pub list_state: ListState,
+    pub preview_lines: Vec<Line<'static>>,
 }
 
 impl GitHistoryState {
@@ -217,6 +219,7 @@ impl GitHistoryState {
         Self {
             items: Vec::new(),
             list_state,
+            preview_lines: Vec::new(),
         }
     }
 }
@@ -663,8 +666,57 @@ impl<'a> App<'a> {
             AppMode::FuzzySearch => self.draw_fuzzy_popup(frame, area),
             AppMode::SessionSearch => self.draw_session_popup(frame, area),
             AppMode::GitDiffSearch => self.draw_git_diff_popup(frame, area),
+            AppMode::GitHistorySearch => self.draw_git_history_popup(frame, area),
             AppMode::Chat => {}
         }
+    }
+
+    fn draw_git_history_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 80) / 100;
+        let popup_height = (area.height * 80) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" Git History Channel (Esc close, Enter preview, Ctrl+I insert) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin { vertical: 1, horizontal: 1 });
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(inner_area);
+
+        let items: Vec<ListItem> = if self.git_history.items.is_empty() {
+            vec![ListItem::new("No history available")]
+        } else {
+            self.git_history
+                .items
+                .iter()
+                .map(|s| ListItem::new(s.as_str()))
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" History "))
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray))
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, chunks[0], &mut self.git_history.list_state);
+
+        let preview = List::new(
+            self.git_history
+                .preview_lines
+                .iter()
+                .map(|line| ListItem::new(line.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .block(Block::default().borders(Borders::ALL).title(" Preview "));
+        frame.render_widget(preview, chunks[1]);
     }
 
     fn draw_git_diff_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -677,7 +729,7 @@ impl<'a> App<'a> {
         frame.render_widget(Clear, popup_area);
 
         let popup_block = Block::default()
-            .title(" Git Diff Preview (Esc close, Enter insert path, Ctrl+O open) ")
+            .title(" Git Diff Preview (Esc close, Enter preview, Ctrl+O open, Ctrl+I insert) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
@@ -971,6 +1023,7 @@ impl<'a> App<'a> {
 
     fn refresh_git_history(&mut self) {
         self.git_history.items.clear();
+        self.git_history.preview_lines.clear();
 
         // Branches
         if let Ok(output) = std::process::Command::new("git")
@@ -1003,6 +1056,47 @@ impl<'a> App<'a> {
             self.git_history.list_state.select(None);
         } else {
             self.git_history.list_state.select(Some(0));
+            self.load_git_history_preview();
+        }
+    }
+
+    fn load_git_history_preview(&mut self) {
+        self.git_history.preview_lines.clear();
+        if let Some(selected) = self.git_history.list_state.selected() {
+            if let Some(item) = self.git_history.items.get(selected) {
+                if let Some(rest) = item.strip_prefix("commit: ") {
+                    let hash = rest.split_whitespace().next().unwrap_or_default();
+                    if !hash.is_empty() {
+                        if let Ok(output) = std::process::Command::new("git")
+                            .args(["--no-pager", "show", "--no-color", "--stat", "-n", "1", hash])
+                            .output()
+                        {
+                            let txt = String::from_utf8_lossy(&output.stdout);
+                            for line in txt.lines().take(80) {
+                                self.git_history.preview_lines.push(Line::from(line.to_string()));
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                if let Some(branch) = item.strip_prefix("branch: ") {
+                    if let Ok(output) = std::process::Command::new("git")
+                        .args(["--no-pager", "log", "--oneline", "-n", "30", branch])
+                        .output()
+                    {
+                        let txt = String::from_utf8_lossy(&output.stdout);
+                        for line in txt.lines() {
+                            self.git_history.preview_lines.push(Line::from(line.to_string()));
+                        }
+                        return;
+                    }
+                }
+
+                self.git_history
+                    .preview_lines
+                    .push(Line::from("No preview available"));
+            }
         }
     }
 
@@ -1010,34 +1104,60 @@ impl<'a> App<'a> {
         self.git_sidebar.selected_diff.clear();
         
         if let Some(selected) = self.git_sidebar.list_state.selected() {
-            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
+            if let Some((status, path)) = self.git_sidebar.files.get(selected) {
+                let status = status.clone();
                 let path = path.clone();
                 // Load diff synchronously for simplicity in sidebar
-                match std::process::Command::new("git")
-                    .args(["--no-pager", "diff", "--no-color", "--", &path])
-                    .env("GIT_PAGER", "cat")
-                    .output() 
-                {
-                    Ok(output) => {
-                        let diff = String::from_utf8_lossy(&output.stdout);
-                        for line in diff.lines().take(50) { // Limit to 50 lines for preview
-                            let styled_line = if line.starts_with('+') && !line.starts_with("+++") {
-                                Line::from(line.to_string()).style(Style::default().fg(Color::Green))
-                            } else if line.starts_with('-') && !line.starts_with("---") {
-                                Line::from(line.to_string()).style(Style::default().fg(Color::Red))
-                            } else if line.starts_with('@') {
-                                Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
-                            } else {
-                                Line::from(line.to_string())
-                            };
-                            self.git_sidebar.selected_diff.push(styled_line);
+                if status == "?" {
+                    // Untracked files have no git diff; preview file content as additions.
+                    self.git_sidebar
+                        .selected_diff
+                        .push(Line::from(format!("Untracked file: {}", path)).style(Style::default().fg(Color::Yellow)));
+                    self.git_sidebar.selected_diff.push(Line::from(""));
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            for line in content.lines().take(50) {
+                                self.git_sidebar.selected_diff.push(
+                                    Line::from(format!("+{}", line)).style(Style::default().fg(Color::Green)),
+                                );
+                            }
+                            if content.lines().count() > 50 {
+                                self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
+                            }
                         }
-                        if diff.lines().count() > 50 {
-                            self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
+                        Err(e) => {
+                            self.git_sidebar
+                                .selected_diff
+                                .push(Line::from(format!("Error reading file: {}", e)).style(Style::default().fg(Color::Red)));
                         }
                     }
-                    Err(_) => {
-                        self.git_sidebar.selected_diff.push(Line::from("Error loading diff"));
+                } else {
+                    match std::process::Command::new("git")
+                        .args(["--no-pager", "diff", "--no-color", "--", &path])
+                        .env("GIT_PAGER", "cat")
+                        .output()
+                    {
+                        Ok(output) => {
+                            let diff = String::from_utf8_lossy(&output.stdout);
+                            for line in diff.lines().take(50) {
+                                let styled_line = if line.starts_with('+') && !line.starts_with("+++") {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Green))
+                                } else if line.starts_with('-') && !line.starts_with("---") {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Red))
+                                } else if line.starts_with('@') {
+                                    Line::from(line.to_string()).style(Style::default().fg(Color::Cyan))
+                                } else {
+                                    Line::from(line.to_string())
+                                };
+                                self.git_sidebar.selected_diff.push(styled_line);
+                            }
+                            if diff.lines().count() > 50 {
+                                self.git_sidebar.selected_diff.push(Line::from("... (truncated)"));
+                            }
+                        }
+                        Err(_) => {
+                            self.git_sidebar.selected_diff.push(Line::from("Error loading diff"));
+                        }
                     }
                 }
             }
@@ -1055,6 +1175,42 @@ impl<'a> App<'a> {
             AppMode::FuzzySearch => self.handle_fuzzy_key_event(key_event, tx).await,
             AppMode::SessionSearch => self.handle_session_key_event(key_event, tx, agent).await,
             AppMode::GitDiffSearch => self.handle_git_diff_key_event(key_event, tx).await,
+            AppMode::GitHistorySearch => self.handle_git_history_key_event(key_event).await,
+        }
+    }
+
+    async fn handle_git_history_key_event(&mut self, key_event: event::KeyEvent) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.git_history.list_state.selected() {
+                    let next = if selected + 1 < self.git_history.items.len() { selected + 1 } else { 0 };
+                    self.git_history.list_state.select(Some(next));
+                    self.load_git_history_preview();
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.git_history.list_state.selected() {
+                    let prev = if selected > 0 { selected - 1 } else { self.git_history.items.len().saturating_sub(1) };
+                    self.git_history.list_state.select(Some(prev));
+                    self.load_git_history_preview();
+                }
+            }
+            KeyCode::Enter => {
+                self.load_git_history_preview();
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.git_history.list_state.selected() {
+                    if let Some(item) = self.git_history.items.get(selected) {
+                        self.textarea.insert_str(item);
+                        self.textarea.insert_str(" ");
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {}
         }
     }
 
@@ -1078,6 +1234,10 @@ impl<'a> App<'a> {
                 }
             }
             KeyCode::Enter => {
+                // Keep behavior consistent with other channels: Enter previews
+                self.load_git_diff();
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.git_sidebar.list_state.selected() {
                     if let Some((_, path)) = self.git_sidebar.files.get(selected) {
                         self.textarea.insert_str(path);
@@ -1252,31 +1412,15 @@ impl<'a> App<'a> {
                 }
                 KeyCode::Enter => {
                     if self.sidebar_focus == SidebarFocus::GitFiles {
-                        // Insert selected file path into chat input
-                        if let Some(selected) = self.git_sidebar.list_state.selected() {
-                            if let Some((_, path)) = self.git_sidebar.files.get(selected) {
-                                self.textarea.insert_str(path);
-                                self.textarea.insert_str(" ");
-                            }
-                        }
+                        // Open Git Diff channel popup
+                        self.load_git_diff();
+                        self.mode = AppMode::GitDiffSearch;
                         self.sidebar_focus = SidebarFocus::None;
                     } else if self.sidebar_focus == SidebarFocus::GitHistory {
-                        // Insert selected commit/branch into chat input
-                        if let Some(selected) = self.git_history.list_state.selected() {
-                            if let Some(item) = self.git_history.items.get(selected) {
-                                self.textarea.insert_str(item);
-                                self.textarea.insert_str(" ");
-                            }
-                        }
+                        // Open Git History channel popup
+                        self.load_git_history_preview();
+                        self.mode = AppMode::GitHistorySearch;
                         self.sidebar_focus = SidebarFocus::None;
-                    }
-                    return;
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') => {
-                    if self.sidebar_focus == SidebarFocus::GitFiles {
-                        self.load_git_diff();
-                        self.sidebar_focus = SidebarFocus::None;
-                        self.mode = AppMode::GitDiffSearch;
                     }
                     return;
                 }
