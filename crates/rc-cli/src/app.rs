@@ -213,6 +213,7 @@ pub struct GitHistoryState {
     pub preview_lines: Vec<Line<'static>>,
 }
 
+
 #[derive(Clone)]
 pub struct SymbolItem {
     pub label: String,
@@ -355,9 +356,10 @@ impl<'a> App<'a> {
             channel_items: vec![
                 "Git Diff".to_string(),
                 "Git History".to_string(),
-                "File Search".to_string(),
-                "Session Search".to_string(),
-                "Project Symbols".to_string(),
+                "Files".to_string(),
+                "Sessions".to_string(),
+                "Symbols".to_string(),
+                "BG Tasks".to_string(),
             ],
             channel_state,
             ui_regions: None,
@@ -617,8 +619,8 @@ impl<'a> App<'a> {
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(75), // Chat area
-                Constraint::Percentage(25), // Sidebar
+                Constraint::Percentage(72), // Chat area
+                Constraint::Percentage(28), // Sidebar
             ])
             .split(root_chunks[0]);
 
@@ -762,12 +764,11 @@ impl<'a> App<'a> {
 
         // Channel status panel
         let info_lines = vec![
-            Line::from(format!("Git files: {}", self.git_sidebar.files.len())),
-            Line::from(format!("Git history: {}", self.git_history.items.len())),
-            Line::from(format!("Symbols: {}", self.symbols_state.all_items.len())),
-            Line::from("Enter: open selected channel"),
-            Line::from("Inside channel: Enter preview"),
-            Line::from("Ctrl+I insert to chat"),
+            Line::from(format!("git: {}  hist: {}", self.git_sidebar.files.len(), self.git_history.items.len())),
+            Line::from(format!("sym: {}", self.symbols_state.all_items.len())),
+            Line::from("Enter=open channel"),
+            Line::from("in channel: Enter=preview"),
+            Line::from("Ctrl+I=insert  Ctrl+O=open"),
         ];
         frame.render_widget(
             Paragraph::new(info_lines)
