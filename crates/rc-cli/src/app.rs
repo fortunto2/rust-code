@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use tui_textarea::{Input, TextArea};
 use tokio::sync::mpsc;
@@ -452,7 +452,7 @@ impl<'a> App<'a> {
 
                 // Word wrap the text to fit within the chat area width.
                 // We subtract 2 for the borders.
-                let max_width = left_chunks[0].width.saturating_sub(2) as usize;
+                let max_width = (left_chunks[0].width.saturating_sub(2) as usize).max(10);
                 
                 let mut text_lines = Vec::new();
                 
@@ -580,12 +580,18 @@ impl<'a> App<'a> {
             
         frame.render_stateful_widget(session_list, bottom_chunks[0], &mut self.session_state.list_state);
         
-        let preview = Paragraph::new(self.session_state.preview_lines.clone())
-            .block(Block::default().borders(Borders::ALL).title(" Preview "))
-            .wrap(Wrap { trim: false })
-            .scroll((self.session_state.preview_scroll, 0));
+        let preview_items: Vec<ListItem> = self.session_state.preview_lines
+            .iter()
+            .map(|line| ListItem::new(line.clone()))
+            .collect();
             
-        frame.render_widget(preview, bottom_chunks[1]);
+        let mut list_state = ListState::default();
+        list_state.select(Some(self.session_state.preview_scroll as usize));
+            
+        let preview = List::new(preview_items)
+            .block(Block::default().borders(Borders::ALL).title(" Preview "));
+            
+        frame.render_stateful_widget(preview, bottom_chunks[1], &mut list_state);
     }
     
     fn draw_fuzzy_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -643,13 +649,19 @@ impl<'a> App<'a> {
             
         frame.render_stateful_widget(file_list, bottom_chunks[0], &mut self.fuzzy_state.list_state);
         
-        // Render Preview
-        let preview = Paragraph::new(self.fuzzy_state.preview_lines.clone())
-            .block(Block::default().borders(Borders::ALL).title(" Preview "))
-            .wrap(Wrap { trim: false })
-            .scroll((self.fuzzy_state.preview_scroll, 0));
+        let preview_items: Vec<ListItem> = self.fuzzy_state.preview_lines
+            .iter()
+            .map(|line| ListItem::new(line.clone()))
+            .collect();
             
-        frame.render_widget(preview, bottom_chunks[1]);
+        let mut list_state = ListState::default();
+        list_state.select(Some(self.fuzzy_state.preview_scroll as usize));
+            
+        // Render Preview
+        let preview = List::new(preview_items)
+            .block(Block::default().borders(Borders::ALL).title(" Preview "));
+            
+        frame.render_stateful_widget(preview, bottom_chunks[1], &mut list_state);
     }
 
     fn load_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
@@ -713,9 +725,12 @@ impl<'a> App<'a> {
                             
                             lines.push(Line::from(Span::styled(role_str, Style::default().fg(color).add_modifier(Modifier::BOLD))));
                             
-                            // Split content by lines and add them
+                            // Split content by lines and wrap them to 80 chars max for preview
                             for line_str in msg.content.lines() {
-                                lines.push(Line::from(line_str.to_string()));
+                                let wrapped_lines = textwrap::wrap(line_str, 80);
+                                for w_line in wrapped_lines {
+                                    lines.push(Line::from(w_line.to_string()));
+                                }
                             }
                             lines.push(Line::from("")); // empty line between messages
                         }
@@ -961,13 +976,11 @@ impl<'a> App<'a> {
                         loop {
                             match locked_agent.step().await {
                                 Ok(step) => {
-                                    let mut plan_str = format!("Analysis: {}\n\nPlan:\n", step.analysis);
-                                    for p in &step.plan_updates {
-                                        plan_str.push_str(&format!("- {}\n", p));
-                                    }
+                                    // Only output Analysis in the chat, plan goes to the sidebar
+                                    let analysis_str = format!("Analysis: {}", step.analysis);
                                     
                                     let _ = agent_tx.send(AppEvent::AgentPlan(step.plan_updates.clone())).await;
-                                    let _ = agent_tx.send(AppEvent::AgentResponse(plan_str)).await;
+                                    let _ = agent_tx.send(AppEvent::AgentResponse(analysis_str)).await;
                                     
                                     // Record the agent's thought process and intended action
                                     locked_agent.add_assistant_message(format!(
