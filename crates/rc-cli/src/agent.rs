@@ -283,11 +283,9 @@ impl Agent {
             }
             McpToolCall(cmd) => {
                 if let Some(mcp) = &self.mcp {
-                    // Convert arguments to serde_json Map
-                    let args = cmd.arguments.as_ref().map(|a| {
-                        a.iter()
-                            .map(|(k, v)| (k.clone(), mcp_arg_to_json(v)))
-                            .collect()
+                    // Parse JSON string arguments into serde_json Map
+                    let args = cmd.arguments.as_ref().and_then(|json_str| {
+                        serde_json::from_str::<serde_json::Map<std::string::String, serde_json::Value>>(json_str).ok()
                     });
                     let prefixed = format!("mcp__{}_{}", cmd.server, cmd.tool);
                     match mcp.call_tool(&prefixed, args).await {
@@ -304,16 +302,5 @@ impl Agent {
                 }
             }
         }
-    }
-}
-
-fn mcp_arg_to_json(v: &types::Union5BoolOrFloatOrIntOrListStringOrString) -> serde_json::Value {
-    use types::Union5BoolOrFloatOrIntOrListStringOrString::*;
-    match v {
-        Bool(b) => serde_json::Value::Bool(*b),
-        Float(f) => serde_json::json!(*f),
-        Int(i) => serde_json::json!(*i),
-        String(s) => serde_json::Value::String(s.clone()),
-        ListString(arr) => serde_json::json!(arr),
     }
 }

@@ -58,8 +58,6 @@ pub enum Types {
 
     Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
-    Union5BoolOrFloatOrIntOrListStringOrString(Union5BoolOrFloatOrIntOrListStringOrString),
-
 }
 
 impl baml::KnownTypes for Types {
@@ -103,8 +101,6 @@ impl baml::KnownTypes for Types {
 
 
             Types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
-
-            Types::Union5BoolOrFloatOrIntOrListStringOrString(_) => "Union5BoolOrFloatOrIntOrListStringOrString",
 
 
         }

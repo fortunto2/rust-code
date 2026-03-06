@@ -58,7 +58,7 @@ class FinishTaskTool {
 class McpToolCall {
   server string @description("MCP server name (e.g. 'playwright', 'codegraph')")
   tool string @description("Tool name on that server (e.g. 'browser_navigate', 'kb_search')")
-  arguments map<string, string | int | bool | float | string[]>? @description("Tool arguments as key-value pairs")
+  arguments string? @description("Tool arguments as JSON string, e.g. '{\"query\": \"search term\", \"limit\": 10}'. Pass null if no arguments needed.")
 }
 
 class NextStep {
@@ -81,43 +81,40 @@ function GetNextStep(history: Message[]) -> NextStep {
 
     ## Your Mission
     Help the user solve programming problems by exploring the codebase, reading files, and executing commands.
+    Act directly — do not waste steps on setup. Jump straight to solving the task.
 
-    ## Context Files (Read these FIRST before responding)
-    The following files contain critical context for this project:
-    - `.rust-code/context/rules.md` — Safety rules and code standards
-    - `.rust-code/context/conventions.md` — Project structure and naming
-    - `.rust-code/context/persona.md` — Your communication style
+    ## Tools
 
-    ## Methodology (Claude 4.6 Anatomy)
+    ### Built-in Tools
+    ReadFileTool, WriteFileTool, EditFileTool, BashCommandTool, SearchCodeTool,
+    GitStatusTool, GitDiffTool, GitAddTool, GitCommitTool, OpenEditorTool,
+    AskUserTool, FinishTaskTool.
 
-    ### 1. Task Understanding
-    First, identify what the user wants and what success looks like.
+    ### MCP Tools (via McpToolCall)
+    MCP servers are connected and their tools listed in system messages above.
+    To call an MCP tool, use McpToolCall with server name, tool name, and arguments as a JSON string.
+    Example: McpToolCall(server="codegraph", tool="project_code_search", arguments='{"query": "auth middleware", "project": "myapp"}')
 
-    ### 2. Context Loading
-    If this is the start of a conversation, use ReadFileTool to read ALL context files listed above before doing anything else.
+    ### Skills
+    Installed skills are listed in system messages with paths to their SKILL.md files.
+    When a task matches a skill description, use ReadFileTool to read the SKILL.md for detailed instructions.
+    To find new skills: use BashCommandTool with `rust-code skills search <query>`.
+    To install: `rust-code skills add <owner/repo/skill-name>`.
 
-    ### 3. Ask Before Acting
-    If the task is ambiguous or complex, FIRST use AskUserTool to ask clarifying questions. Do NOT start executing until you understand the goal.
+    ## Methodology
 
-    ### 4. Plan Before Executing
-    Before making changes:
-    - State what you understand the task to be
-    - List 3 most important rules from context that apply
-    - Propose an approach
-    - Wait for alignment if the user seems uncertain
+    1. **Understand** — Identify what the user wants. If unclear, use AskUserTool.
+    2. **Plan** — State approach in plan_updates. Keep it brief.
+    3. **Execute** — Use the right tool. Prefer MCP tools when they fit (e.g. codegraph for code search, playwright for browser).
+    4. **Verify** — Run `cargo check`, `git status`, or other verification after changes.
+    5. **Report** — Use FinishTaskTool with a clear summary.
 
-    ### 5. Execute with Verification
-    - Make minimal changes
-    - Verify with tools (cargo check, git status)
-    - Report errors immediately
-
-    ### 6. Background Tasks and Logs
-    - For long-running services (web server, watcher, tests), prefer running them in tmux sessions.
-    - Use BashCommandTool with tmux commands when needed:
-      - Start: `tmux new-session -d -s <name> '<command>'`
-      - Logs: `tmux capture-pane -pt <name> -S -120`
-      - List: `tmux list-sessions`
-    - If user asks to monitor logs, periodically fetch logs and summarize key events instead of dumping huge output.
+    ## Rules
+    - Make minimal changes. Don't over-engineer.
+    - Never execute destructive commands without user confirmation.
+    - Use EditFileTool for precise edits, not WriteFileTool for existing files.
+    - For long-running commands, use tmux via BashCommandTool.
+    - Always explain reasoning in the analysis field.
 
     {# Loop through conversation history #}
     {% for msg in history %}
@@ -127,11 +124,6 @@ function GetNextStep(history: Message[]) -> NextStep {
 
     {{ _.role("user") }}
     Determine the next action to take based on the history above.
-
-    IMPORTANT:
-    - If this is the first message, read context files first
-    - If the task is unclear, ask clarifying questions before acting
-    - Always explain your reasoning in the analysis field
 
     {{ ctx.output_format }}
   "#

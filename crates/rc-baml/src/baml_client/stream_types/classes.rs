@@ -219,7 +219,7 @@ pub struct McpToolCall {
 
 
 
-    pub arguments: Option<std::collections::HashMap<String, types::Union5BoolOrFloatOrIntOrListStringOrString>>,
+    pub arguments: Option<String>,
 
 
 }

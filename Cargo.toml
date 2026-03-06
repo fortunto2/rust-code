@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "crates/rc-cli"
+    "crates/rc-cli",
+    "crates/rc-baml",
 ]
 default-members = ["crates/rc-cli"]
 resolver = "2"
