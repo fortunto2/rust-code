@@ -4,10 +4,10 @@
 
 It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
 
-![BG Tasks — realtime tmux preview](docs/assets/screenshot-bg-tasks.png)
+![Fuzzy File Search with preview](docs/assets/screenshot-file-search.png)
 
 <p align="center">
-  <img src="docs/assets/screenshot-file-search.png" width="32%" alt="Fuzzy File Search">
+  <img src="docs/assets/screenshot-bg-tasks.png" width="32%" alt="BG Tasks — realtime tmux preview">
   <img src="docs/assets/screenshot-symbols.png" width="32%" alt="Project Symbols">
   <img src="docs/assets/screenshot-skills.png" width="32%" alt="Skills Browser">
 </p>
@@ -57,18 +57,51 @@ rust-code --prompt "Summarize this repo" --resume
 
 ## Features
 
-- Interactive terminal chat UI built with `ratatui` and `crossterm`
-- Typed agent loop powered by BAML
-- File read/write/edit tools
-- Shell command execution
-- Git status, diff, add, and commit tools
-- Fuzzy file search with `nucleo`
-- Session persistence in `.rust-code/session_*.jsonl`
-- Session search and restore
-- Git diff and git history side channels
-- Project symbol search
-- Background task / `tmux` session viewer
-- Open-in-editor actions through `$EDITOR`
+- **Interactive TUI** — chat UI built with `ratatui` and `crossterm`
+- **BAML agent loop** — typed tool execution with fallback chain (Gemini Pro → Flash → Flash Lite)
+- **14 built-in tools** — file read/write/edit, bash, search, git status/diff/add/commit, and more
+- **Fuzzy file search** (`Ctrl+P`) — fast file navigation with `nucleo` and live file preview
+- **Project symbol search** (`F6`) — browse functions, structs, enums with code preview
+- **Background tasks** (`F7`) — run long commands in `tmux` windows with realtime output preview
+- **Skills system** (`F9`) — browse, search, and install agent skills from [skills.sh](https://skills.sh) registry
+- **MCP support** — connect external tool servers via `.mcp.json` (e.g. Playwright, codegraph, Supabase)
+- **Git integration** — diff sidebar, history viewer, stage and commit from the agent
+- **Session persistence** — chat history in `.rust-code/session_*.jsonl`, resume with `--resume`
+- **Open-in-editor** — jump to file:line in `$EDITOR` from any panel
+
+### Background Tasks (tmux)
+
+The agent can run long-lived commands (dev servers, watchers, builds) in named `tmux` windows via `BashBgTool`. Press `F7` to see all running tasks with realtime log output. `Ctrl+O` to attach, `Ctrl+K` to kill.
+
+Requires `tmux` installed (`brew install tmux`).
+
+### Skills
+
+Skills are reusable agent instructions (markdown files) that teach the agent domain-specific workflows. Browse the [skills.sh](https://skills.sh) registry with `F9`, or from CLI:
+
+```bash
+rust-code skills search "deploy"
+rust-code skills add tavily-ai/skills/web-search
+```
+
+Installed skills are injected into the agent context automatically.
+
+### MCP (Model Context Protocol)
+
+Connect external tool servers by adding `.mcp.json` in your project or home directory:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    }
+  }
+}
+```
+
+The agent discovers MCP tools at startup and can call them via `McpToolCall`.
 
 ## Provider Setup
 
