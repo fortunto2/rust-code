@@ -1461,7 +1461,7 @@ impl<'a> App<'a> {
         frame.render_widget(Clear, popup_area);
 
         let popup_block = Block::default()
-            .title(" BG Tasks Channel (Esc close, Enter preview, Ctrl+I insert, Ctrl+O attach) ")
+            .title(" BG Tasks (Esc close, Enter refresh, Ctrl+O attach, Ctrl+K kill, Ctrl+I insert) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
@@ -2348,6 +2348,35 @@ impl<'a> App<'a> {
         self.bg_tasks.all_items.clear();
         self.bg_tasks.preview_lines.clear();
 
+        // 1. List rc-bg windows (agent-spawned tasks) — show first
+        if let Ok(output) = std::process::Command::new("tmux")
+            .args([
+                "list-windows", "-t", "rc-bg",
+                "-F", "#{window_name}|#{pane_current_command}|#{pane_dead}",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let txt = String::from_utf8_lossy(&output.stdout);
+                for line in txt.lines() {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[0];
+                        let cmd = parts[1];
+                        let dead = parts[2] == "1";
+                        let status = if dead { "done" } else { "running" };
+                        let title = format!("rc-bg:{} [{}] ({})", name, status, cmd);
+                        self.bg_tasks.all_items.push(BgTaskItem {
+                            id: format!("rc-bg:{}", name),
+                            status: status.to_string(),
+                            title,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. List other tmux sessions (user sessions)
         if let Ok(output) = std::process::Command::new("tmux")
             .args([
                 "list-sessions",
@@ -2360,15 +2389,12 @@ impl<'a> App<'a> {
             for line in txt.lines() {
                 let parts: Vec<&str> = line.split('|').collect();
                 if parts.len() >= 3 {
-                    let id = parts[0].to_string();
-                    let attached = if parts[1] == "1" {
-                        "attached"
-                    } else {
-                        "detached"
-                    };
-                    let title = format!("{} [{}] ({} win)", parts[0], attached, parts[2]);
+                    let name = parts[0];
+                    if name == "rc-bg" { continue; } // already listed above
+                    let attached = if parts[1] == "1" { "attached" } else { "detached" };
+                    let title = format!("{} [{}] ({} win)", name, attached, parts[2]);
                     self.bg_tasks.all_items.push(BgTaskItem {
-                        id,
+                        id: name.to_string(),
                         status: attached.to_string(),
                         title,
                     });
@@ -2386,7 +2412,7 @@ impl<'a> App<'a> {
         self.bg_tasks.update_search();
         if self.bg_tasks.filtered_items.is_empty() && self.bg_tasks.all_items.is_empty() {
             self.bg_tasks.preview_lines.push(Line::from(
-                "No tmux sessions. Start one with: tmux new -s mytask",
+                "No tmux sessions. Agent uses BashBgTool to spawn tasks.",
             ));
         } else if !self.bg_tasks.filtered_items.is_empty() {
             self.load_bg_task_preview();
@@ -2944,6 +2970,7 @@ impl<'a> App<'a> {
                 }
             }
             KeyCode::Enter => {
+                self.refresh_bg_tasks();
                 self.load_bg_task_preview();
             }
             KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2958,6 +2985,39 @@ impl<'a> App<'a> {
                     }
                 }
                 self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Kill selected session/window
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
+                        let id = item.id.clone();
+                        // Try kill-window first (for rc-bg windows), then kill-session
+                        let _ = std::process::Command::new("tmux")
+                            .args(["kill-window", "-t", &id])
+                            .output();
+                        let _ = std::process::Command::new("tmux")
+                            .args(["kill-session", "-t", &id])
+                            .output();
+                        self.messages.push(format!("[SYS] Killed tmux: {}", id));
+                    }
+                }
+                self.refresh_bg_tasks();
+            }
+            KeyCode::Delete | KeyCode::Backspace if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Alt kill binding
+                if let Some(selected) = self.bg_tasks.list_state.selected() {
+                    if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
+                        let id = item.id.clone();
+                        let _ = std::process::Command::new("tmux")
+                            .args(["kill-window", "-t", &id])
+                            .output();
+                        let _ = std::process::Command::new("tmux")
+                            .args(["kill-session", "-t", &id])
+                            .output();
+                        self.messages.push(format!("[SYS] Killed tmux: {}", id));
+                    }
+                }
+                self.refresh_bg_tasks();
             }
             KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.bg_tasks.list_state.selected() {
