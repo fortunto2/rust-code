@@ -4,6 +4,14 @@
 
 It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
 
+![BG Tasks — realtime tmux preview](docs/assets/screenshot-bg-tasks.png)
+
+<p align="center">
+  <img src="docs/assets/screenshot-file-search.png" width="32%" alt="Fuzzy File Search">
+  <img src="docs/assets/screenshot-symbols.png" width="32%" alt="Project Symbols">
+  <img src="docs/assets/screenshot-skills.png" width="32%" alt="Skills Browser">
+</p>
+
 ## Install
 
 From crates.io:
