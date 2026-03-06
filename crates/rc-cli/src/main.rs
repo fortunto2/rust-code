@@ -531,8 +531,41 @@ async fn main() -> Result<()> {
         let mut repeat_count: u32 = 0;
 
         loop {
-            println!("Thinking...");
-            let step = agent.step().await?;
+            print!("Thinking...");
+            use std::io::Write as _;
+            std::io::stdout().flush().ok();
+
+            // Stream partial results — show analysis as it arrives
+            let mut stream = agent.step_stream()?;
+            let mut last_analysis_len = 0;
+            let mut printed_header = false;
+
+            while let Some(partial) = stream.next().await {
+                match partial {
+                    Ok(partial_step) => {
+                        if let Some(ref analysis) = partial_step.analysis {
+                            if analysis.len() > last_analysis_len {
+                                if !printed_header {
+                                    print!("\r\x1b[K"); // clear "Thinking..."
+                                    print!("\x1b[2mAnalysis: \x1b[0m");
+                                    printed_header = true;
+                                }
+                                print!("{}", &analysis[last_analysis_len..]);
+                                std::io::stdout().flush().ok();
+                                last_analysis_len = analysis.len();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("\n[ERR] Stream error: {}", e);
+                    }
+                }
+            }
+            if printed_header {
+                println!(); // newline after streamed analysis
+            }
+
+            let step = stream.get_final_response().await?;
 
             // Loop detection
             let action_debug = format!("{:?}", step.action);
@@ -552,14 +585,12 @@ async fn main() -> Result<()> {
                 last_action_debug = action_debug;
             }
 
-            println!("\nAnalysis: {}", step.analysis);
             println!("Plan updates:");
             for p in &step.plan_updates {
                 println!(" - {}", p);
             }
 
-            println!("\nAction:");
-            println!("{:?}", step.action);
+            println!("\nAction: {:?}", step.action);
 
             agent.add_assistant_message(format!(
                 "Analysis: {}\nAction: {:?}",

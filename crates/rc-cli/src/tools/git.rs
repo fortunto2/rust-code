@@ -134,3 +134,27 @@ pub fn git_commit(message: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_status_in_repo() {
+        let status = git_status().unwrap();
+        assert!(status.is_some());
+        let info = status.unwrap();
+        assert!(!info.branch.is_empty());
+    }
+
+    #[test]
+    fn git_diff_no_crash() {
+        let _ = git_diff(None, false);
+    }
+
+    #[test]
+    fn git_diff_specific_file() {
+        let diff = git_diff(Some("Cargo.toml"), false);
+        assert!(diff.is_ok());
+    }
+}

@@ -157,8 +157,54 @@ impl Agent {
     }
 
     pub async fn step(&mut self) -> Result<types::NextStep> {
+        self.trim_history_if_needed();
         let response = baml_client::async_client::B.GetNextStep.call(&self.history).await?;
         Ok(response)
+    }
+
+    /// Streaming step: returns a stream that yields partial NextStep objects.
+    /// Use `stream.next()` to get partial results (analysis text appears first),
+    /// then `stream.get_final_response()` for the complete NextStep.
+    pub fn step_stream(&mut self) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>> {
+        self.trim_history_if_needed();
+        let stream = baml_client::async_client::B.GetNextStep.stream(&self.history)?;
+        Ok(stream)
+    }
+
+    /// Context window management: keep history within token budget.
+    /// Preserves system messages and the last N user/assistant messages.
+    const MAX_HISTORY_MESSAGES: usize = 60;
+
+    fn trim_history_if_needed(&mut self) {
+        if self.history.len() <= Self::MAX_HISTORY_MESSAGES {
+            return;
+        }
+
+        // Split: keep system messages (skills, MCP context) + last N messages
+        let system_msgs: Vec<types::Message> = self.history
+            .iter()
+            .filter(|m| m.role == "system")
+            .cloned()
+            .collect();
+
+        let non_system: Vec<types::Message> = self.history
+            .iter()
+            .filter(|m| m.role != "system")
+            .cloned()
+            .collect();
+
+        let keep = Self::MAX_HISTORY_MESSAGES.saturating_sub(system_msgs.len());
+        let skip = non_system.len().saturating_sub(keep);
+
+        let mut trimmed = system_msgs;
+        if skip > 0 {
+            trimmed.push(types::Message {
+                role: "system".to_string(),
+                content: format!("[{} earlier messages trimmed to fit context window]", skip),
+            });
+        }
+        trimmed.extend(non_system.into_iter().skip(skip));
+        self.history = trimmed;
     }
 
     pub async fn execute_action(&mut self, action: &types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
@@ -302,5 +348,85 @@ impl Agent {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_agent_creates_session_dir() {
+        let _agent = Agent::new();
+        assert!(std::path::Path::new(".rust-code").exists());
+    }
+
+    #[test]
+    fn add_messages_to_history() {
+        let mut agent = Agent::new();
+        let initial = agent.history().len();
+
+        agent.add_user_message("hello");
+        assert_eq!(agent.history().len(), initial + 1);
+        assert_eq!(agent.history().last().unwrap().role, "user");
+        assert_eq!(agent.history().last().unwrap().content, "hello");
+
+        agent.add_assistant_message("world");
+        assert_eq!(agent.history().len(), initial + 2);
+        assert_eq!(agent.history().last().unwrap().role, "assistant");
+    }
+
+    #[test]
+    fn trim_history_preserves_system_messages() {
+        let mut agent = Agent::new();
+        // Clear and add a known system message
+        agent.history = vec![types::Message {
+            role: "system".into(),
+            content: "system prompt".into(),
+        }];
+
+        // Add 80 user/assistant pairs
+        for i in 0..80 {
+            agent.history.push(types::Message {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                content: format!("msg {}", i),
+            });
+        }
+        assert_eq!(agent.history.len(), 81); // 1 system + 80
+
+        agent.trim_history_if_needed();
+
+        // Should be trimmed
+        assert!(agent.history.len() <= Agent::MAX_HISTORY_MESSAGES + 2); // +2 for system + trimmed notice
+        // System message preserved
+        assert_eq!(agent.history[0].role, "system");
+        assert_eq!(agent.history[0].content, "system prompt");
+        // Trimmed notice
+        assert!(agent.history[1].content.contains("trimmed"));
+        // Last message preserved
+        assert_eq!(agent.history.last().unwrap().content, "msg 79");
+    }
+
+    #[test]
+    fn trim_noop_when_small_history() {
+        let mut agent = Agent::new();
+        agent.history = vec![
+            types::Message { role: "user".into(), content: "hi".into() },
+            types::Message { role: "assistant".into(), content: "hello".into() },
+        ];
+        let len_before = agent.history.len();
+        agent.trim_history_if_needed();
+        assert_eq!(agent.history.len(), len_before);
+    }
+
+    #[test]
+    fn session_file_written() {
+        let mut agent = Agent::new();
+        agent.add_user_message("test persistence");
+
+        // Session file should exist
+        assert!(agent.session_file.exists());
+        let content = std::fs::read_to_string(&agent.session_file).unwrap();
+        assert!(content.contains("test persistence"));
     }
 }

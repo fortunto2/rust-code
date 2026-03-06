@@ -63,3 +63,58 @@ pub async fn edit_file(path: impl AsRef<Path>, old_string: &str, new_string: &st
     fs::write(path, updated_content).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn read_existing_file() {
+        let content = read_file("Cargo.toml", None, Some(5)).await.unwrap();
+        assert!(content.contains("[workspace]") || content.contains("[package]"));
+    }
+
+    #[tokio::test]
+    async fn read_nonexistent_file() {
+        assert!(read_file("nonexistent_xyz.rs", None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_and_read_roundtrip() {
+        let path = "/tmp/rust-code-test-fs.txt";
+        write_file(path, "test content").await.unwrap();
+        let content = read_file(path, None, None).await.unwrap();
+        assert!(content.contains("test content"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn edit_file_replaces_string() {
+        let path = "/tmp/rust-code-test-edit.txt";
+        write_file(path, "hello world").await.unwrap();
+        edit_file(path, "hello", "goodbye").await.unwrap();
+        let content = read_file(path, None, None).await.unwrap();
+        assert!(content.contains("goodbye world"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn edit_file_string_not_found() {
+        let path = "/tmp/rust-code-test-edit2.txt";
+        write_file(path, "hello").await.unwrap();
+        let result = edit_file(path, "nonexistent", "replacement").await;
+        assert!(result.is_err());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn read_with_offset_and_limit() {
+        let path = "/tmp/rust-code-test-offset.txt";
+        write_file(path, "line1\nline2\nline3\nline4\nline5").await.unwrap();
+        let content = read_file(path, Some(1), Some(2)).await.unwrap();
+        assert!(content.contains("line2"));
+        assert!(content.contains("line3"));
+        assert!(!content.contains("line1"));
+        std::fs::remove_file(path).ok();
+    }
+}
