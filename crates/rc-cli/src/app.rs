@@ -14,6 +14,7 @@ use crate::baml_client;
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 
+#[derive(PartialEq)]
 pub enum AppMode {
     Chat,
     FuzzySearch,
@@ -675,6 +676,7 @@ pub struct App<'a> {
     pub skills_remote_loading_query: Option<String>,
     pub skills_search_seq: u64,
     pub context_map: ContextMap,
+    pub tick_count: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -824,6 +826,7 @@ impl<'a> App<'a> {
             skills_remote_loading_query: None,
             skills_search_seq: 0,
             context_map: ContextMap::new(),
+            tick_count: 0,
         }
     }
 
@@ -1154,7 +1157,11 @@ impl<'a> App<'a> {
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
                     AppEvent::Tick => {
-                        // We could update a spinner here if `is_thinking` is true
+                        self.tick_count = self.tick_count.wrapping_add(1);
+                        // Auto-refresh BG task preview every ~1s (every 10th tick at 100ms)
+                        if self.mode == AppMode::BgTasksSearch && self.tick_count % 10 == 0 {
+                            self.load_bg_task_preview();
+                        }
                     }
                 }
             }
