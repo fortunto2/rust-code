@@ -674,6 +674,7 @@ pub struct App<'a> {
     pub skills_remote_loading: bool,
     pub skills_remote_loading_query: Option<String>,
     pub skills_search_seq: u64,
+    pub context_map: ContextMap,
 }
 
 #[derive(Clone, Copy)]
@@ -681,6 +682,84 @@ pub struct UiRegions {
     pub chat: Rect,
     pub input: Rect,
     pub channels: Rect,
+}
+
+// Context map: tracks what fills the agent context window
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ContextCategory {
+    System,   // Skills, MCP tools context
+    User,     // User messages
+    Assistant,// Analysis, plans
+    Tool,     // Tool results, file contents
+    Thinking, // [THINK] messages
+}
+
+impl ContextCategory {
+    fn color(self) -> Color {
+        match self {
+            ContextCategory::System => Color::Rgb(130, 80, 220),   // Purple
+            ContextCategory::User => Color::Rgb(100, 200, 255),    // Blue
+            ContextCategory::Assistant => Color::Rgb(200, 200, 200), // Gray
+            ContextCategory::Tool => Color::Rgb(100, 200, 100),    // Green
+            ContextCategory::Thinking => Color::Rgb(80, 80, 80),   // Dark
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ContextEntry {
+    pub category: ContextCategory,
+    pub chars: usize,
+}
+
+pub struct ContextMap {
+    pub entries: Vec<ContextEntry>,
+}
+
+impl ContextMap {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn total_chars(&self) -> usize {
+        self.entries.iter().map(|e| e.chars).sum()
+    }
+
+    pub fn category_chars(&self, cat: ContextCategory) -> usize {
+        self.entries.iter().filter(|e| e.category == cat).map(|e| e.chars).sum()
+    }
+
+    /// Rebuild from display messages.
+    pub fn rebuild(&mut self, messages: &[String]) {
+        self.entries.clear();
+        for msg in messages {
+            self.entries.push(ContextEntry {
+                category: Self::classify(msg),
+                chars: msg.len(),
+            });
+        }
+    }
+
+    /// Classify a display message into a context category.
+    fn classify(msg: &str) -> ContextCategory {
+        if msg.starts_with("[SYS]") || msg.starts_with("[MCP]") || msg.starts_with("---") {
+            ContextCategory::System
+        } else if msg.starts_with(">") {
+            ContextCategory::User
+        } else if msg.starts_with("Analysis:") {
+            ContextCategory::Assistant
+        } else if msg.starts_with("[THINK]") {
+            ContextCategory::Thinking
+        } else if msg.starts_with("[TOOL]") || msg.starts_with("Tool result:")
+            || msg.starts_with("MCP [") || msg.starts_with("File contents of")
+            || msg.starts_with("Command output:") || msg.starts_with("Successfully")
+            || msg.starts_with("Git ") || msg.starts_with("Content search")
+        {
+            ContextCategory::Tool
+        } else {
+            ContextCategory::Assistant
+        }
+    }
 }
 
 impl<'a> App<'a> {
@@ -744,6 +823,7 @@ impl<'a> App<'a> {
             skills_remote_loading: false,
             skills_remote_loading_query: None,
             skills_search_seq: 0,
+            context_map: ContextMap::new(),
         }
     }
 
@@ -1265,34 +1345,72 @@ impl<'a> App<'a> {
             .highlight_symbol("> ");
         frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
 
-        // Channel status panel
-        let info_lines = vec![
-            Line::from(format!(
-                "git: {}  hist: {}",
-                self.git_sidebar.files.len(),
-                self.git_history.filtered_items.len()
-            )),
-            Line::from(format!(
-                "sym: {}  bg: {}",
-                self.symbols_state.all_items.len(),
-                self.bg_tasks.filtered_items.len()
-            )),
-            Line::from(format!(
-                "bash: {}  skills: {}/{}",
-                self.bash_history_state.all_items.len(),
-                self.skills_state.all_items.iter().filter(|s| s.installed).count(),
-                self.skills_state.all_items.len()
-            )),
-            Line::from("Enter=open channel"),
-            Line::from("in channel: Enter=preview"),
-            Line::from("Ctrl+I=insert  Ctrl+O=open"),
+        // Context Map panel — colored blocks showing what fills the context
+        self.context_map.rebuild(&self.messages);
+        let ctx = &self.context_map;
+        let total = ctx.total_chars();
+
+        // Block grid: each block represents a chunk of context
+        // Available area inside borders
+        let inner_w = sidebar_chunks[2].width.saturating_sub(2) as usize;
+        let inner_h = sidebar_chunks[2].height.saturating_sub(3) as usize; // -2 borders -1 legend
+        let grid_cells = inner_w.max(1) * inner_h.max(1);
+
+        let mut grid_lines: Vec<Line> = Vec::new();
+
+        if total > 0 && grid_cells > 0 {
+            // Build a flat grid of colored blocks
+            let mut blocks: Vec<ContextCategory> = Vec::with_capacity(grid_cells);
+            for entry in &ctx.entries {
+                let cells_for_entry = ((entry.chars as f64 / total as f64) * grid_cells as f64).ceil() as usize;
+                for _ in 0..cells_for_entry.max(1) {
+                    if blocks.len() >= grid_cells { break; }
+                    blocks.push(entry.category);
+                }
+            }
+            // Pad remaining
+            while blocks.len() < grid_cells {
+                blocks.push(ContextCategory::Thinking);
+            }
+
+            // Render rows
+            for row in blocks.chunks(inner_w.max(1)) {
+                let spans: Vec<Span> = row.iter().map(|cat| {
+                    Span::styled("█", Style::default().fg(cat.color()))
+                }).collect();
+                grid_lines.push(Line::from(spans));
+            }
+        } else {
+            grid_lines.push(Line::from(
+                Span::styled("No context yet", Style::default().fg(Color::DarkGray)),
+            ));
+        }
+
+        // Legend line at the bottom
+        let categories = [
+            ContextCategory::System,
+            ContextCategory::User,
+            ContextCategory::Assistant,
+            ContextCategory::Tool,
+            ContextCategory::Thinking,
         ];
+        let legend_spans: Vec<Span> = categories.iter().flat_map(|cat| {
+            let chars = ctx.category_chars(*cat);
+            let pct = if total > 0 { (chars * 100) / total } else { 0 };
+            vec![
+                Span::styled("█", Style::default().fg(cat.color())),
+                Span::styled(format!("{}% ", pct), Style::default().fg(Color::DarkGray)),
+            ]
+        }).collect();
+        grid_lines.push(Line::from(legend_spans));
+
+        let ctx_title = format!(" Context ~{}k ", total / 1000);
         frame.render_widget(
-            Paragraph::new(info_lines).block(
+            Paragraph::new(grid_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(" Channel Status "),
+                    .title(ctx_title),
             ),
             sidebar_chunks[2],
         );
