@@ -14,45 +14,25 @@ It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session
 
 ## Install
 
-From crates.io:
+One-liner (downloads binary + installs dependencies via `doctor`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fortunto2/rust-code/master/install.sh | bash
+```
+
+Or from crates.io:
 
 ```bash
 cargo install rust-code
-```
-
-Linux release binary:
-
-```bash
-curl -L https://github.com/fortunto2/rust-code/releases/latest/download/rust-code-linux-x86_64.tar.gz | tar xz
-sudo install rust-code-linux-x86_64/rust-code /usr/local/bin/rust-code
-```
-
-macOS:
-
-```bash
-cargo install rust-code
-```
-
-If you prefer local builds on macOS:
-
-```bash
-git clone https://github.com/fortunto2/rust-code.git
-cd rust-code
-cargo build --release -p rust-code
-./target/release/rust-code
+rust-code doctor --fix   # installs tmux, ripgrep, etc.
 ```
 
 Run it:
 
 ```bash
-rust-code
-```
-
-Headless mode:
-
-```bash
-rust-code --prompt "Find the bug in src/main.rs"
-rust-code --prompt "Summarize this repo" --resume
+rust-code                                          # interactive TUI
+rust-code --prompt "Find the bug in src/main.rs"   # headless mode
+rust-code --resume                                 # continue last session
 ```
 
 ## Features
