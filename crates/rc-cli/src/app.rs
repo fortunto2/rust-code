@@ -1263,7 +1263,7 @@ impl<'a> App<'a> {
             .constraints([
                 Constraint::Length(14), // Plan (bigger)
                 Constraint::Length(10), // Channels
-                Constraint::Min(8),     // Channel status
+                Constraint::Min(4),     // Context map
             ])
             .split(horizontal_chunks[1]);
 
@@ -1345,68 +1345,48 @@ impl<'a> App<'a> {
             .highlight_symbol("> ");
         frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
 
-        // Context Map panel — colored blocks showing what fills the context
+        // Context Map — compact bar showing context usage by type
         self.context_map.rebuild(&self.messages);
         let ctx = &self.context_map;
         let total = ctx.total_chars();
-
-        // Block grid: each block represents a chunk of context
-        // Available area inside borders
         let inner_w = sidebar_chunks[2].width.saturating_sub(2) as usize;
-        let inner_h = sidebar_chunks[2].height.saturating_sub(3) as usize; // -2 borders -1 legend
-        let grid_cells = inner_w.max(1) * inner_h.max(1);
 
-        let mut grid_lines: Vec<Line> = Vec::new();
-
-        if total > 0 && grid_cells > 0 {
-            // Build a flat grid of colored blocks
-            let mut blocks: Vec<ContextCategory> = Vec::with_capacity(grid_cells);
-            for entry in &ctx.entries {
-                let cells_for_entry = ((entry.chars as f64 / total as f64) * grid_cells as f64).ceil() as usize;
-                for _ in 0..cells_for_entry.max(1) {
-                    if blocks.len() >= grid_cells { break; }
-                    blocks.push(entry.category);
+        let mut ctx_lines: Vec<Line> = Vec::new();
+        if total > 0 && inner_w > 0 {
+            // Single proportional bar
+            let cats = [
+                ContextCategory::System, ContextCategory::User,
+                ContextCategory::Assistant, ContextCategory::Tool,
+            ];
+            let mut bar_spans: Vec<Span> = Vec::new();
+            let mut used = 0usize;
+            for cat in &cats {
+                let w = ((ctx.category_chars(*cat) as f64 / total as f64) * inner_w as f64).round() as usize;
+                let w = if w == 0 && ctx.category_chars(*cat) > 0 { 1 } else { w };
+                let w = w.min(inner_w - used);
+                if w > 0 {
+                    bar_spans.push(Span::styled("█".repeat(w), Style::default().fg(cat.color())));
+                    used += w;
                 }
             }
-            // Pad remaining
-            while blocks.len() < grid_cells {
-                blocks.push(ContextCategory::Thinking);
+            if used < inner_w {
+                bar_spans.push(Span::styled("░".repeat(inner_w - used), Style::default().fg(Color::DarkGray)));
             }
-
-            // Render rows
-            for row in blocks.chunks(inner_w.max(1)) {
-                let spans: Vec<Span> = row.iter().map(|cat| {
-                    Span::styled("█", Style::default().fg(cat.color()))
-                }).collect();
-                grid_lines.push(Line::from(spans));
-            }
-        } else {
-            grid_lines.push(Line::from(
-                Span::styled("No context yet", Style::default().fg(Color::DarkGray)),
-            ));
+            ctx_lines.push(Line::from(bar_spans));
+            // Legend
+            let legend: Vec<Span> = cats.iter().flat_map(|c| {
+                let pct = (ctx.category_chars(*c) * 100) / total;
+                vec![
+                    Span::styled("█", Style::default().fg(c.color())),
+                    Span::styled(format!("{}% ", pct), Style::default().fg(Color::DarkGray)),
+                ]
+            }).collect();
+            ctx_lines.push(Line::from(legend));
         }
 
-        // Legend line at the bottom
-        let categories = [
-            ContextCategory::System,
-            ContextCategory::User,
-            ContextCategory::Assistant,
-            ContextCategory::Tool,
-            ContextCategory::Thinking,
-        ];
-        let legend_spans: Vec<Span> = categories.iter().flat_map(|cat| {
-            let chars = ctx.category_chars(*cat);
-            let pct = if total > 0 { (chars * 100) / total } else { 0 };
-            vec![
-                Span::styled("█", Style::default().fg(cat.color())),
-                Span::styled(format!("{}% ", pct), Style::default().fg(Color::DarkGray)),
-            ]
-        }).collect();
-        grid_lines.push(Line::from(legend_spans));
-
-        let ctx_title = format!(" Context ~{}k ", total / 1000);
+        let ctx_title = format!(" Ctx ~{}k ", total / 1000);
         frame.render_widget(
-            Paragraph::new(grid_lines).block(
+            Paragraph::new(ctx_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
