@@ -55,10 +55,16 @@ class FinishTaskTool {
   summary string @description("Summary of what was accomplished")
 }
 
+class McpToolCall {
+  server string @description("MCP server name (e.g. 'playwright', 'codegraph')")
+  tool string @description("Tool name on that server (e.g. 'browser_navigate', 'kb_search')")
+  arguments map<string, string | int | bool | float | string[]>? @description("Tool arguments as key-value pairs")
+}
+
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt

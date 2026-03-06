@@ -10,10 +10,10 @@ use baml::{BamlEncode, BamlDecode};
 use super::*;
 
 
-/// Generated from: (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool)
+/// Generated from: (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall)
 #[derive(Debug, Clone, BamlEncode, BamlDecode)]
 #[baml(union)]
-pub enum Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+pub enum Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
 
     #[baml(name = "ReadFileTool")]
         ReadFileTool(ReadFileTool),
@@ -51,19 +51,60 @@ pub enum Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitA
     #[baml(name = "FinishTaskTool")]
         FinishTaskTool(FinishTaskTool),
     
+    #[baml(name = "McpToolCall")]
+        McpToolCall(McpToolCall),
+    
 }
 
-impl AsRef<Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
-    fn as_ref(&self) -> &Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl AsRef<Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+    fn as_ref(&self) -> &Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
         self
     }
 }
 
-impl Default for Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl Default for Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
     fn default() -> Self {
         
            
             Self::ReadFileTool(Default::default())
+        
+    }
+}
+
+
+/// Generated from: (string | int | bool | float | string[])
+#[derive(Debug, Clone, BamlEncode, BamlDecode)]
+#[baml(union)]
+pub enum Union5BoolOrFloatOrIntOrListStringOrString {
+
+    #[baml(name = "string")]
+        String(String),
+    
+    #[baml(name = "int")]
+        Int(i64),
+    
+    #[baml(name = "bool")]
+        Bool(bool),
+    
+    #[baml(name = "float")]
+        Float(f64),
+    
+    #[baml(name = "List__string")]
+        ListString(Vec<String>),
+    
+}
+
+impl AsRef<Union5BoolOrFloatOrIntOrListStringOrString> for Union5BoolOrFloatOrIntOrListStringOrString {
+    fn as_ref(&self) -> &Union5BoolOrFloatOrIntOrListStringOrString {
+        self
+    }
+}
+
+impl Default for Union5BoolOrFloatOrIntOrListStringOrString {
+    fn default() -> Self {
+        
+           
+            Self::String(Default::default())
         
     }
 }

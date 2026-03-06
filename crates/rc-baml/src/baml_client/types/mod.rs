@@ -40,6 +40,8 @@ pub enum Types {
 
     GitStatusTool(GitStatusTool),
 
+    McpToolCall(McpToolCall),
+
     Message(Message),
 
     NextStep(NextStep),
@@ -54,7 +56,9 @@ pub enum Types {
 
 
 
-    Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+
+    Union5BoolOrFloatOrIntOrListStringOrString(Union5BoolOrFloatOrIntOrListStringOrString),
 
 }
 
@@ -82,6 +86,8 @@ impl baml::KnownTypes for Types {
 
             Types::GitStatusTool(_) => "GitStatusTool",
 
+            Types::McpToolCall(_) => "McpToolCall",
+
             Types::Message(_) => "Message",
 
             Types::NextStep(_) => "NextStep",
@@ -96,7 +102,9 @@ impl baml::KnownTypes for Types {
 
 
 
-            Types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            Types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+
+            Types::Union5BoolOrFloatOrIntOrListStringOrString(_) => "Union5BoolOrFloatOrIntOrListStringOrString",
 
 
         }

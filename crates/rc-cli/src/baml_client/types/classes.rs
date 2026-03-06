@@ -202,6 +202,36 @@ impl AsRef<GitStatusTool> for GitStatusTool {
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
+pub struct McpToolCall {
+
+
+
+    pub server: String,
+
+
+
+    pub tool: String,
+
+
+
+    pub arguments: Option<std::collections::HashMap<String, Union5BoolOrFloatOrIntOrListStringOrString>>,
+
+
+}
+
+
+
+impl AsRef<McpToolCall> for McpToolCall {
+    fn as_ref(&self) -> &McpToolCall {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
 pub struct Message {
 
 
@@ -240,7 +270,7 @@ pub struct NextStep {
 
 
 
-    pub action: Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool,
+    pub action: Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool,
 
 
 }

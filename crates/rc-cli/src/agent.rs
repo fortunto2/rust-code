@@ -161,8 +161,8 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&self, action: &types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union12AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&mut self, action: &types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
+        use types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
@@ -281,6 +281,39 @@ impl Agent {
                 // In a real TUI, this would yield to the user prompt
                 Ok(AgentEvent::Message(format!("Question for user: {}", cmd.question)))
             }
+            McpToolCall(cmd) => {
+                if let Some(mcp) = &self.mcp {
+                    // Convert arguments to serde_json Map
+                    let args = cmd.arguments.as_ref().map(|a| {
+                        a.iter()
+                            .map(|(k, v)| (k.clone(), mcp_arg_to_json(v)))
+                            .collect()
+                    });
+                    let prefixed = format!("mcp__{}_{}", cmd.server, cmd.tool);
+                    match mcp.call_tool(&prefixed, args).await {
+                        Ok(result) => {
+                            let output = crate::tools::mcp::format_tool_result(&result);
+                            Ok(AgentEvent::Message(format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output)))
+                        }
+                        Err(e) => {
+                            Ok(AgentEvent::Message(format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e)))
+                        }
+                    }
+                } else {
+                    Ok(AgentEvent::Message("MCP not initialized. No MCP servers configured.".to_string()))
+                }
+            }
         }
+    }
+}
+
+fn mcp_arg_to_json(v: &types::Union5BoolOrFloatOrIntOrListStringOrString) -> serde_json::Value {
+    use types::Union5BoolOrFloatOrIntOrListStringOrString::*;
+    match v {
+        Bool(b) => serde_json::Value::Bool(*b),
+        Float(f) => serde_json::json!(*f),
+        Int(i) => serde_json::json!(*i),
+        String(s) => serde_json::Value::String(s.clone()),
+        ListString(arr) => serde_json::json!(arr),
     }
 }

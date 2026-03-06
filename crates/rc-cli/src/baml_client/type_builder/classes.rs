@@ -355,6 +355,61 @@ impl GitStatusToolClassBuilder {
 }
 
 
+/// Wrapper for the `McpToolCall` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct McpToolCallClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl McpToolCallClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("McpToolCall is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `server` field builder.
+    pub fn property_server(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("server")
+            .expect("McpToolCall.server is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `tool` field builder.
+    pub fn property_tool(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool")
+            .expect("McpToolCall.tool is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `arguments` field builder.
+    pub fn property_arguments(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("arguments")
+            .expect("McpToolCall.arguments is statically defined in .baml and should always be present")
+    }
+
+}
+
+
 /// Wrapper for the `Message` class builder.
 ///
 /// Provides type-safe method access to fields defined in the schema.

@@ -123,6 +123,15 @@ impl TypeBuilder {
     }
 
 
+    /// Access the `McpToolCall` class builder.
+    pub fn McpToolCall(&self) -> McpToolCallClassBuilder {
+        McpToolCallClassBuilder::new(
+            self.inner.get_class("McpToolCall")
+                .expect("class McpToolCall is defined in schema")
+        )
+    }
+
+
     /// Access the `Message` class builder.
     pub fn Message(&self) -> MessageClassBuilder {
         MessageClassBuilder::new(
