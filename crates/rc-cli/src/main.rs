@@ -35,6 +35,12 @@ enum Commands {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Check environment health and fix missing dependencies
+    Doctor {
+        /// Auto-install missing dependencies
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -332,6 +338,153 @@ async fn run_mcp_command(action: McpAction) -> Result<()> {
     Ok(())
 }
 
+async fn run_doctor(fix: bool) -> Result<()> {
+    use std::process::Command as Cmd;
+
+    struct Check {
+        name: &'static str,
+        cmd: &'static str,
+        args: &'static [&'static str],
+        install_brew: &'static str,
+        install_other: &'static str,
+        required: bool,
+    }
+
+    let checks = [
+        Check {
+            name: "tmux",
+            cmd: "tmux",
+            args: &["-V"],
+            install_brew: "brew install tmux",
+            install_other: "apt install tmux",
+            required: true,
+        },
+        Check {
+            name: "ripgrep (rg)",
+            cmd: "rg",
+            args: &["--version"],
+            install_brew: "brew install ripgrep",
+            install_other: "cargo install ripgrep",
+            required: true,
+        },
+        Check {
+            name: "git",
+            cmd: "git",
+            args: &["--version"],
+            install_brew: "brew install git",
+            install_other: "apt install git",
+            required: true,
+        },
+        Check {
+            name: "python3",
+            cmd: "python3",
+            args: &["--version"],
+            install_brew: "brew install python3",
+            install_other: "apt install python3",
+            required: false,
+        },
+        Check {
+            name: "node",
+            cmd: "node",
+            args: &["--version"],
+            install_brew: "brew install node",
+            install_other: "curl -fsSL https://fnm.vercel.app/install | bash",
+            required: false,
+        },
+        Check {
+            name: "cargo",
+            cmd: "cargo",
+            args: &["--version"],
+            install_brew: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            install_other: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+            required: false,
+        },
+    ];
+
+    let is_mac = cfg!(target_os = "macos");
+    let mut missing: Vec<(&str, String)> = Vec::new();
+    let mut ok_count = 0;
+
+    println!("rust-code doctor\n");
+
+    // Tool checks
+    for check in &checks {
+        match Cmd::new(check.cmd).args(check.args).output() {
+            Ok(o) if o.status.success() => {
+                let ver = String::from_utf8_lossy(&o.stdout);
+                let ver_line = ver.lines().next().unwrap_or("ok");
+                let tag = if check.required { "required" } else { "optional" };
+                println!("  \x1b[32m✓\x1b[0m {} — {} [{}]", check.name, ver_line.trim(), tag);
+                ok_count += 1;
+            }
+            _ => {
+                let tag = if check.required { "\x1b[31m✗\x1b[0m" } else { "\x1b[33m-\x1b[0m" };
+                let install = if is_mac { check.install_brew } else { check.install_other };
+                println!("  {} {} — missing [fix: {}]", tag, check.name, install);
+                missing.push((check.name, install.to_string()));
+            }
+        }
+    }
+
+    // Config checks
+    println!();
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    // .mcp.json
+    let mcp_global = std::path::Path::new(&home).join(".mcp.json");
+    let mcp_local = std::path::Path::new(".mcp.json");
+    if mcp_global.exists() || mcp_local.exists() {
+        let config = tools::mcp::McpManager::load_configs();
+        println!("  \x1b[32m✓\x1b[0m .mcp.json — {} server(s) configured", config.mcp_servers.len());
+    } else {
+        println!("  \x1b[33m-\x1b[0m .mcp.json — not found (optional, for MCP tools)");
+    }
+
+    // Skills
+    let skills = tools::collect_installed_skills();
+    println!("  \x1b[32m✓\x1b[0m skills — {} installed", skills.len());
+
+    // BAML / API key
+    let has_vertex = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
+        || std::env::var("VERTEX_PROJECT").is_ok();
+    let has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
+    if has_vertex || has_gemini {
+        println!("  \x1b[32m✓\x1b[0m LLM credentials — configured");
+    } else {
+        println!("  \x1b[33m-\x1b[0m LLM credentials — no VERTEX_PROJECT or GEMINI_API_KEY found");
+    }
+
+    // Summary
+    println!("\n{}/{} checks passed, {} missing\n",
+        ok_count, checks.len(), missing.len());
+
+    if missing.is_empty() {
+        println!("\x1b[32mAll good!\x1b[0m rust-code is ready.");
+        return Ok(());
+    }
+
+    if fix {
+        println!("Installing missing dependencies...\n");
+        for (name, cmd) in &missing {
+            println!("  → {} ...", name);
+            let status = Cmd::new("sh").arg("-c").arg(cmd).status();
+            match status {
+                Ok(s) if s.success() => println!("    \x1b[32m✓\x1b[0m installed"),
+                Ok(s) => println!("    \x1b[31m✗\x1b[0m failed (exit {})", s.code().unwrap_or(-1)),
+                Err(e) => println!("    \x1b[31m✗\x1b[0m error: {}", e),
+            }
+        }
+        println!("\nRe-run `rust-code doctor` to verify.");
+    } else {
+        println!("Run \x1b[1mrust-code doctor --fix\x1b[0m to install missing dependencies.");
+        // Print one-liner
+        let cmds: Vec<&str> = missing.iter().map(|(_, c)| c.as_str()).collect();
+        println!("Or manually: {}", cmds.join(" && "));
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -347,6 +500,7 @@ async fn main() -> Result<()> {
         return match command {
             Commands::Skills { action } => run_skills_command(action).await,
             Commands::Mcp { action } => run_mcp_command(action).await,
+            Commands::Doctor { fix } => run_doctor(fix).await,
         };
     }
 
