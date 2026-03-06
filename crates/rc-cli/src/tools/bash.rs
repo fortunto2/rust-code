@@ -28,26 +28,52 @@ pub async fn run_command(command: &str) -> Result<String> {
     }
 }
 
+const RC_SESSION: &str = "rc-bg";
+
+/// Check if tmux is available.
+async fn tmux_available() -> bool {
+    Command::new("tmux").arg("-V").output().await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Ensure rc-bg session exists. Creates if needed.
+async fn ensure_session() -> Result<()> {
+    if !tmux_available().await {
+        anyhow::bail!("tmux is not installed. Install it: brew install tmux");
+    }
+    // has-session returns 0 if exists
+    let has = Command::new("tmux")
+        .args(["has-session", "-t", RC_SESSION])
+        .output().await?;
+    if !has.status.success() {
+        let create = Command::new("tmux")
+            .args(["new-session", "-d", "-s", RC_SESSION])
+            .output().await?;
+        if !create.status.success() {
+            let err = String::from_utf8_lossy(&create.stderr);
+            anyhow::bail!("Failed to create tmux session '{}': {}", RC_SESSION, err.trim());
+        }
+    }
+    Ok(())
+}
+
 /// Run command in a named tmux window (non-blocking).
-/// Returns immediately. Use `read_tmux_log` to check output.
 pub async fn run_command_bg(name: &str, command: &str) -> Result<String> {
-    // Ensure we're in a tmux session or create a detached one
-    let session = "rc-bg";
+    ensure_session().await?;
     let safe_name = name.replace(' ', "-");
 
-    // Try to create session if not exists, ignore error if it does
+    // Kill existing window with same name to avoid duplicates
     let _ = Command::new("tmux")
-        .args(["new-session", "-d", "-s", session])
-        .output()
-        .await;
+        .args(["kill-window", "-t", &format!("{}:{}", RC_SESSION, safe_name)])
+        .output().await;
 
-    // Create a new window with the command
     let output = Command::new("tmux")
         .args([
-            "new-window", "-t", session,
+            "new-window", "-t", RC_SESSION,
             "-n", &safe_name,
             "sh", "-c",
-            &format!("{} 2>&1; echo '\\n[rc: done exit=$?]'; sleep 86400", command),
+            &format!("{} 2>&1; echo ''; echo '[rc: exit='$?']'; read -r _dummy", command),
         ])
         .output()
         .await?;
@@ -57,19 +83,18 @@ pub async fn run_command_bg(name: &str, command: &str) -> Result<String> {
         anyhow::bail!("tmux new-window failed: {}", stderr.trim());
     }
 
-    Ok(format!("Started in tmux {}:{} — use F7 > Ctrl+O to attach", session, safe_name))
+    Ok(format!("Started in tmux {}:{} — F7 > Ctrl+O to attach", RC_SESSION, safe_name))
 }
 
 /// Read last N lines from a tmux window's buffer.
 pub async fn read_tmux_log(name: &str, lines: usize) -> Result<String> {
-    let session = "rc-bg";
-    let target = format!("{}:{}", session, name.replace(' ', "-"));
+    let target = format!("{}:{}", RC_SESSION, name.replace(' ', "-"));
 
     let output = Command::new("tmux")
         .args([
             "capture-pane", "-t", &target,
-            "-p",           // print to stdout
-            "-S", &format!("-{}", lines), // last N lines
+            "-p",
+            "-S", &format!("-{}", lines),
         ])
         .output()
         .await?;
@@ -78,31 +103,29 @@ pub async fn read_tmux_log(name: &str, lines: usize) -> Result<String> {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("tmux capture failed: {}", stderr.trim())
+        anyhow::bail!("Window '{}' not found or tmux error: {}", name, stderr.trim())
     }
 }
 
-/// List rc-bg tmux windows.
-pub async fn list_bg_windows() -> Result<Vec<(String, String)>> {
+/// List rc-bg tmux windows with status.
+pub async fn list_bg_windows() -> Result<Vec<(String, bool)>> {
     let output = Command::new("tmux")
         .args([
-            "list-windows", "-t", "rc-bg",
-            "-F", "#{window_name}|#{window_activity_flag}",
+            "list-windows", "-t", RC_SESSION,
+            "-F", "#{window_name}|#{pane_dead}",
         ])
         .output()
-        .await?;
+        .await;
 
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return Ok(Vec::new()),
+    };
 
     let txt = String::from_utf8_lossy(&output.stdout);
     Ok(txt.lines().filter_map(|l| {
-        let parts: Vec<&str> = l.split('|').collect();
-        if parts.len() >= 2 {
-            Some((parts[0].to_string(), parts[1].to_string()))
-        } else {
-            None
-        }
+        let (name, rest) = l.split_once('|')?;
+        let done = rest == "1";
+        Some((name.to_string(), done))
     }).collect())
 }
