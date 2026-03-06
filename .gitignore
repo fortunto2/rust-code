@@ -8,3 +8,7 @@
 agent/
 vtcode/
 rust-code.log
+dist/
+*.tar.gz
+*.tar.gz.sha256
+app.py
