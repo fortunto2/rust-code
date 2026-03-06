@@ -166,7 +166,11 @@ impl McpManager {
             cmd.env(key, value);
         }
 
-        let transport = TokioChildProcess::new(cmd)?;
+        // Suppress stderr from MCP servers — they pollute output with
+        // progress bars, model loading logs, HTTP requests etc.
+        let (transport, _stderr) = TokioChildProcess::builder(cmd)
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
         let service: McpService = ().serve(transport).await?;
         let tools = service.list_tools(Default::default()).await?.tools;
 
