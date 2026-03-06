@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crate::baml_client::{self, types};
 use crate::tools::{
-    read_file, write_file, run_command, FuzzySearcher, git_status, git_add, git_commit,
+    read_file, write_file, run_command, FuzzySearcher, git_status, git_diff, git_add, git_commit,
     build_skills_context,
     mcp::McpManager,
 };
@@ -161,8 +161,8 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&mut self, action: &types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&mut self, action: &types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
+        use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
@@ -258,6 +258,14 @@ impl Agent {
                     None => Ok(AgentEvent::Message("Not in a git repository".to_string())),
                 }
             }
+            GitDiffTool(cmd) => {
+                let diff = git_diff(cmd.path.as_deref(), cmd.cached.unwrap_or(false))?;
+                if diff.is_empty() {
+                    Ok(AgentEvent::Message("No changes to show".to_string()))
+                } else {
+                    Ok(AgentEvent::Message(format!("Git Diff:\n{}", diff)))
+                }
+            }
             GitAddTool(cmd) => {
                 git_add(&cmd.paths)?;
                 Ok(AgentEvent::Message(format!("Added {} files to staging", cmd.paths.len())))
@@ -265,6 +273,9 @@ impl Agent {
             GitCommitTool(cmd) => {
                 git_commit(&cmd.message)?;
                 Ok(AgentEvent::Message(format!("Committed: {}", cmd.message)))
+            }
+            OpenEditorTool(cmd) => {
+                Ok(AgentEvent::OpenEditor(cmd.path.clone(), cmd.line))
             }
             FinishTaskTool(cmd) => {
                 Ok(AgentEvent::Message(format!("Task finished: {}", cmd.summary)))

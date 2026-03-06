@@ -20,6 +20,15 @@ client<llm> Gemini31FlashLite {
   }
 }
 
+// 3. Google Gemini 3.1 Pro Preview
+client<llm> Gemini31Pro {
+  provider google-ai
+  options {
+    model "gemini-3.1-pro-preview"
+    api_key env.GEMINI_API_KEY
+  }
+}
+
 // 3. Gemini 2.5 Flash via native Google AI (for non-structured use)
 client<llm> Gemini25FlashNative {
   provider google-ai

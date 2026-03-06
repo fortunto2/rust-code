@@ -568,8 +568,8 @@ async fn main() -> Result<()> {
 
             let is_done = matches!(
                 step.action,
-                baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
             );
 
             match agent.execute_action(&step.action).await {

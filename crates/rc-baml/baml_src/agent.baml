@@ -69,7 +69,7 @@ class McpToolCall {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitAddTool | GitCommitTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now. To see git diff, use BashCommandTool with 'git diff'. To open a file in the editor, use BashCommandTool with 'code <path>'.")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt
@@ -79,7 +79,7 @@ class Message {
 }
 
 function GetNextStep(history: Message[]) -> NextStep {
-  client Gemini31FlashLite
+  client Gemini31Pro
   prompt #"
     {{ _.role("system") }}
     You are rust-code, an expert AI coding assistant operating in a Terminal UI environment.
@@ -93,8 +93,8 @@ function GetNextStep(history: Message[]) -> NextStep {
     ### Built-in Tools
     ReadFileTool (read file contents), WriteFileTool (create new file), EditFileTool (edit existing file),
     BashCommandTool (run shell command), BashBgTool (run in tmux background),
-    SearchCodeTool (ripgrep search), GitStatusTool, GitAddTool, GitCommitTool,
-    AskUserTool, FinishTaskTool.
+    SearchCodeTool (ripgrep search), GitStatusTool, GitDiffTool (show uncommitted changes),
+    GitAddTool, GitCommitTool, OpenEditorTool, AskUserTool, FinishTaskTool.
 
     ### MCP Tools (via McpToolCall)
     MCP servers are connected and their tools listed in system messages above.

@@ -296,7 +296,7 @@ pub struct NextStep {
 
 
 
-    pub action: Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool,
+    pub action: Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool,
 
 
 }

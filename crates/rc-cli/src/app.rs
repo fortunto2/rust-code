@@ -4168,18 +4168,18 @@ impl<'a> App<'a> {
 
                                     let is_done = matches!(
                                         step.action,
-                                        baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                        baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
                                     );
 
                                     // Execute the action
                                     match locked_agent.execute_action(&step.action).await {
                                         Ok(AgentEvent::Message(result)) => {
                                             // Check if it was an edit/write action to update sidebar
-                                            if let baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
-                                            if let baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
 
