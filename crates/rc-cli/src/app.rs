@@ -22,6 +22,39 @@ pub enum AppMode {
     GitHistorySearch,
     ProjectSymbolsSearch,
     BgTasksSearch,
+    BashHistorySearch,
+    SkillsSearch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InteractionMode {
+    Auto,
+    Ask,
+    Build,
+    Plan,
+    Bash,
+}
+
+impl InteractionMode {
+    fn label(self) -> &'static str {
+        match self {
+            InteractionMode::Auto => "AUTO",
+            InteractionMode::Ask => "ASK",
+            InteractionMode::Build => "BUILD",
+            InteractionMode::Plan => "PLAN",
+            InteractionMode::Bash => "BASH",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            InteractionMode::Auto => InteractionMode::Ask,
+            InteractionMode::Ask => InteractionMode::Build,
+            InteractionMode::Build => InteractionMode::Plan,
+            InteractionMode::Plan => InteractionMode::Bash,
+            InteractionMode::Bash => InteractionMode::Auto,
+        }
+    }
 }
 
 pub enum AppEvent {
@@ -35,6 +68,9 @@ pub enum AppEvent {
     PreviewLoaded(Vec<Line<'static>>),
     SuspendAndRun(String, Option<i64>),
     SuspendAndShell(String),
+    RefreshSkills,
+    SkillsRemoteResults(String, Vec<SkillEntry>),
+    SkillPreviewLoaded(String, String),
     SessionsLoaded(Vec<SessionEntry>),
     SessionLoaded,
 }
@@ -321,6 +357,162 @@ impl BgTasksState {
     }
 }
 
+pub struct BashHistoryState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<String>,
+    pub filtered_items: Vec<String>,
+    pub list_state: ListState,
+    pub preview_lines: Vec<Line<'static>>,
+    pub searcher: FuzzySearcher,
+}
+
+impl<'a> BashHistoryState<'a> {
+    pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Bash History "),
+        );
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
+            list_state,
+            preview_lines: Vec::new(),
+            searcher: FuzzySearcher::new(),
+        }
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            let matches = self.searcher.fuzzy_match_files(&query, &self.all_items);
+            self.filtered_items = matches.into_iter().map(|(_, v)| v).collect();
+        }
+        if self.filtered_items.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SkillEntry {
+    pub name: String,
+    pub source: String,
+    pub repo: String,
+    pub installed: bool,
+    pub local_path: Option<String>,
+    pub url: String,
+    pub installs: u64,
+    pub trending_rank: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SkillsSortMode {
+    Popularity,
+    Recent,
+    Name,
+}
+
+impl SkillsSortMode {
+    fn next(self) -> Self {
+        match self {
+            SkillsSortMode::Popularity => SkillsSortMode::Recent,
+            SkillsSortMode::Recent => SkillsSortMode::Name,
+            SkillsSortMode::Name => SkillsSortMode::Popularity,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SkillsSortMode::Popularity => "POPULARITY",
+            SkillsSortMode::Recent => "RECENT",
+            SkillsSortMode::Name => "NAME",
+        }
+    }
+}
+
+pub struct SkillsState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<SkillEntry>,
+    pub filtered_items: Vec<SkillEntry>,
+    pub list_state: ListState,
+    pub preview_lines: Vec<Line<'static>>,
+    pub searcher: FuzzySearcher,
+    pub sort_mode: SkillsSortMode,
+}
+
+impl<'a> SkillsState<'a> {
+    pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Skills (installed + remote) "),
+        );
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
+            list_state,
+            preview_lines: Vec::new(),
+            searcher: FuzzySearcher::new(),
+            sort_mode: SkillsSortMode::Popularity,
+        }
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            let q = query.to_lowercase();
+            self.filtered_items = self
+                .all_items
+                .iter()
+                .filter(|s| s.name.to_lowercase().contains(&q))
+                .cloned()
+                .collect();
+        }
+
+        match self.sort_mode {
+            SkillsSortMode::Popularity => {
+                self.filtered_items.sort_by(|a, b| {
+                    b.installs
+                        .cmp(&a.installs)
+                        .then_with(|| a.name.cmp(&b.name))
+                });
+            }
+            SkillsSortMode::Recent => {
+                self.filtered_items.sort_by(|a, b| {
+                    a.trending_rank
+                        .unwrap_or(usize::MAX)
+                        .cmp(&b.trending_rank.unwrap_or(usize::MAX))
+                        .then_with(|| b.installs.cmp(&a.installs))
+                });
+            }
+            SkillsSortMode::Name => {
+                self.filtered_items.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+        }
+
+        if self.filtered_items.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
+    }
+}
+
 impl GitHistoryState {
     pub fn new() -> Self {
         let mut list_state = ListState::default();
@@ -342,6 +534,7 @@ pub enum SidebarFocus {
 pub struct App<'a> {
     pub exit: bool,
     pub mode: AppMode,
+    pub interaction_mode: InteractionMode,
     pub textarea: TextArea<'a>,
     pub messages: Vec<String>,
     pub is_thinking: bool,
@@ -350,6 +543,8 @@ pub struct App<'a> {
     pub session_state: SessionSearchState<'a>,
     pub symbols_state: SymbolsState<'a>,
     pub bg_tasks: BgTasksState,
+    pub bash_history_state: BashHistoryState<'a>,
+    pub skills_state: SkillsState<'a>,
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState,
     pub sidebar_focus: SidebarFocus,
@@ -360,6 +555,14 @@ pub struct App<'a> {
     pub agent_task: Option<tokio::task::JoinHandle<()>>,
     pub agent_plan: Vec<String>,
     pub modified_files: Vec<String>,
+    pub input_history: Vec<String>,
+    pub input_history_pos: Option<usize>,
+    pub bash_history: Vec<String>,
+    pub bash_history_pos: Option<usize>,
+    pub installed_skills: Vec<SkillEntry>,
+    pub skills_query_cache: std::collections::HashMap<String, Vec<SkillEntry>>,
+    pub skill_preview_cache: std::collections::HashMap<String, String>,
+    pub skill_preview_pending: std::collections::HashSet<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -375,7 +578,7 @@ impl<'a> App<'a> {
         textarea.set_block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab focus sidebar, Ctrl+C quit) "),
+                .title(" Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab sidebar, Ctrl+C quit) "),
         );
 
         let mut list_state = ListState::default();
@@ -386,6 +589,7 @@ impl<'a> App<'a> {
         Self {
             exit: false,
             mode: AppMode::Chat,
+            interaction_mode: InteractionMode::Auto,
             textarea,
             messages: vec![
                 "[SYS] Welcome to rust-code".to_string(),
@@ -397,6 +601,8 @@ impl<'a> App<'a> {
             session_state: SessionSearchState::new(),
             symbols_state: SymbolsState::new(),
             bg_tasks: BgTasksState::new(),
+            bash_history_state: BashHistoryState::new(),
+            skills_state: SkillsState::new(),
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
             sidebar_focus: SidebarFocus::None,
@@ -407,6 +613,8 @@ impl<'a> App<'a> {
                 "Sessions".to_string(),
                 "Symbols".to_string(),
                 "BG Tasks".to_string(),
+                "Bash History".to_string(),
+                "Skills".to_string(),
             ],
             channel_state,
             ui_regions: None,
@@ -414,6 +622,14 @@ impl<'a> App<'a> {
             agent_task: None,
             agent_plan: Vec::new(),
             modified_files: Vec::new(),
+            input_history: Vec::new(),
+            input_history_pos: None,
+            bash_history: Self::load_shell_history(),
+            bash_history_pos: None,
+            installed_skills: Vec::new(),
+            skills_query_cache: std::collections::HashMap::new(),
+            skill_preview_cache: std::collections::HashMap::new(),
+            skill_preview_pending: std::collections::HashSet::new(),
         }
     }
 
@@ -448,6 +664,8 @@ impl<'a> App<'a> {
         self.refresh_git_history();
         self.refresh_project_symbols();
         self.refresh_bg_tasks();
+        self.refresh_bash_history_channel();
+        self.refresh_skills();
         if !self.git_sidebar.files.is_empty() {
             self.git_sidebar.list_state.select(Some(0));
             self.load_git_diff();
@@ -634,6 +852,44 @@ impl<'a> App<'a> {
                         let len = self.messages.len();
                         self.list_state.select(Some(len.saturating_sub(1)));
                     }
+                    AppEvent::RefreshSkills => {
+                        self.refresh_skills();
+                    }
+                    AppEvent::SkillsRemoteResults(query, items) => {
+                        self.skills_query_cache.insert(query.clone(), items.clone());
+
+                        let input_query = self
+                            .skills_state
+                            .input
+                            .lines()
+                            .join("")
+                            .trim()
+                            .to_lowercase();
+                        if input_query == query {
+                            let mut merged = self.installed_skills.clone();
+                            let mut seen = std::collections::HashSet::new();
+                            for s in &merged {
+                                seen.insert(s.name.clone());
+                            }
+                            for mut item in items {
+                                if seen.contains(&item.name) {
+                                    item.installed = true;
+                                }
+                                merged.push(item);
+                            }
+                            self.skills_state.all_items = merged;
+                            self.skills_state.update_search();
+                            self.load_skill_preview();
+                            self.maybe_request_skill_preview(tx.clone());
+                        }
+                    }
+                    AppEvent::SkillPreviewLoaded(key, text) => {
+                        self.skill_preview_pending.remove(&key);
+                        self.skill_preview_cache.insert(key, text);
+                        if matches!(self.mode, AppMode::SkillsSearch) {
+                            self.load_skill_preview();
+                        }
+                    }
                     AppEvent::PreviewLoaded(lines) => {
                         if matches!(self.mode, AppMode::FuzzySearch) {
                             self.fuzzy_state.preview_lines = lines;
@@ -795,7 +1051,7 @@ impl<'a> App<'a> {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style)
-                .title(" Message (Enter send, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "),
+                .title(self.input_title()),
         );
         frame.render_widget(self.textarea.widget(), left_chunks[1]);
 
@@ -856,6 +1112,8 @@ impl<'a> App<'a> {
                     1 => format!(" ({})", self.git_history.items.len()),
                     4 => format!(" ({})", self.symbols_state.all_items.len()),
                     5 => format!(" ({})", self.bg_tasks.items.len()),
+                    6 => format!(" ({})", self.bash_history_state.all_items.len()),
+                    7 => format!(" ({})", self.skills_state.all_items.len()),
                     _ => String::new(),
                 };
                 ListItem::new(format!("{}{}", name, suffix))
@@ -893,6 +1151,11 @@ impl<'a> App<'a> {
                 self.symbols_state.all_items.len(),
                 self.bg_tasks.items.len()
             )),
+            Line::from(format!(
+                "bash: {}  skills: {}",
+                self.bash_history_state.all_items.len(),
+                self.skills_state.all_items.len()
+            )),
             Line::from("Enter=open channel"),
             Line::from("in channel: Enter=preview"),
             Line::from("Ctrl+I=insert  Ctrl+O=open"),
@@ -916,6 +1179,8 @@ impl<'a> App<'a> {
             AppMode::GitHistorySearch => "MODE: GIT HISTORY",
             AppMode::ProjectSymbolsSearch => "MODE: PROJECT SYMBOLS",
             AppMode::BgTasksSearch => "MODE: BG TASKS",
+            AppMode::BashHistorySearch => "MODE: BASH HISTORY",
+            AppMode::SkillsSearch => "MODE: SKILLS",
         };
         let focus_text = if self.sidebar_focus == SidebarFocus::Channels {
             "FOCUS: CHANNELS"
@@ -923,20 +1188,23 @@ impl<'a> App<'a> {
             "FOCUS: INPUT"
         };
         let status_line = format!(
-            " {} | {} | Git: {} | Hist: {} | Sym: {} | BG: {} ",
+            " {} | {} | TASK: {} | Git: {} | Hist: {} | Sym: {} | BG: {} | Bash: {} | Skills: {} ",
             mode_text,
             focus_text,
+            self.interaction_mode.label(),
             self.git_sidebar.files.len(),
             self.git_history.items.len(),
             self.symbols_state.all_items.len(),
-            self.bg_tasks.items.len()
+            self.bg_tasks.items.len(),
+            self.bash_history_state.all_items.len(),
+            self.skills_state.all_items.len()
         );
         frame.render_widget(
             Paragraph::new(status_line).style(Style::default().fg(Color::Black).bg(Color::Gray)),
             root_chunks[1],
         );
 
-        let hotkeys_line = " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 Refresh  F6 Symbols  F7 BG Tasks  F10 Channels  F12 Quit ";
+        let hotkeys_line = " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 Refresh  F6 Symbols  F7 BG  F8 BashHist  F9 Skills  Shift+Tab TaskMode  Up/Down InputHist  Ctrl+R BashHist  F10 Channels  F12 Quit ";
         frame.render_widget(
             Paragraph::new(hotkeys_line).style(
                 Style::default()
@@ -954,6 +1222,8 @@ impl<'a> App<'a> {
             AppMode::GitHistorySearch => self.draw_git_history_popup(frame, area),
             AppMode::ProjectSymbolsSearch => self.draw_symbols_popup(frame, area),
             AppMode::BgTasksSearch => self.draw_bg_tasks_popup(frame, area),
+            AppMode::BashHistorySearch => self.draw_bash_history_popup(frame, area),
+            AppMode::SkillsSearch => self.draw_skills_popup(frame, area),
             AppMode::Chat => {}
         }
     }
@@ -1015,6 +1285,140 @@ impl<'a> App<'a> {
         )
         .block(Block::default().borders(Borders::ALL).title(" Logs "));
         frame.render_widget(preview, chunks[1]);
+    }
+
+    fn draw_bash_history_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 85) / 100;
+        let popup_height = (area.height * 85) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" Bash History Channel (Esc close, Enter preview, Ctrl+I insert) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(inner_area);
+
+        frame.render_widget(self.bash_history_state.input.widget(), chunks[0]);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(chunks[1]);
+
+        let items = if self.bash_history_state.filtered_items.is_empty() {
+            vec![ListItem::new("No commands")]
+        } else {
+            self.bash_history_state
+                .filtered_items
+                .iter()
+                .map(|c| ListItem::new(c.as_str()))
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" Commands "))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, body[0], &mut self.bash_history_state.list_state);
+
+        let preview = List::new(
+            self.bash_history_state
+                .preview_lines
+                .iter()
+                .map(|l| ListItem::new(l.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .block(Block::default().borders(Borders::ALL).title(" Preview "));
+        frame.render_widget(preview, body[1]);
+    }
+
+    fn draw_skills_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 88) / 100;
+        let popup_height = (area.height * 88) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(format!(
+                " Skills Channel [{}] (Tab sort, Enter action, Ctrl+O open local, Ctrl+D uninstall) ",
+                self.skills_state.sort_mode.label()
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(inner_area);
+
+        frame.render_widget(self.skills_state.input.widget(), chunks[0]);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+            .split(chunks[1]);
+
+        let items = if self.skills_state.filtered_items.is_empty() {
+            vec![ListItem::new("No skills")]
+        } else {
+            self.skills_state
+                .filtered_items
+                .iter()
+                .map(|s| {
+                    let mark = if s.installed { "[INST]" } else { "[REM]" };
+                    ListItem::new(format!("{} {} ({})", mark, s.name, s.source))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" Skills "))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, body[0], &mut self.skills_state.list_state);
+
+        let preview = List::new(
+            self.skills_state
+                .preview_lines
+                .iter()
+                .map(|l| ListItem::new(l.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Skill Details "),
+        );
+        frame.render_widget(preview, body[1]);
     }
 
     fn draw_symbols_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -1736,6 +2140,518 @@ impl<'a> App<'a> {
         }
     }
 
+    fn refresh_bash_history_channel(&mut self) {
+        self.bash_history_state.all_items = self.bash_history.clone();
+        self.bash_history_state.input = TextArea::default();
+        self.bash_history_state.input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Bash History "),
+        );
+        self.bash_history_state.update_search();
+        self.load_bash_history_preview();
+    }
+
+    fn load_bash_history_preview(&mut self) {
+        self.bash_history_state.preview_lines.clear();
+        if let Some(selected) = self.bash_history_state.list_state.selected() {
+            if let Some(cmd) = self.bash_history_state.filtered_items.get(selected) {
+                self.bash_history_state.preview_lines.push(
+                    Line::from("selected command").style(Style::default().fg(Color::DarkGray)),
+                );
+                self.bash_history_state.preview_lines.push(
+                    Line::from(cmd.clone()).style(Style::default().add_modifier(Modifier::BOLD)),
+                );
+                self.bash_history_state.preview_lines.push(Line::from(""));
+                self.bash_history_state
+                    .preview_lines
+                    .push(Line::from("Ctrl+I: insert into prompt"));
+                self.bash_history_state
+                    .preview_lines
+                    .push(Line::from("In BASH mode press Enter to run."));
+            }
+        }
+    }
+
+    fn refresh_skills(&mut self) {
+        self.skills_query_cache.clear();
+        self.installed_skills = Self::collect_installed_skills();
+        let installed_names: std::collections::HashSet<String> = self
+            .installed_skills
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+
+        let mut all = self.installed_skills.clone();
+        for mut remote in Self::collect_remote_skills() {
+            if installed_names.contains(&remote.name) {
+                remote.installed = true;
+            }
+            all.push(remote);
+        }
+        self.skills_state.all_items = all;
+
+        self.skills_state.input = TextArea::default();
+        self.skills_state.input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Skills (installed + remote) "),
+        );
+        self.skills_state.update_search();
+        self.load_skill_preview();
+    }
+
+    fn load_skill_preview(&mut self) {
+        self.skills_state.preview_lines.clear();
+        if let Some(selected) = self.skills_state.list_state.selected() {
+            if let Some(skill) = self.skills_state.filtered_items.get(selected) {
+                let tag = if skill.installed {
+                    "installed"
+                } else {
+                    "remote"
+                };
+                self.skills_state.preview_lines.push(
+                    Line::from(format!("{} [{}]", skill.name, tag))
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                );
+                self.skills_state
+                    .preview_lines
+                    .push(Line::from(format!("source: {}", skill.source)));
+                if skill.installs > 0 {
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from(format!("installs: {}", skill.installs)));
+                }
+                if let Some(rank) = skill.trending_rank {
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from(format!("recent rank: #{}", rank + 1)));
+                }
+                if !skill.repo.is_empty() {
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from(format!("repo: {}", skill.repo)));
+                }
+                if let Some(path) = &skill.local_path {
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from(format!("local: {}", path)));
+                }
+                if !skill.url.is_empty() {
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from(format!("url: {}", skill.url)));
+                }
+                let preview_key = if !skill.url.is_empty() {
+                    skill.url.clone()
+                } else {
+                    format!("local:{}", skill.name)
+                };
+                if let Some(text) = self.skill_preview_cache.get(&preview_key) {
+                    self.skills_state.preview_lines.push(Line::from(""));
+                    self.skills_state
+                        .preview_lines
+                        .push(Line::from("preview").style(Style::default().fg(Color::DarkGray)));
+                    for line in text.lines().take(8) {
+                        self.skills_state
+                            .preview_lines
+                            .push(Line::from(line.to_string()));
+                    }
+                } else if !skill.url.is_empty() {
+                    self.skills_state.preview_lines.push(Line::from(""));
+                    self.skills_state.preview_lines.push(
+                        Line::from("loading preview...")
+                            .style(Style::default().fg(Color::DarkGray)),
+                    );
+                }
+                self.skills_state.preview_lines.push(Line::from(""));
+                self.skills_state
+                    .preview_lines
+                    .push(Line::from("Enter: install remote / insert installed"));
+                self.skills_state
+                    .preview_lines
+                    .push(Line::from("Ctrl+O: open local SKILL.md (if installed)"));
+                self.skills_state
+                    .preview_lines
+                    .push(Line::from("Ctrl+D: uninstall installed skill"));
+            }
+        }
+    }
+
+    fn collect_installed_skills() -> Vec<SkillEntry> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let dirs = vec![
+            format!("{}/.claude/skills", home),
+            format!("{}/.agents/skills", home),
+            format!("{}/.config/opencode/skills", home),
+            ".claude/skills".to_string(),
+        ];
+
+        for root in dirs {
+            let root_path = std::path::Path::new(&root);
+            if !root_path.exists() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(root_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let name = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if name.is_empty() || seen.contains(&name) {
+                        continue;
+                    }
+                    let skill_md = path.join("SKILL.md");
+                    if !skill_md.exists() {
+                        continue;
+                    }
+                    seen.insert(name.clone());
+                    out.push(SkillEntry {
+                        name,
+                        source: "local".to_string(),
+                        repo: String::new(),
+                        installed: true,
+                        local_path: Some(skill_md.to_string_lossy().to_string()),
+                        url: String::new(),
+                        installs: 0,
+                        trending_rank: None,
+                    });
+                }
+            }
+        }
+
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    fn collect_remote_skills() -> Vec<SkillEntry> {
+        let mut out = Vec::new();
+        let trending_ranks = Self::collect_trending_ranks();
+        let output = std::process::Command::new("sh")
+            .arg("-lc")
+            .arg("curl -fsSL https://skills.sh")
+            .output();
+
+        let Ok(output) = output else {
+            return out;
+        };
+
+        let page = String::from_utf8_lossy(&output.stdout).to_string();
+        let mut seen = std::collections::HashSet::new();
+        let mut start = 0usize;
+
+        while let Some(pos) = page[start..].find("href=\"/") {
+            let begin = start + pos + 7;
+            let rest = &page[begin..];
+            let Some(end_rel) = rest.find('"') else {
+                break;
+            };
+            let path = &rest[..end_rel];
+            start = begin + end_rel;
+
+            if path.starts_with("docs")
+                || path.starts_with("audits")
+                || path.starts_with("trending")
+                || path.starts_with("hot")
+                || path.is_empty()
+            {
+                continue;
+            }
+
+            let parts: Vec<&str> = path.split('/').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+            let owner = parts[0];
+            let repo = parts[1];
+            let skill = parts[2];
+            if owner.is_empty() || repo.is_empty() || skill.is_empty() {
+                continue;
+            }
+            let key = format!("{}/{}/{}", owner, repo, skill);
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.insert(key.clone());
+            let snippet_end = std::cmp::min(page.len(), begin + end_rel + 260);
+            let snippet = &page[begin + end_rel..snippet_end];
+            let installs = Self::parse_installs_count(snippet).unwrap_or(0);
+            out.push(SkillEntry {
+                name: skill.to_string(),
+                source: "skills.sh".to_string(),
+                repo: format!("{}/{}", owner, repo),
+                installed: false,
+                local_path: None,
+                url: format!("https://skills.sh/{}", key),
+                installs,
+                trending_rank: trending_ranks.get(&key).copied(),
+            });
+            if out.len() >= 350 {
+                break;
+            }
+        }
+
+        out
+    }
+
+    fn collect_trending_ranks() -> std::collections::HashMap<String, usize> {
+        let mut out = std::collections::HashMap::new();
+        let output = std::process::Command::new("sh")
+            .arg("-lc")
+            .arg("curl -fsSL https://skills.sh/trending")
+            .output();
+        let Ok(output) = output else {
+            return out;
+        };
+
+        let page = String::from_utf8_lossy(&output.stdout).to_string();
+        let mut start = 0usize;
+        let mut rank = 0usize;
+
+        while let Some(pos) = page[start..].find("href=\"/") {
+            let begin = start + pos + 7;
+            let rest = &page[begin..];
+            let Some(end_rel) = rest.find('"') else {
+                break;
+            };
+            let path = &rest[..end_rel];
+            start = begin + end_rel;
+            let parts: Vec<&str> = path.split('/').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+            if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
+                continue;
+            }
+            let key = format!("{}/{}/{}", parts[0], parts[1], parts[2]);
+            if out.contains_key(&key) {
+                continue;
+            }
+            out.insert(key, rank);
+            rank += 1;
+            if rank >= 500 {
+                break;
+            }
+        }
+
+        out
+    }
+
+    fn parse_installs_count(text: &str) -> Option<u64> {
+        let lower = text.to_lowercase();
+        let idx = lower.find("installs")?;
+        let prefix = &lower[..idx];
+        let token = prefix.split_whitespace().last()?;
+        let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
+        if token.is_empty() {
+            return None;
+        }
+
+        let mult = if token.ends_with('k') {
+            1000.0
+        } else if token.ends_with('m') {
+            1_000_000.0
+        } else {
+            1.0
+        };
+        let raw = token.trim_end_matches('k').trim_end_matches('m');
+        let num = raw.parse::<f64>().ok()?;
+        Some((num * mult) as u64)
+    }
+
+    fn search_remote_skills_on_demand(&mut self, query: String, tx: mpsc::Sender<AppEvent>) {
+        if query.len() < 2 {
+            self.skills_state.all_items = self.installed_skills.clone();
+            self.skills_state.update_search();
+            return;
+        }
+
+        if let Some(cached) = self.skills_query_cache.get(&query).cloned() {
+            let mut merged = self.installed_skills.clone();
+            let mut installed_names = std::collections::HashSet::new();
+            for s in &self.installed_skills {
+                installed_names.insert(s.name.clone());
+            }
+            for mut item in cached {
+                if installed_names.contains(&item.name) {
+                    item.installed = true;
+                }
+                merged.push(item);
+            }
+            self.skills_state.all_items = merged;
+            self.skills_state.update_search();
+            return;
+        }
+
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            let query_copy = query.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                Self::search_remote_skills_blocking(&query_copy)
+            })
+            .await
+            .unwrap_or_default();
+            let _ = tx_clone
+                .send(AppEvent::SkillsRemoteResults(query, result))
+                .await;
+        });
+    }
+
+    fn search_remote_skills_blocking(query: &str) -> Vec<SkillEntry> {
+        let mut out = Vec::new();
+        let output = std::process::Command::new("npx")
+            .arg("-y")
+            .arg("skills")
+            .arg("find")
+            .arg(query)
+            .output();
+
+        let Ok(output) = output else {
+            return out;
+        };
+
+        let raw = String::from_utf8_lossy(&output.stdout).to_string();
+        let clean = Self::strip_ansi(&raw);
+        let mut pending: Option<(String, String, String, u64)> = None; // owner/repo, skill, source, installs
+
+        for line in clean.lines() {
+            let l = line.trim();
+            if l.is_empty() {
+                continue;
+            }
+
+            if let Some((repo, skill, installs)) = Self::parse_find_skill_line(l) {
+                pending = Some((repo, skill, "skills.sh".to_string(), installs));
+                continue;
+            }
+
+            if let Some((repo, skill, source, installs)) = pending.clone() {
+                if l.contains("https://skills.sh/") {
+                    out.push(SkillEntry {
+                        name: skill,
+                        source,
+                        repo,
+                        installed: false,
+                        local_path: None,
+                        url: l.trim_start_matches('└').trim().to_string(),
+                        installs,
+                        trending_rank: None,
+                    });
+                    pending = None;
+                }
+            }
+        }
+
+        out
+    }
+
+    fn parse_find_skill_line(line: &str) -> Option<(String, String, u64)> {
+        let at = line.find('@')?;
+        let repo = line[..at].trim().to_string();
+        if repo.is_empty() || !repo.contains('/') {
+            return None;
+        }
+
+        let rest = line[at + 1..].trim();
+        let mut parts = rest.split_whitespace();
+        let skill = parts.next()?.trim().to_string();
+        if skill.is_empty() {
+            return None;
+        }
+
+        let installs = Self::parse_installs_count(rest).unwrap_or(0);
+        Some((repo, skill, installs))
+    }
+
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == 0x1b {
+                i += 1;
+                if i < bytes.len() && bytes[i] == b'[' {
+                    i += 1;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        i += 1;
+                        if (b as char).is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    }
+
+    fn maybe_request_skill_preview(&mut self, tx: mpsc::Sender<AppEvent>) {
+        let Some(selected) = self.skills_state.list_state.selected() else {
+            return;
+        };
+        let Some(skill) = self.skills_state.filtered_items.get(selected) else {
+            return;
+        };
+        if skill.url.is_empty() {
+            return;
+        }
+
+        let key = skill.url.clone();
+        if self.skill_preview_cache.contains_key(&key) || self.skill_preview_pending.contains(&key)
+        {
+            return;
+        }
+        self.skill_preview_pending.insert(key.clone());
+
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            let key_for_fetch = key.clone();
+            let summary = tokio::task::spawn_blocking(move || {
+                let output = std::process::Command::new("curl")
+                    .arg("-fsSL")
+                    .arg(&key_for_fetch)
+                    .output();
+                let Ok(output) = output else {
+                    return String::new();
+                };
+                let html = String::from_utf8_lossy(&output.stdout).to_string();
+                Self::extract_meta_description(&html)
+                    .or_else(|| Self::extract_title(&html))
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+
+            let _ = tx_clone
+                .send(AppEvent::SkillPreviewLoaded(key, summary))
+                .await;
+        });
+    }
+
+    fn extract_meta_description(html: &str) -> Option<String> {
+        let key = "name=\"description\" content=\"";
+        let start = html.find(key)? + key.len();
+        let rest = &html[start..];
+        let end = rest.find('"')?;
+        Some(rest[..end].replace("&quot;", "\"").replace("&#x27;", "'"))
+    }
+
+    fn extract_title(html: &str) -> Option<String> {
+        let start = html.find("<title>")? + 7;
+        let rest = &html[start..];
+        let end = rest.find("</title>")?;
+        Some(rest[..end].to_string())
+    }
+
     fn load_bg_task_preview(&mut self) {
         self.bg_tasks.preview_lines.clear();
         if let Some(selected) = self.bg_tasks.list_state.selected() {
@@ -1860,6 +2776,8 @@ impl<'a> App<'a> {
             AppMode::GitHistorySearch => self.handle_git_history_key_event(key_event).await,
             AppMode::ProjectSymbolsSearch => self.handle_symbols_key_event(key_event, tx).await,
             AppMode::BgTasksSearch => self.handle_bg_tasks_key_event(key_event, tx).await,
+            AppMode::BashHistorySearch => self.handle_bash_history_key_event(key_event).await,
+            AppMode::SkillsSearch => self.handle_skills_key_event(key_event, tx).await,
         }
     }
 
@@ -1920,6 +2838,258 @@ impl<'a> App<'a> {
                 self.mode = AppMode::Chat;
             }
             _ => {}
+        }
+    }
+
+    async fn handle_bash_history_key_event(&mut self, key_event: event::KeyEvent) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.bash_history_state.list_state.selected() {
+                    let next = if selected + 1 < self.bash_history_state.filtered_items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
+                    self.bash_history_state.list_state.select(Some(next));
+                    self.load_bash_history_preview();
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.bash_history_state.list_state.selected() {
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.bash_history_state
+                            .filtered_items
+                            .len()
+                            .saturating_sub(1)
+                    };
+                    self.bash_history_state.list_state.select(Some(prev));
+                    self.load_bash_history_preview();
+                }
+            }
+            KeyCode::Enter => {
+                self.load_bash_history_preview();
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.bash_history_state.list_state.selected() {
+                    if let Some(cmd) = self.bash_history_state.filtered_items.get(selected) {
+                        let cmd_value = cmd.clone();
+                        self.set_input_text(&cmd_value);
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            _ => {
+                if self.bash_history_state.input.input(Input::from(key_event)) {
+                    self.bash_history_state.update_search();
+                    self.load_bash_history_preview();
+                }
+            }
+        }
+    }
+
+    async fn handle_skills_key_event(
+        &mut self,
+        key_event: event::KeyEvent,
+        tx: mpsc::Sender<AppEvent>,
+    ) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    let next = if selected + 1 < self.skills_state.filtered_items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
+                    self.skills_state.list_state.select(Some(next));
+                    self.load_skill_preview();
+                    self.maybe_request_skill_preview(tx.clone());
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.skills_state.filtered_items.len().saturating_sub(1)
+                    };
+                    self.skills_state.list_state.select(Some(prev));
+                    self.load_skill_preview();
+                    self.maybe_request_skill_preview(tx.clone());
+                }
+            }
+            KeyCode::Tab => {
+                self.skills_state.sort_mode = self.skills_state.sort_mode.next();
+                self.skills_state.update_search();
+                self.load_skill_preview();
+                self.maybe_request_skill_preview(tx.clone());
+            }
+            KeyCode::Enter => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    if let Some(skill) = self.skills_state.filtered_items.get(selected).cloned() {
+                        if skill.installed {
+                            self.textarea.insert_str(&format!("skill:{} ", skill.name));
+                            self.mode = AppMode::Chat;
+                            return;
+                        }
+
+                        if !skill.repo.is_empty() {
+                            self.messages
+                                .push(format!("[THINK] Installing skill: {}", skill.name));
+                            let len = self.messages.len();
+                            self.list_state.select(Some(len.saturating_sub(1)));
+
+                            let tx_clone = tx.clone();
+                            let repo = skill.repo.clone();
+                            let skill_name = skill.name.clone();
+                            tokio::spawn(async move {
+                                let command = format!("npx -y skills add {}", repo);
+                                let result = tools::run_command(&command).await;
+                                match result {
+                                    Ok(output) => {
+                                        let msg = if output.trim().is_empty() {
+                                            format!(
+                                                "[SKILL] Installed {} (no command output)",
+                                                skill_name
+                                            )
+                                        } else {
+                                            format!("[SKILL] Installed {}\n{}", skill_name, output)
+                                        };
+                                        let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
+                                    }
+                                    Err(e) => {
+                                        let _ = tx_clone
+                                            .send(AppEvent::AgentResponse(format!(
+                                                "[ERR] Skill install failed: {}\n{}",
+                                                skill_name, e
+                                            )))
+                                            .await;
+                                    }
+                                }
+                                let _ = tx_clone.send(AppEvent::RefreshSkills).await;
+                            });
+
+                            self.mode = AppMode::Chat;
+                            return;
+                        }
+                    }
+                }
+                self.load_skill_preview();
+            }
+            KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    if let Some(skill) = self.skills_state.filtered_items.get(selected) {
+                        if skill.installed {
+                            self.textarea.insert_str(&format!("skill:{} ", skill.name));
+                        } else if !skill.repo.is_empty() {
+                            self.textarea.insert_str(&format!(
+                                "npx skills add {}  # {}\n",
+                                skill.repo, skill.name
+                            ));
+                        } else {
+                            self.textarea.insert_str(&skill.name);
+                            self.textarea.insert_str(" ");
+                        }
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    if let Some(skill) = self.skills_state.filtered_items.get(selected) {
+                        if let Some(path) = &skill.local_path {
+                            let _ = tx.send(AppEvent::SuspendAndRun(path.clone(), None)).await;
+                            self.mode = AppMode::Chat;
+                            return;
+                        }
+                    }
+                }
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Char('d') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(selected) = self.skills_state.list_state.selected() {
+                    if let Some(skill) = self.skills_state.filtered_items.get(selected).cloned() {
+                        if skill.installed {
+                            if let Some(local_path) = skill.local_path {
+                                if let Some(skill_dir) = std::path::Path::new(&local_path)
+                                    .parent()
+                                    .map(|p| p.to_path_buf())
+                                {
+                                    self.messages.push(format!(
+                                        "[THINK] Uninstalling skill: {}",
+                                        skill.name
+                                    ));
+                                    let len = self.messages.len();
+                                    self.list_state.select(Some(len.saturating_sub(1)));
+
+                                    let tx_clone = tx.clone();
+                                    let skill_name = skill.name.clone();
+                                    tokio::spawn(async move {
+                                        let result = tokio::task::spawn_blocking(move || {
+                                            std::fs::remove_dir_all(skill_dir)
+                                        })
+                                        .await;
+
+                                        match result {
+                                            Ok(Ok(())) => {
+                                                let _ = tx_clone
+                                                    .send(AppEvent::AgentResponse(format!(
+                                                        "[SKILL] Uninstalled {}",
+                                                        skill_name
+                                                    )))
+                                                    .await;
+                                            }
+                                            Ok(Err(e)) => {
+                                                let _ = tx_clone
+                                                    .send(AppEvent::AgentResponse(format!(
+                                                        "[ERR] Failed to uninstall {}\n{}",
+                                                        skill_name, e
+                                                    )))
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = tx_clone
+                                                    .send(AppEvent::AgentResponse(format!(
+                                                        "[ERR] Failed to uninstall {}\n{}",
+                                                        skill_name, e
+                                                    )))
+                                                    .await;
+                                            }
+                                        }
+
+                                        let _ = tx_clone.send(AppEvent::RefreshSkills).await;
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::F(5) => {
+                self.refresh_skills();
+            }
+            _ => {
+                if self.skills_state.input.input(Input::from(key_event)) {
+                    self.skills_state.update_search();
+                    let query = self
+                        .skills_state
+                        .input
+                        .lines()
+                        .join("")
+                        .trim()
+                        .to_lowercase();
+                    self.search_remote_skills_on_demand(query, tx.clone());
+                    self.load_skill_preview();
+                    self.maybe_request_skill_preview(tx.clone());
+                }
+            }
         }
     }
 
@@ -2366,6 +3536,15 @@ impl<'a> App<'a> {
                                 self.mode = AppMode::BgTasksSearch;
                                 self.refresh_bg_tasks();
                             }
+                            6 => {
+                                self.mode = AppMode::BashHistorySearch;
+                                self.refresh_bash_history_channel();
+                            }
+                            7 => {
+                                self.mode = AppMode::SkillsSearch;
+                                self.refresh_skills();
+                                self.maybe_request_skill_preview(tx.clone());
+                            }
                             _ => {}
                         }
                     }
@@ -2461,6 +3640,8 @@ impl<'a> App<'a> {
                 self.refresh_git_history();
                 self.refresh_project_symbols();
                 self.refresh_bg_tasks();
+                self.refresh_bash_history_channel();
+                self.refresh_skills();
                 self.messages.push("[SYS] Git status refreshed".to_string());
                 let len = self.messages.len();
                 self.list_state.select(Some(len.saturating_sub(1)));
@@ -2479,11 +3660,29 @@ impl<'a> App<'a> {
                 self.mode = AppMode::BgTasksSearch;
                 self.refresh_bg_tasks();
             }
+            KeyCode::F(8) => {
+                self.mode = AppMode::BashHistorySearch;
+                self.refresh_bash_history_channel();
+            }
+            KeyCode::F(9) => {
+                self.mode = AppMode::SkillsSearch;
+                self.refresh_skills();
+                self.maybe_request_skill_preview(tx.clone());
+            }
             KeyCode::F(10) => {
                 self.sidebar_focus = SidebarFocus::Channels;
             }
             KeyCode::F(12) => {
                 self.exit = true;
+            }
+            KeyCode::BackTab => {
+                self.interaction_mode = self.interaction_mode.next();
+                self.messages.push(format!(
+                    "[SYS] Task mode: {}",
+                    self.interaction_mode.label()
+                ));
+                let len = self.messages.len();
+                self.list_state.select(Some(len.saturating_sub(1)));
             }
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_thinking {
@@ -2601,18 +3800,99 @@ impl<'a> App<'a> {
                     self.load_preview(tx.clone());
                 }
             }
+            KeyCode::Up if !self.is_thinking => {
+                if self.interaction_mode == InteractionMode::Bash {
+                    self.navigate_bash_history_prev();
+                } else {
+                    self.navigate_input_history_prev();
+                }
+            }
+            KeyCode::Down if !self.is_thinking => {
+                if self.interaction_mode == InteractionMode::Bash {
+                    self.navigate_bash_history_next();
+                } else {
+                    self.navigate_input_history_next();
+                }
+            }
+            KeyCode::Char('r')
+                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.interaction_mode == InteractionMode::Bash
+                    && !self.is_thinking =>
+            {
+                self.search_bash_history_from_input();
+            }
             KeyCode::Enter if !key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                 // Send message
                 let input_lines = self.textarea.lines().to_vec();
                 let prompt = input_lines.join("\n");
 
                 if !prompt.trim().is_empty() && !self.is_thinking {
+                    self.push_input_history(prompt.clone());
+
+                    if self.interaction_mode == InteractionMode::Bash {
+                        let command = prompt.trim().to_string();
+                        self.messages.push(format!("> $ {}", command));
+                        self.textarea = TextArea::default();
+                        self.textarea.set_block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(self.input_title()),
+                        );
+                        self.is_thinking = true;
+                        self.messages
+                            .push("[THINK] Running bash command...".to_string());
+
+                        self.bash_history.push(command.clone());
+                        self.bash_history_pos = None;
+                        self.refresh_bash_history_channel();
+
+                        let agent_tx = tx.clone();
+                        tokio::spawn(async move {
+                            let result = tools::run_command(&command).await;
+                            match result {
+                                Ok(output) => {
+                                    let msg = if output.trim().is_empty() {
+                                        "[BASH] (no output)".to_string()
+                                    } else {
+                                        format!("[BASH]\n{}", output)
+                                    };
+                                    let _ = agent_tx.send(AppEvent::AgentResponse(msg)).await;
+                                }
+                                Err(e) => {
+                                    let _ = agent_tx
+                                        .send(AppEvent::AgentResponse(format!(
+                                            "[ERR] Bash failed\n{}",
+                                            e
+                                        )))
+                                        .await;
+                                }
+                            }
+                            let _ = agent_tx.send(AppEvent::AgentDone).await;
+                        });
+                        return;
+                    }
+
+                    if let Some(fast_reply) = self.fast_path_reply(&prompt) {
+                        self.messages.push(format!("> {}", prompt));
+                        self.messages.push(fast_reply);
+                        self.textarea = TextArea::default();
+                        self.textarea.set_block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(self.input_title()),
+                        );
+                        let len = self.messages.len();
+                        self.list_state.select(Some(len.saturating_sub(1)));
+                        return;
+                    }
+
                     self.messages.push(format!("> {}", prompt));
                     self.textarea = TextArea::default();
-                    self.textarea
-                        .set_block(Block::default().borders(Borders::ALL).title(
-                            " Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) ",
-                        ));
+                    self.textarea.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(self.input_title()),
+                    );
 
                     self.is_thinking = true;
                     self.messages.push("[THINK] Working...".to_string());
@@ -2625,7 +3905,7 @@ impl<'a> App<'a> {
 
                     // Spawn agent task to prevent UI freezing
                     let agent_tx = tx.clone();
-                    let prompt_clone = prompt.clone();
+                    let prompt_clone = self.decorate_prompt_for_mode(&prompt);
                     let pending_notes = self.pending_notes.clone();
 
                     self.agent_task = Some(tokio::spawn(async move {
@@ -2756,10 +4036,11 @@ impl<'a> App<'a> {
                     self.messages
                         .push(format!("[NOTE] Queued note: {}", prompt));
                     self.textarea = TextArea::default();
-                    self.textarea
-                        .set_block(Block::default().borders(Borders::ALL).title(
-                            " Message (Enter to send, Ctrl+P to search files, Ctrl+C to quit) ",
-                        ));
+                    self.textarea.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(self.input_title()),
+                    );
                     let len = self.messages.len();
                     if len > 0 {
                         self.list_state.select(Some(len - 1));
@@ -2767,8 +4048,199 @@ impl<'a> App<'a> {
                 }
             }
             _ => {
+                self.input_history_pos = None;
+                self.bash_history_pos = None;
                 self.textarea.input(Input::from(key_event));
             }
+        }
+    }
+
+    fn input_title(&self) -> &'static str {
+        if self.interaction_mode == InteractionMode::Bash {
+            " Bash $ (Enter run, Up/Down history, Ctrl+R search, Shift+Tab mode) "
+        } else {
+            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "
+        }
+    }
+
+    fn set_input_text(&mut self, text: &str) {
+        self.textarea = TextArea::default();
+        self.textarea.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(self.input_title()),
+        );
+        if !text.is_empty() {
+            self.textarea.insert_str(text);
+        }
+    }
+
+    fn push_input_history(&mut self, prompt: String) {
+        let trimmed = prompt.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if self
+            .input_history
+            .last()
+            .map(|s| s.trim() == trimmed)
+            .unwrap_or(false)
+        {
+            self.input_history_pos = None;
+            return;
+        }
+        self.input_history.push(prompt);
+        self.input_history_pos = None;
+    }
+
+    fn navigate_input_history_prev(&mut self) {
+        if self.input_history.is_empty() {
+            return;
+        }
+        let next_pos = match self.input_history_pos {
+            Some(0) => 0,
+            Some(pos) => pos.saturating_sub(1),
+            None => self.input_history.len().saturating_sub(1),
+        };
+        self.input_history_pos = Some(next_pos);
+        if let Some(item) = self.input_history.get(next_pos).cloned() {
+            self.set_input_text(&item);
+        }
+    }
+
+    fn navigate_input_history_next(&mut self) {
+        let Some(pos) = self.input_history_pos else {
+            return;
+        };
+        if pos + 1 >= self.input_history.len() {
+            self.input_history_pos = None;
+            self.set_input_text("");
+            return;
+        }
+        let next_pos = pos + 1;
+        self.input_history_pos = Some(next_pos);
+        if let Some(item) = self.input_history.get(next_pos).cloned() {
+            self.set_input_text(&item);
+        }
+    }
+
+    fn navigate_bash_history_prev(&mut self) {
+        if self.bash_history.is_empty() {
+            return;
+        }
+        let next_pos = match self.bash_history_pos {
+            Some(0) => 0,
+            Some(pos) => pos.saturating_sub(1),
+            None => self.bash_history.len().saturating_sub(1),
+        };
+        self.bash_history_pos = Some(next_pos);
+        if let Some(item) = self.bash_history.get(next_pos).cloned() {
+            self.set_input_text(&item);
+        }
+    }
+
+    fn navigate_bash_history_next(&mut self) {
+        let Some(pos) = self.bash_history_pos else {
+            return;
+        };
+        if pos + 1 >= self.bash_history.len() {
+            self.bash_history_pos = None;
+            self.set_input_text("");
+            return;
+        }
+        let next_pos = pos + 1;
+        self.bash_history_pos = Some(next_pos);
+        if let Some(item) = self.bash_history.get(next_pos).cloned() {
+            self.set_input_text(&item);
+        }
+    }
+
+    fn search_bash_history_from_input(&mut self) {
+        if self.bash_history.is_empty() {
+            return;
+        }
+        let query = self.textarea.lines().join("\n").trim().to_lowercase();
+        let found = if query.is_empty() {
+            self.bash_history.last().cloned()
+        } else {
+            self.bash_history
+                .iter()
+                .rev()
+                .find(|cmd| cmd.to_lowercase().contains(&query))
+                .cloned()
+        };
+
+        if let Some(cmd) = found {
+            self.set_input_text(&cmd);
+            self.bash_history_pos = self.bash_history.iter().position(|s| s == &cmd);
+        }
+    }
+
+    fn load_shell_history() -> Vec<String> {
+        let mut out = Vec::new();
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => return out,
+        };
+
+        for rel in [".bash_history", ".zsh_history"] {
+            let path = format!("{}/{}", home, rel);
+            if let Ok(content) = std::fs::read_to_string(path) {
+                for line in content.lines() {
+                    let cmd = if let Some((_meta, command)) = line.split_once(';') {
+                        if line.starts_with(':') {
+                            command.trim()
+                        } else {
+                            line.trim()
+                        }
+                    } else {
+                        line.trim()
+                    };
+
+                    if !cmd.is_empty() {
+                        out.push(cmd.to_string());
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
+    fn decorate_prompt_for_mode(&self, prompt: &str) -> String {
+        match self.interaction_mode {
+            InteractionMode::Auto => prompt.to_string(),
+            InteractionMode::Ask => format!(
+                "Task mode ASK: answer quickly and directly. Avoid tool calls unless absolutely necessary.\n\nUser request:\n{}",
+                prompt
+            ),
+            InteractionMode::Build => format!(
+                "Task mode BUILD: prioritize implementation and tool execution in small verified steps.\n\nUser request:\n{}",
+                prompt
+            ),
+            InteractionMode::Plan => format!(
+                "Task mode PLAN: provide a concise execution plan first and wait for alignment before making changes.\n\nUser request:\n{}",
+                prompt
+            ),
+            InteractionMode::Bash => prompt.to_string(),
+        }
+    }
+
+    fn fast_path_reply(&self, prompt: &str) -> Option<String> {
+        let text = prompt.trim().to_lowercase();
+        if text.len() > 24 {
+            return None;
+        }
+
+        match text.as_str() {
+            "hi" | "hello" | "hey" | "yo" | "sup" | "привет" | "хай" | "ку" => {
+                Some("Analysis: Hi! Ready. Tell me what to build or check.".to_string())
+            }
+            "thanks" | "thx" | "спасибо" => {
+                Some("Analysis: You are welcome. Next task?".to_string())
+            }
+            "ping" => Some("Analysis: pong".to_string()),
+            _ => None,
         }
     }
 }
