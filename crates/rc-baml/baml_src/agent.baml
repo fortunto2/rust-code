@@ -69,7 +69,7 @@ class McpToolCall {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @stream.not_null @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt
@@ -79,7 +79,7 @@ class Message {
 }
 
 function GetNextStep(history: Message[]) -> NextStep {
-  client Gemini31Pro
+  client AgentFallback
   prompt #"
     {{ _.role("system") }}
     You are rust-code, an expert AI coding assistant operating in a Terminal UI environment.

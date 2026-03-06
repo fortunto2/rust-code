@@ -11,7 +11,7 @@ use crate::baml_client::types;
 use super::*;
 
 
-/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.BashBgTool | Streaming.SearchCodeTool | Streaming.GitStatusTool | Streaming.GitDiffTool | Streaming.GitAddTool | Streaming.GitCommitTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | Streaming.McpToolCall | null)
+/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.BashBgTool | Streaming.SearchCodeTool | Streaming.GitStatusTool | Streaming.GitDiffTool | Streaming.GitAddTool | Streaming.GitCommitTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | Streaming.McpToolCall)
 #[derive(Debug, Clone, BamlDecode)]
 #[baml(union)]
 pub enum Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
