@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-linux:
-    name: Linux CLI
+    name: Linux x86_64
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,10 +22,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build
         run: cargo build --release -p rust-code
@@ -43,12 +43,68 @@ jobs:
       - name: Checksums
         run: sha256sum rust-code-linux-x86_64.tar.gz > rust-code-linux-x86_64.tar.gz.sha256
 
-      - name: Show assets
-        run: ls -lh rust-code-linux-x86_64.tar.gz rust-code-linux-x86_64.tar.gz.sha256
-
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             rust-code-linux-x86_64.tar.gz
             rust-code-linux-x86_64.tar.gz.sha256
+
+  build-macos:
+    name: macOS aarch64
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: brew install protobuf
+
+      - name: Build
+        run: cargo build --release -p rust-code
+
+      - name: Package
+        run: |
+          strip target/release/rust-code
+          mkdir -p dist/rust-code-macos-aarch64
+          cp target/release/rust-code dist/rust-code-macos-aarch64/
+          cp README.md dist/rust-code-macos-aarch64/
+          cp LICENSE dist/rust-code-macos-aarch64/
+          cd dist
+          tar czf ../rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64
+
+      - name: Checksums
+        run: shasum -a 256 rust-code-macos-aarch64.tar.gz > rust-code-macos-aarch64.tar.gz.sha256
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rust-code-macos-aarch64.tar.gz
+            rust-code-macos-aarch64.tar.gz.sha256
+
+  publish-crate:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-macos]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish rust-code
+        run: cargo publish -p rust-code --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
