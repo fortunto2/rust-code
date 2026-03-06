@@ -1263,7 +1263,7 @@ impl<'a> App<'a> {
             .constraints([
                 Constraint::Length(14), // Plan (bigger)
                 Constraint::Length(10), // Channels
-                Constraint::Min(4),     // Context map
+                Constraint::Min(6),     // Context map
             ])
             .split(horizontal_chunks[1]);
 
@@ -1345,43 +1345,40 @@ impl<'a> App<'a> {
             .highlight_symbol("> ");
         frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
 
-        // Context Map — compact bar showing context usage by type
+        // Context Map — grid of small colored blocks, each = one message
         self.context_map.rebuild(&self.messages);
         let ctx = &self.context_map;
         let total = ctx.total_chars();
         let inner_w = sidebar_chunks[2].width.saturating_sub(2) as usize;
+        let inner_h = sidebar_chunks[2].height.saturating_sub(2) as usize;
+        let grid_cells = inner_w.max(1) * inner_h.max(1);
 
         let mut ctx_lines: Vec<Line> = Vec::new();
-        if total > 0 && inner_w > 0 {
-            // Single proportional bar
-            let cats = [
-                ContextCategory::System, ContextCategory::User,
-                ContextCategory::Assistant, ContextCategory::Tool,
-            ];
-            let mut bar_spans: Vec<Span> = Vec::new();
-            let mut used = 0usize;
-            for cat in &cats {
-                let w = ((ctx.category_chars(*cat) as f64 / total as f64) * inner_w as f64).round() as usize;
-                let w = if w == 0 && ctx.category_chars(*cat) > 0 { 1 } else { w };
-                let w = w.min(inner_w - used);
-                if w > 0 {
-                    bar_spans.push(Span::styled("█".repeat(w), Style::default().fg(cat.color())));
-                    used += w;
+        if total > 0 && grid_cells > 0 {
+            // Each entry gets cells proportional to its size
+            let mut cells: Vec<ContextCategory> = Vec::with_capacity(grid_cells);
+            for entry in &ctx.entries {
+                let n = ((entry.chars as f64 / total as f64) * grid_cells as f64).round() as usize;
+                for _ in 0..n.max(1) {
+                    if cells.len() >= grid_cells { break; }
+                    cells.push(entry.category);
                 }
             }
-            if used < inner_w {
-                bar_spans.push(Span::styled("░".repeat(inner_w - used), Style::default().fg(Color::DarkGray)));
+            while cells.len() < grid_cells {
+                if let Some(last) = cells.last().copied() {
+                    cells.push(last);
+                } else {
+                    break;
+                }
             }
-            ctx_lines.push(Line::from(bar_spans));
-            // Legend
-            let legend: Vec<Span> = cats.iter().flat_map(|c| {
-                let pct = (ctx.category_chars(*c) * 100) / total;
-                vec![
-                    Span::styled("█", Style::default().fg(c.color())),
-                    Span::styled(format!("{}% ", pct), Style::default().fg(Color::DarkGray)),
-                ]
-            }).collect();
-            ctx_lines.push(Line::from(legend));
+            cells.truncate(grid_cells);
+
+            for row in cells.chunks(inner_w.max(1)) {
+                let spans: Vec<Span> = row.iter().map(|cat| {
+                    Span::styled("▪", Style::default().fg(cat.color()))
+                }).collect();
+                ctx_lines.push(Line::from(spans));
+            }
         }
 
         let ctx_title = format!(" Ctx ~{}k ", total / 1000);
