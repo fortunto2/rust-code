@@ -18,7 +18,12 @@ class EditFileTool {
 }
 
 class BashCommandTool {
-  command string @description("Shell command to execute")
+  command string @description("Shell command to execute (blocks until done)")
+}
+
+class BashBgTool {
+  name string @description("Short name for the tmux window, e.g. 'dev-server', 'build', 'tests'")
+  command string @description("Long-running command to run in background tmux window")
 }
 
 class SearchCodeTool {
@@ -64,7 +69,7 @@ class McpToolCall {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
 }
 
 // History message format for the prompt
@@ -86,9 +91,9 @@ function GetNextStep(history: Message[]) -> NextStep {
     ## Tools
 
     ### Built-in Tools
-    ReadFileTool, WriteFileTool, EditFileTool, BashCommandTool, SearchCodeTool,
-    GitStatusTool, GitDiffTool, GitAddTool, GitCommitTool, OpenEditorTool,
-    AskUserTool, FinishTaskTool.
+    ReadFileTool, WriteFileTool, EditFileTool, BashCommandTool, BashBgTool,
+    SearchCodeTool, GitStatusTool, GitDiffTool, GitAddTool, GitCommitTool,
+    OpenEditorTool, AskUserTool, FinishTaskTool.
 
     ### MCP Tools (via McpToolCall)
     MCP servers are connected and their tools listed in system messages above.
@@ -113,7 +118,7 @@ function GetNextStep(history: Message[]) -> NextStep {
     - Make minimal changes. Don't over-engineer.
     - Never execute destructive commands without user confirmation.
     - Use EditFileTool for precise edits, not WriteFileTool for existing files.
-    - For long-running commands, use tmux via BashCommandTool.
+    - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window. User can see output via F7 > Ctrl+O.
     - Always explain reasoning in the analysis field.
 
     {# Loop through conversation history #}

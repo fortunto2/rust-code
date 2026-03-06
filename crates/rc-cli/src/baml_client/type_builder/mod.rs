@@ -60,6 +60,15 @@ impl TypeBuilder {
     }
 
 
+    /// Access the `BashBgTool` class builder.
+    pub fn BashBgTool(&self) -> BashBgToolClassBuilder {
+        BashBgToolClassBuilder::new(
+            self.inner.get_class("BashBgTool")
+                .expect("class BashBgTool is defined in schema")
+        )
+    }
+
+
     /// Access the `BashCommandTool` class builder.
     pub fn BashCommandTool(&self) -> BashCommandToolClassBuilder {
         BashCommandToolClassBuilder::new(

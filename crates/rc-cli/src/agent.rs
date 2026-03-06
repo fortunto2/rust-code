@@ -161,8 +161,8 @@ impl Agent {
         Ok(response)
     }
 
-    pub async fn execute_action(&mut self, action: &types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&mut self, action: &types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
+        use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
@@ -179,6 +179,10 @@ impl Agent {
             BashCommandTool(cmd) => {
                 let output = run_command(&cmd.command).await?;
                 Ok(AgentEvent::Message(format!("Command output:\n{}", output)))
+            }
+            BashBgTool(cmd) => {
+                let output = crate::tools::run_command_bg(&cmd.name, &cmd.command).await?;
+                Ok(AgentEvent::Message(format!("[BG] {}", output)))
             }
             SearchCodeTool(cmd) => {
                 // First, try fuzzy path matching just in case they are looking for a file

@@ -41,6 +41,32 @@ impl AsRef<AskUserTool> for AskUserTool {
 
 #[derive(Debug, Clone, Default, BamlDecode)]
 
+pub struct BashBgTool {
+
+
+
+    pub name: Option<String>,
+
+
+
+    pub command: Option<String>,
+
+
+}
+
+
+
+impl AsRef<BashBgTool> for BashBgTool {
+    fn as_ref(&self) -> &BashBgTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlDecode)]
+
 pub struct BashCommandTool {
 
 
@@ -275,7 +301,7 @@ pub struct NextStep {
 
 
 
-    pub action: Option<Union13AskUserToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
+    pub action: Option<Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
 
 
 }

@@ -47,6 +47,54 @@ impl AskUserToolClassBuilder {
 }
 
 
+/// Wrapper for the `BashBgTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct BashBgToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl BashBgToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("BashBgTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `name` field builder.
+    pub fn property_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("name")
+            .expect("BashBgTool.name is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `command` field builder.
+    pub fn property_command(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("command")
+            .expect("BashBgTool.command is statically defined in .baml and should always be present")
+    }
+
+}
+
+
 /// Wrapper for the `BashCommandTool` class builder.
 ///
 /// Provides type-safe method access to fields defined in the schema.
