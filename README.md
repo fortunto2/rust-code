@@ -1,5 +1,9 @@
 # rust-code
 
+[![Crates.io](https://img.shields.io/crates/v/rust-code)](https://crates.io/crates/rust-code)
+[![GitHub Release](https://img.shields.io/github/v/release/fortunto2/rust-code)](https://github.com/fortunto2/rust-code/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `rust-code` is a terminal coding agent written in Rust.
 
 It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
