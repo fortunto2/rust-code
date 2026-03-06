@@ -508,16 +508,15 @@ async fn main() -> Result<()> {
     baml_client::init();
 
     if let Some(prompt) = args.prompt {
-        // Single prompt headless mode
+        // Single prompt headless mode — always resume last session for context continuity
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
         // Initialize MCP servers
         if let Err(e) = agent.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
         }
-        if args.resume {
-            let _ = agent.load_last_session();
-        }
+        // Auto-resume last session so agent has full context
+        let _ = agent.load_last_session();
         agent.add_user_message(prompt);
 
         loop {
