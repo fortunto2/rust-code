@@ -1263,7 +1263,7 @@ impl<'a> App<'a> {
             .constraints([
                 Constraint::Length(14), // Plan (bigger)
                 Constraint::Length(10), // Channels
-                Constraint::Min(6),     // Context map
+                Constraint::Length(3),  // Context map
             ])
             .split(horizontal_chunks[1]);
 
@@ -1375,7 +1375,7 @@ impl<'a> App<'a> {
 
             for row in cells.chunks(inner_w.max(1)) {
                 let spans: Vec<Span> = row.iter().map(|cat| {
-                    Span::styled("▪", Style::default().fg(cat.color()))
+                    Span::styled("▄", Style::default().fg(cat.color()))
                 }).collect();
                 ctx_lines.push(Line::from(spans));
             }
