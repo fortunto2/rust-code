@@ -38,6 +38,13 @@ impl AskUserToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("AskUserTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `question` field builder.
     pub fn property_question(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("question")
@@ -77,6 +84,13 @@ impl BashBgToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("BashBgTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `name` field builder.
@@ -127,6 +141,13 @@ impl BashCommandToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("BashCommandTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `command` field builder.
     pub fn property_command(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("command")
@@ -166,6 +187,13 @@ impl EditFileToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("EditFileTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `path` field builder.
@@ -223,6 +251,13 @@ impl FinishTaskToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("FinishTaskTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `summary` field builder.
     pub fn property_summary(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("summary")
@@ -262,6 +297,13 @@ impl GitAddToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("GitAddTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `paths` field builder.
@@ -305,6 +347,13 @@ impl GitCommitToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("GitCommitTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `message` field builder.
     pub fn property_message(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("message")
@@ -344,6 +393,13 @@ impl GitDiffToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("GitDiffTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `path` field builder.
@@ -394,6 +450,13 @@ impl GitStatusToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("GitStatusTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `dummy` field builder.
     pub fn property_dummy(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("dummy")
@@ -433,6 +496,13 @@ impl McpToolCallClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("McpToolCall.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `server` field builder.
@@ -593,6 +663,13 @@ impl OpenEditorToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("OpenEditorTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `path` field builder.
     pub fn property_path(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("path")
@@ -639,6 +716,13 @@ impl ReadFileToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("ReadFileTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `path` field builder.
@@ -696,6 +780,13 @@ impl SearchCodeToolClassBuilder {
     // =========================================================================
 
 
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("SearchCodeTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `query` field builder.
     pub fn property_query(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("query")
@@ -735,6 +826,13 @@ impl WriteFileToolClassBuilder {
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("WriteFileTool.tool_name is statically defined in .baml and should always be present")
+    }
 
 
     /// Access the `path` field builder.

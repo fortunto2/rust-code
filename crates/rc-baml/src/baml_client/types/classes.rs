@@ -18,6 +18,10 @@ pub struct AskUserTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub question: String,
 
 
@@ -37,6 +41,10 @@ impl AsRef<AskUserTool> for AskUserTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct BashBgTool {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -66,6 +74,10 @@ pub struct BashCommandTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub command: String,
 
 
@@ -85,6 +97,10 @@ impl AsRef<BashCommandTool> for BashCommandTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct EditFileTool {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -118,6 +134,10 @@ pub struct FinishTaskTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub summary: String,
 
 
@@ -137,6 +157,10 @@ impl AsRef<FinishTaskTool> for FinishTaskTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitAddTool {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -162,6 +186,10 @@ pub struct GitCommitTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub message: String,
 
 
@@ -181,6 +209,10 @@ impl AsRef<GitCommitTool> for GitCommitTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitDiffTool {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -210,6 +242,10 @@ pub struct GitStatusTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub dummy: Option<String>,
 
 
@@ -229,6 +265,10 @@ impl AsRef<GitStatusTool> for GitStatusTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct McpToolCall {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -318,6 +358,10 @@ pub struct OpenEditorTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub path: String,
 
 
@@ -341,6 +385,10 @@ impl AsRef<OpenEditorTool> for OpenEditorTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct ReadFileTool {
+
+
+
+    pub tool_name: String,
 
 
 
@@ -374,6 +422,10 @@ pub struct SearchCodeTool {
 
 
 
+    pub tool_name: String,
+
+
+
     pub query: String,
 
 
@@ -393,6 +445,10 @@ impl AsRef<SearchCodeTool> for SearchCodeTool {
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct WriteFileTool {
+
+
+
+    pub tool_name: String,
 
 
 

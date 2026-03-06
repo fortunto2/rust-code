@@ -23,6 +23,10 @@ pub struct AskUserTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub question: Option<String>,
 
 
@@ -42,6 +46,10 @@ impl AsRef<AskUserTool> for AskUserTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct BashBgTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -71,6 +79,10 @@ pub struct BashCommandTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub command: Option<String>,
 
 
@@ -90,6 +102,10 @@ impl AsRef<BashCommandTool> for BashCommandTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct EditFileTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -123,6 +139,10 @@ pub struct FinishTaskTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub summary: Option<String>,
 
 
@@ -142,6 +162,10 @@ impl AsRef<FinishTaskTool> for FinishTaskTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitAddTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -167,6 +191,10 @@ pub struct GitCommitTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub message: Option<String>,
 
 
@@ -186,6 +214,10 @@ impl AsRef<GitCommitTool> for GitCommitTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitDiffTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -215,6 +247,10 @@ pub struct GitStatusTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub dummy: Option<String>,
 
 
@@ -234,6 +270,10 @@ impl AsRef<GitStatusTool> for GitStatusTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct McpToolCall {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -323,6 +363,10 @@ pub struct OpenEditorTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub path: Option<String>,
 
 
@@ -346,6 +390,10 @@ impl AsRef<OpenEditorTool> for OpenEditorTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct ReadFileTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
@@ -379,6 +427,10 @@ pub struct SearchCodeTool {
 
 
 
+    pub tool_name: Option<String>,
+
+
+
     pub query: Option<String>,
 
 
@@ -398,6 +450,10 @@ impl AsRef<SearchCodeTool> for SearchCodeTool {
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct WriteFileTool {
+
+
+
+    pub tool_name: Option<String>,
 
 
 
