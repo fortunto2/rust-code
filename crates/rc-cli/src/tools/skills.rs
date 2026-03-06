@@ -173,7 +173,8 @@ pub async fn install_skill(repo: &str) -> Result<String> {
     }
 
     // Find skill directories (contain SKILL.md)
-    let mut found_skills: Vec<(String, PathBuf)> = Vec::new();
+    // Tuple: (dir_name, frontmatter_name, path)
+    let mut found_skills: Vec<(String, Option<String>, PathBuf)> = Vec::new();
 
     // Check skills/ subdir first (standard layout)
     let skills_subdir = tmp_dir.join("skills");
@@ -188,11 +189,18 @@ pub async fn install_skill(repo: &str) -> Result<String> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() && path.join("SKILL.md").exists() {
-                    let name = path.file_name()
+                    let dir_name = path.file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
-                    if !name.is_empty() {
-                        found_skills.push((name, path));
+                    // Read frontmatter name if available (e.g. "name: solo-build")
+                    let fm_name = std::fs::read_to_string(path.join("SKILL.md")).ok()
+                        .and_then(|c| {
+                            c.lines()
+                                .find(|l| l.starts_with("name:"))
+                                .map(|l| l.trim_start_matches("name:").trim().to_string())
+                        });
+                    if !dir_name.is_empty() {
+                        found_skills.push((dir_name, fm_name, path));
                     }
                 }
             }
@@ -201,7 +209,7 @@ pub async fn install_skill(repo: &str) -> Result<String> {
 
     // Also check if root itself has SKILL.md (single-skill repo)
     if tmp_dir.join("SKILL.md").exists() && found_skills.is_empty() {
-        found_skills.push((repo_name.to_string(), tmp_dir.clone()));
+        found_skills.push((repo_name.to_string(), None, tmp_dir.clone()));
     }
 
     if found_skills.is_empty() {
@@ -209,10 +217,12 @@ pub async fn install_skill(repo: &str) -> Result<String> {
         anyhow::bail!("No skills found in {} (no SKILL.md files)", repo);
     }
 
-    // Filter to specific skill if requested
-    let to_install = if let Some(ref name) = specific_skill {
+    // Filter to specific skill if requested — match by dir name OR frontmatter name
+    let to_install: Vec<(String, Option<String>, PathBuf)> = if let Some(ref name) = specific_skill {
         let matching: Vec<_> = found_skills.into_iter()
-            .filter(|(n, _)| n == name)
+            .filter(|(dir_name, fm_name, _)| {
+                dir_name == name || fm_name.as_deref() == Some(name)
+            })
             .collect();
         if matching.is_empty() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -224,13 +234,15 @@ pub async fn install_skill(repo: &str) -> Result<String> {
     };
 
     let mut installed = Vec::new();
-    for (name, src_path) in &to_install {
-        let dest = skills_dir.join(name);
+    for (dir_name, fm_name, src_path) in &to_install {
+        // Use frontmatter name for install dir if available, else dir name
+        let install_name = fm_name.as_deref().unwrap_or(dir_name);
+        let dest = skills_dir.join(install_name);
         if dest.exists() {
             std::fs::remove_dir_all(&dest)?;
         }
         copy_dir_recursive(src_path, &dest)?;
-        installed.push(name.clone());
+        installed.push(install_name.to_string());
     }
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
