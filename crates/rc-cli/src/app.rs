@@ -69,6 +69,7 @@ pub enum AppEvent {
     SuspendAndRun(String, Option<i64>),
     SuspendAndShell(String),
     RefreshSkills,
+    SkillsDebouncedSearch(String, u64),
     SkillsRemoteResults(String, Vec<SkillEntry>),
     SkillPreviewLoaded(String, String),
     SessionsLoaded(Vec<SessionEntry>),
@@ -260,10 +261,13 @@ impl GitSidebarState {
     }
 }
 
-pub struct GitHistoryState {
-    pub items: Vec<String>,
+pub struct GitHistoryState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<String>,
+    pub filtered_items: Vec<String>,
     pub list_state: ListState,
     pub preview_lines: Vec<Line<'static>>,
+    pub searcher: FuzzySearcher,
 }
 
 #[derive(Clone)]
@@ -339,20 +343,60 @@ pub struct BgTaskItem {
     pub title: String,
 }
 
-pub struct BgTasksState {
-    pub items: Vec<BgTaskItem>,
+pub struct BgTasksState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<BgTaskItem>,
+    pub filtered_items: Vec<BgTaskItem>,
     pub list_state: ListState,
     pub preview_lines: Vec<Line<'static>>,
+    pub searcher: FuzzySearcher,
 }
 
-impl BgTasksState {
+impl<'a> BgTasksState<'a> {
     pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Filter Tasks "),
+        );
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
-            items: Vec::new(),
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
             list_state,
             preview_lines: Vec::new(),
+            searcher: FuzzySearcher::new(),
+        }
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+            let mut scored: Vec<(u32, BgTaskItem)> = self
+                .all_items
+                .iter()
+                .filter_map(|item| {
+                    let score = pattern.score(
+                        Utf32Str::Ascii(item.title.as_bytes()),
+                        &mut self.searcher.matcher,
+                    )?;
+                    Some((score, item.clone()))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            self.filtered_items = scored.into_iter().map(|(_, item)| item).collect();
+        }
+        if self.filtered_items.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
         }
     }
 }
@@ -475,33 +519,60 @@ impl<'a> SkillsState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            let q = query.to_lowercase();
-            self.filtered_items = self
+            // Fuzzy search against name + description using nucleo
+            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+
+            let mut scored: Vec<(u32, SkillEntry)> = self
                 .all_items
                 .iter()
-                .filter(|s| s.name.to_lowercase().contains(&q))
-                .cloned()
+                .filter_map(|s| {
+                    let name_score = pattern.score(
+                        Utf32Str::Ascii(s.name.as_bytes()),
+                        &mut self.searcher.matcher,
+                    ).unwrap_or(0);
+
+                    let haystack = format!("{} {}", s.name, s.source);
+                    let full_score = pattern.score(
+                        Utf32Str::Ascii(haystack.as_bytes()),
+                        &mut self.searcher.matcher,
+                    ).unwrap_or(0);
+
+                    let best = name_score.max(full_score);
+                    if best > 0 {
+                        Some((best, s.clone()))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
+
+            // Primary sort by fuzzy score desc, secondary by sort_mode
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            self.filtered_items = scored.into_iter().map(|(_, s)| s).collect();
         }
 
-        match self.sort_mode {
-            SkillsSortMode::Popularity => {
-                self.filtered_items.sort_by(|a, b| {
-                    b.installs
-                        .cmp(&a.installs)
-                        .then_with(|| a.name.cmp(&b.name))
-                });
-            }
-            SkillsSortMode::Recent => {
-                self.filtered_items.sort_by(|a, b| {
-                    a.trending_rank
-                        .unwrap_or(usize::MAX)
-                        .cmp(&b.trending_rank.unwrap_or(usize::MAX))
-                        .then_with(|| b.installs.cmp(&a.installs))
-                });
-            }
-            SkillsSortMode::Name => {
-                self.filtered_items.sort_by(|a, b| a.name.cmp(&b.name));
+        // Apply sort mode only when no query (full list)
+        if self.input.lines().join("").trim().is_empty() {
+            match self.sort_mode {
+                SkillsSortMode::Popularity => {
+                    self.filtered_items.sort_by(|a, b| {
+                        b.installs
+                            .cmp(&a.installs)
+                            .then_with(|| a.name.cmp(&b.name))
+                    });
+                }
+                SkillsSortMode::Recent => {
+                    self.filtered_items.sort_by(|a, b| {
+                        a.trending_rank
+                            .unwrap_or(usize::MAX)
+                            .cmp(&b.trending_rank.unwrap_or(usize::MAX))
+                            .then_with(|| b.installs.cmp(&a.installs))
+                    });
+                }
+                SkillsSortMode::Name => {
+                    self.filtered_items.sort_by(|a, b| a.name.cmp(&b.name));
+                }
             }
         }
 
@@ -513,14 +584,51 @@ impl<'a> SkillsState<'a> {
     }
 }
 
-impl GitHistoryState {
+impl<'a> GitHistoryState<'a> {
     pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Git History "),
+        );
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
-            items: Vec::new(),
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
             list_state,
             preview_lines: Vec::new(),
+            searcher: FuzzySearcher::new(),
+        }
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+            let mut scored: Vec<(u32, String)> = self
+                .all_items
+                .iter()
+                .filter_map(|item| {
+                    let score = pattern.score(
+                        Utf32Str::Ascii(item.as_bytes()),
+                        &mut self.searcher.matcher,
+                    )?;
+                    Some((score, item.clone()))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            self.filtered_items = scored.into_iter().map(|(_, item)| item).collect();
+        }
+        if self.filtered_items.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
         }
     }
 }
@@ -542,11 +650,11 @@ pub struct App<'a> {
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
     pub symbols_state: SymbolsState<'a>,
-    pub bg_tasks: BgTasksState,
+    pub bg_tasks: BgTasksState<'a>,
     pub bash_history_state: BashHistoryState<'a>,
     pub skills_state: SkillsState<'a>,
     pub git_sidebar: GitSidebarState,
-    pub git_history: GitHistoryState,
+    pub git_history: GitHistoryState<'a>,
     pub sidebar_focus: SidebarFocus,
     pub channel_items: Vec<String>,
     pub channel_state: ListState,
@@ -563,6 +671,9 @@ pub struct App<'a> {
     pub skills_query_cache: std::collections::HashMap<String, Vec<SkillEntry>>,
     pub skill_preview_cache: std::collections::HashMap<String, String>,
     pub skill_preview_pending: std::collections::HashSet<String>,
+    pub skills_remote_loading: bool,
+    pub skills_remote_loading_query: Option<String>,
+    pub skills_search_seq: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -630,6 +741,9 @@ impl<'a> App<'a> {
             skills_query_cache: std::collections::HashMap::new(),
             skill_preview_cache: std::collections::HashMap::new(),
             skill_preview_pending: std::collections::HashSet::new(),
+            skills_remote_loading: false,
+            skills_remote_loading_query: None,
+            skills_search_seq: 0,
         }
     }
 
@@ -855,8 +969,22 @@ impl<'a> App<'a> {
                     AppEvent::RefreshSkills => {
                         self.refresh_skills();
                     }
+                    AppEvent::SkillsDebouncedSearch(query, seq) => {
+                        if seq == self.skills_search_seq {
+                            self.search_remote_skills_on_demand(query, tx.clone());
+                        }
+                    }
                     AppEvent::SkillsRemoteResults(query, items) => {
                         self.skills_query_cache.insert(query.clone(), items.clone());
+                        if self
+                            .skills_remote_loading_query
+                            .as_ref()
+                            .map(|q| q == &query)
+                            .unwrap_or(false)
+                        {
+                            self.skills_remote_loading = false;
+                            self.skills_remote_loading_query = None;
+                        }
 
                         let input_query = self
                             .skills_state
@@ -866,18 +994,8 @@ impl<'a> App<'a> {
                             .trim()
                             .to_lowercase();
                         if input_query == query {
-                            let mut merged = self.installed_skills.clone();
-                            let mut seen = std::collections::HashSet::new();
-                            for s in &merged {
-                                seen.insert(s.name.clone());
-                            }
-                            for mut item in items {
-                                if seen.contains(&item.name) {
-                                    item.installed = true;
-                                }
-                                merged.push(item);
-                            }
-                            self.skills_state.all_items = merged;
+                            self.skills_state.all_items =
+                                Self::merge_skills(self.installed_skills.clone(), items);
                             self.skills_state.update_search();
                             self.load_skill_preview();
                             self.maybe_request_skill_preview(tx.clone());
@@ -1109,11 +1227,15 @@ impl<'a> App<'a> {
             .map(|(idx, name)| {
                 let suffix = match idx {
                     0 => format!(" ({})", self.git_sidebar.files.len()),
-                    1 => format!(" ({})", self.git_history.items.len()),
+                    1 => format!(" ({})", self.git_history.filtered_items.len()),
                     4 => format!(" ({})", self.symbols_state.all_items.len()),
-                    5 => format!(" ({})", self.bg_tasks.items.len()),
+                    5 => format!(" ({})", self.bg_tasks.filtered_items.len()),
                     6 => format!(" ({})", self.bash_history_state.all_items.len()),
-                    7 => format!(" ({})", self.skills_state.all_items.len()),
+                    7 => {
+                        let installed = self.skills_state.all_items.iter().filter(|s| s.installed).count();
+                        let total = self.skills_state.all_items.len();
+                        format!(" ({}/{})", installed, total)
+                    }
                     _ => String::new(),
                 };
                 ListItem::new(format!("{}{}", name, suffix))
@@ -1144,16 +1266,17 @@ impl<'a> App<'a> {
             Line::from(format!(
                 "git: {}  hist: {}",
                 self.git_sidebar.files.len(),
-                self.git_history.items.len()
+                self.git_history.filtered_items.len()
             )),
             Line::from(format!(
                 "sym: {}  bg: {}",
                 self.symbols_state.all_items.len(),
-                self.bg_tasks.items.len()
+                self.bg_tasks.filtered_items.len()
             )),
             Line::from(format!(
-                "bash: {}  skills: {}",
+                "bash: {}  skills: {}/{}",
                 self.bash_history_state.all_items.len(),
+                self.skills_state.all_items.iter().filter(|s| s.installed).count(),
                 self.skills_state.all_items.len()
             )),
             Line::from("Enter=open channel"),
@@ -1188,15 +1311,16 @@ impl<'a> App<'a> {
             "FOCUS: INPUT"
         };
         let status_line = format!(
-            " {} | {} | TASK: {} | Git: {} | Hist: {} | Sym: {} | BG: {} | Bash: {} | Skills: {} ",
+            " {} | {} | TASK: {} | Git: {} | Hist: {} | Sym: {} | BG: {} | Bash: {} | Skills: {}/{} ",
             mode_text,
             focus_text,
             self.interaction_mode.label(),
             self.git_sidebar.files.len(),
-            self.git_history.items.len(),
+            self.git_history.filtered_items.len(),
             self.symbols_state.all_items.len(),
-            self.bg_tasks.items.len(),
+            self.bg_tasks.filtered_items.len(),
             self.bash_history_state.all_items.len(),
+            self.skills_state.all_items.iter().filter(|s| s.installed).count(),
             self.skills_state.all_items.len()
         );
         frame.render_widget(
@@ -1248,15 +1372,22 @@ impl<'a> App<'a> {
             horizontal: 1,
         });
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        let items: Vec<ListItem> = if self.bg_tasks.items.is_empty() {
+        frame.render_widget(self.bg_tasks.input.widget(), chunks[0]);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .split(chunks[1]);
+
+        let items: Vec<ListItem> = if self.bg_tasks.filtered_items.is_empty() {
             vec![ListItem::new("No tasks")]
         } else {
             self.bg_tasks
-                .items
+                .filtered_items
                 .iter()
                 .map(|t| ListItem::new(t.title.as_str()))
                 .collect()
@@ -1274,7 +1405,7 @@ impl<'a> App<'a> {
                     .bg(Color::DarkGray),
             )
             .highlight_symbol("> ");
-        frame.render_stateful_widget(list, chunks[0], &mut self.bg_tasks.list_state);
+        frame.render_stateful_widget(list, body[0], &mut self.bg_tasks.list_state);
 
         let preview = List::new(
             self.bg_tasks
@@ -1284,7 +1415,7 @@ impl<'a> App<'a> {
                 .collect::<Vec<_>>(),
         )
         .block(Block::default().borders(Borders::ALL).title(" Logs "));
-        frame.render_widget(preview, chunks[1]);
+        frame.render_widget(preview, body[1]);
     }
 
     fn draw_bash_history_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -1360,8 +1491,13 @@ impl<'a> App<'a> {
 
         let popup_block = Block::default()
             .title(format!(
-                " Skills Channel [{}] (Tab sort, Enter action, Ctrl+O open local, Ctrl+D uninstall) ",
-                self.skills_state.sort_mode.label()
+                " Skills Channel [{}{}] (Tab sort, Enter action, Ctrl+O open local, Ctrl+D uninstall) ",
+                self.skills_state.sort_mode.label(),
+                if self.skills_remote_loading {
+                    " | loading"
+                } else {
+                    ""
+                }
             ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
@@ -1486,8 +1622,8 @@ impl<'a> App<'a> {
     }
 
     fn draw_git_history_popup(&mut self, frame: &mut Frame, area: Rect) {
-        let popup_width = (area.width * 80) / 100;
-        let popup_height = (area.height * 80) / 100;
+        let popup_width = (area.width * 85) / 100;
+        let popup_height = (area.height * 85) / 100;
         let popup_x = area.x + (area.width - popup_width) / 2;
         let popup_y = area.y + (area.height - popup_height) / 2;
 
@@ -1505,15 +1641,22 @@ impl<'a> App<'a> {
             horizontal: 1,
         });
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        let items: Vec<ListItem> = if self.git_history.items.is_empty() {
+        frame.render_widget(self.git_history.input.widget(), chunks[0]);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(chunks[1]);
+
+        let items: Vec<ListItem> = if self.git_history.filtered_items.is_empty() {
             vec![ListItem::new("No history available")]
         } else {
             self.git_history
-                .items
+                .filtered_items
                 .iter()
                 .map(|s| ListItem::new(s.as_str()))
                 .collect()
@@ -1527,7 +1670,7 @@ impl<'a> App<'a> {
                     .bg(Color::DarkGray),
             )
             .highlight_symbol("> ");
-        frame.render_stateful_widget(list, chunks[0], &mut self.git_history.list_state);
+        frame.render_stateful_widget(list, body[0], &mut self.git_history.list_state);
 
         let preview = List::new(
             self.git_history
@@ -1537,7 +1680,7 @@ impl<'a> App<'a> {
                 .collect::<Vec<_>>(),
         )
         .block(Block::default().borders(Borders::ALL).title(" Preview "));
-        frame.render_widget(preview, chunks[1]);
+        frame.render_widget(preview, body[1]);
     }
 
     fn draw_git_diff_popup(&mut self, frame: &mut Frame, area: Rect) {
@@ -1907,7 +2050,7 @@ impl<'a> App<'a> {
     }
 
     fn refresh_git_history(&mut self) {
-        self.git_history.items.clear();
+        self.git_history.all_items.clear();
         self.git_history.preview_lines.clear();
 
         // Branches
@@ -1916,33 +2059,38 @@ impl<'a> App<'a> {
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().take(8) {
+            for line in stdout.lines().take(20) {
                 let cleaned = line.trim().trim_start_matches('*').trim();
                 if !cleaned.is_empty() {
-                    self.git_history.items.push(format!("branch: {}", cleaned));
+                    self.git_history.all_items.push(format!("branch: {}", cleaned));
                 }
             }
         }
 
-        // Recent commits
+        // Recent commits (50 instead of 12)
         if let Ok(output) = std::process::Command::new("git")
-            .args(["log", "--oneline", "-n", "12"])
+            .args(["log", "--oneline", "-n", "50"])
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if !line.trim().is_empty() {
                     self.git_history
-                        .items
+                        .all_items
                         .push(format!("commit: {}", line.trim()));
                 }
             }
         }
 
-        if self.git_history.items.is_empty() {
-            self.git_history.list_state.select(None);
-        } else {
-            self.git_history.list_state.select(Some(0));
+        // Reset search input
+        self.git_history.input = TextArea::default();
+        self.git_history.input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Search Git History "),
+        );
+        self.git_history.update_search();
+        if !self.git_history.filtered_items.is_empty() {
             self.load_git_history_preview();
         }
     }
@@ -1950,7 +2098,7 @@ impl<'a> App<'a> {
     fn load_git_history_preview(&mut self) {
         self.git_history.preview_lines.clear();
         if let Some(selected) = self.git_history.list_state.selected() {
-            if let Some(item) = self.git_history.items.get(selected) {
+            if let Some(item) = self.git_history.filtered_items.get(selected) {
                 if let Some(rest) = item.strip_prefix("commit: ") {
                     let hash = rest.split_whitespace().next().unwrap_or_default();
                     if !hash.is_empty() {
@@ -2098,7 +2246,7 @@ impl<'a> App<'a> {
     }
 
     fn refresh_bg_tasks(&mut self) {
-        self.bg_tasks.items.clear();
+        self.bg_tasks.all_items.clear();
         self.bg_tasks.preview_lines.clear();
 
         if let Ok(output) = std::process::Command::new("tmux")
@@ -2120,7 +2268,7 @@ impl<'a> App<'a> {
                         "detached"
                     };
                     let title = format!("{} [{}] ({} win)", parts[0], attached, parts[2]);
-                    self.bg_tasks.items.push(BgTaskItem {
+                    self.bg_tasks.all_items.push(BgTaskItem {
                         id,
                         status: attached.to_string(),
                         title,
@@ -2129,13 +2277,19 @@ impl<'a> App<'a> {
             }
         }
 
-        if self.bg_tasks.items.is_empty() {
+        // Reset search input
+        self.bg_tasks.input = TextArea::default();
+        self.bg_tasks.input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Filter Tasks "),
+        );
+        self.bg_tasks.update_search();
+        if self.bg_tasks.filtered_items.is_empty() && self.bg_tasks.all_items.is_empty() {
             self.bg_tasks.preview_lines.push(Line::from(
                 "No tmux sessions. Start one with: tmux new -s mytask",
             ));
-            self.bg_tasks.list_state.select(None);
-        } else {
-            self.bg_tasks.list_state.select(Some(0));
+        } else if !self.bg_tasks.filtered_items.is_empty() {
             self.load_bg_task_preview();
         }
     }
@@ -2175,21 +2329,11 @@ impl<'a> App<'a> {
 
     fn refresh_skills(&mut self) {
         self.skills_query_cache.clear();
+        self.skills_remote_loading = false;
+        self.skills_remote_loading_query = None;
         self.installed_skills = Self::collect_installed_skills();
-        let installed_names: std::collections::HashSet<String> = self
-            .installed_skills
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-
-        let mut all = self.installed_skills.clone();
-        for mut remote in Self::collect_remote_skills() {
-            if installed_names.contains(&remote.name) {
-                remote.installed = true;
-            }
-            all.push(remote);
-        }
-        self.skills_state.all_items = all;
+        self.skills_state.all_items =
+            Self::merge_skills(self.installed_skills.clone(), Self::collect_remote_skills());
 
         self.skills_state.input = TextArea::default();
         self.skills_state.input.set_block(
@@ -2279,215 +2423,109 @@ impl<'a> App<'a> {
     }
 
     fn collect_installed_skills() -> Vec<SkillEntry> {
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let home = std::env::var("HOME").unwrap_or_default();
-        let dirs = vec![
-            format!("{}/.claude/skills", home),
-            format!("{}/.agents/skills", home),
-            format!("{}/.config/opencode/skills", home),
-            ".claude/skills".to_string(),
-        ];
-
-        for root in dirs {
-            let root_path = std::path::Path::new(&root);
-            if !root_path.exists() {
-                continue;
-            }
-            if let Ok(entries) = std::fs::read_dir(root_path) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
-                        continue;
-                    }
-                    let name = path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    if name.is_empty() || seen.contains(&name) {
-                        continue;
-                    }
-                    let skill_md = path.join("SKILL.md");
-                    if !skill_md.exists() {
-                        continue;
-                    }
-                    seen.insert(name.clone());
-                    out.push(SkillEntry {
-                        name,
-                        source: "local".to_string(),
-                        repo: String::new(),
-                        installed: true,
-                        local_path: Some(skill_md.to_string_lossy().to_string()),
-                        url: String::new(),
-                        installs: 0,
-                        trending_rank: None,
-                    });
-                }
-            }
-        }
-
-        out.sort_by(|a, b| a.name.cmp(&b.name));
-        out
+        tools::collect_installed_skills()
+            .into_iter()
+            .map(|s| SkillEntry {
+                name: s.name,
+                source: "local".to_string(),
+                repo: String::new(),
+                installed: true,
+                local_path: Some(s.path.to_string_lossy().to_string()),
+                url: String::new(),
+                installs: 0,
+                trending_rank: None,
+            })
+            .collect()
     }
 
     fn collect_remote_skills() -> Vec<SkillEntry> {
-        let mut out = Vec::new();
-        let trending_ranks = Self::collect_trending_ranks();
-        let output = std::process::Command::new("sh")
-            .arg("-lc")
-            .arg("curl -fsSL https://skills.sh")
-            .output();
-
-        let Ok(output) = output else {
-            return out;
-        };
-
-        let page = String::from_utf8_lossy(&output.stdout).to_string();
-        let mut seen = std::collections::HashSet::new();
-        let mut start = 0usize;
-
-        while let Some(pos) = page[start..].find("href=\"/") {
-            let begin = start + pos + 7;
-            let rest = &page[begin..];
-            let Some(end_rel) = rest.find('"') else {
-                break;
-            };
-            let path = &rest[..end_rel];
-            start = begin + end_rel;
-
-            if path.starts_with("docs")
-                || path.starts_with("audits")
-                || path.starts_with("trending")
-                || path.starts_with("hot")
-                || path.is_empty()
-            {
-                continue;
-            }
-
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 {
-                continue;
-            }
-            let owner = parts[0];
-            let repo = parts[1];
-            let skill = parts[2];
-            if owner.is_empty() || repo.is_empty() || skill.is_empty() {
-                continue;
-            }
-            let key = format!("{}/{}/{}", owner, repo, skill);
-            if seen.contains(&key) {
-                continue;
-            }
-            seen.insert(key.clone());
-            let snippet_end = std::cmp::min(page.len(), begin + end_rel + 260);
-            let snippet = &page[begin + end_rel..snippet_end];
-            let installs = Self::parse_installs_count(snippet).unwrap_or(0);
-            out.push(SkillEntry {
-                name: skill.to_string(),
+        tools::get_skills_catalog()
+            .into_iter()
+            .map(|e| SkillEntry {
+                name: e.name,
                 source: "skills.sh".to_string(),
-                repo: format!("{}/{}", owner, repo),
+                repo: e.repo,
                 installed: false,
                 local_path: None,
-                url: format!("https://skills.sh/{}", key),
-                installs,
-                trending_rank: trending_ranks.get(&key).copied(),
-            });
-            if out.len() >= 350 {
-                break;
-            }
-        }
-
-        out
+                url: e.url,
+                installs: e.installs,
+                trending_rank: e.trending_rank,
+            })
+            .collect()
     }
 
-    fn collect_trending_ranks() -> std::collections::HashMap<String, usize> {
-        let mut out = std::collections::HashMap::new();
-        let output = std::process::Command::new("sh")
-            .arg("-lc")
-            .arg("curl -fsSL https://skills.sh/trending")
-            .output();
-        let Ok(output) = output else {
-            return out;
-        };
+    fn merge_skills(installed: Vec<SkillEntry>, remote: Vec<SkillEntry>) -> Vec<SkillEntry> {
+        let mut merged = Vec::new();
+        let mut installed_map = std::collections::HashMap::new();
 
-        let page = String::from_utf8_lossy(&output.stdout).to_string();
-        let mut start = 0usize;
-        let mut rank = 0usize;
-
-        while let Some(pos) = page[start..].find("href=\"/") {
-            let begin = start + pos + 7;
-            let rest = &page[begin..];
-            let Some(end_rel) = rest.find('"') else {
-                break;
-            };
-            let path = &rest[..end_rel];
-            start = begin + end_rel;
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 {
-                continue;
-            }
-            if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
-                continue;
-            }
-            let key = format!("{}/{}/{}", parts[0], parts[1], parts[2]);
-            if out.contains_key(&key) {
-                continue;
-            }
-            out.insert(key, rank);
-            rank += 1;
-            if rank >= 500 {
-                break;
-            }
+        for local in installed {
+            installed_map.insert(local.name.clone(), local.clone());
+            merged.push(local);
         }
 
-        out
+        for mut item in remote {
+            if let Some(local) = installed_map.get(&item.name) {
+                item.installed = true;
+                if item.local_path.is_none() {
+                    item.local_path = local.local_path.clone();
+                }
+
+                if let Some(existing_idx) = merged.iter().position(|s| s.name == item.name) {
+                    let existing = merged[existing_idx].clone();
+                    merged[existing_idx] = SkillEntry {
+                        name: item.name,
+                        source: item.source,
+                        repo: item.repo,
+                        installed: true,
+                        local_path: existing.local_path.or(item.local_path),
+                        url: item.url,
+                        installs: item.installs,
+                        trending_rank: item.trending_rank,
+                    };
+                    continue;
+                }
+            }
+
+            if merged.iter().any(|s| s.name == item.name) {
+                continue;
+            }
+            merged.push(item);
+        }
+
+        merged
     }
 
-    fn parse_installs_count(text: &str) -> Option<u64> {
-        let lower = text.to_lowercase();
-        let idx = lower.find("installs")?;
-        let prefix = &lower[..idx];
-        let token = prefix.split_whitespace().last()?;
-        let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
-        if token.is_empty() {
-            return None;
-        }
-
-        let mult = if token.ends_with('k') {
-            1000.0
-        } else if token.ends_with('m') {
-            1_000_000.0
-        } else {
-            1.0
-        };
-        let raw = token.trim_end_matches('k').trim_end_matches('m');
-        let num = raw.parse::<f64>().ok()?;
-        Some((num * mult) as u64)
+    fn schedule_skills_search_debounce(&mut self, query: String, tx: mpsc::Sender<AppEvent>) {
+        self.skills_search_seq = self.skills_search_seq.saturating_add(1);
+        let seq = self.skills_search_seq;
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let _ = tx_clone
+                .send(AppEvent::SkillsDebouncedSearch(query, seq))
+                .await;
+        });
     }
 
     fn search_remote_skills_on_demand(&mut self, query: String, tx: mpsc::Sender<AppEvent>) {
         if query.len() < 2 {
+            self.skills_remote_loading = false;
+            self.skills_remote_loading_query = None;
             self.skills_state.all_items = self.installed_skills.clone();
             self.skills_state.update_search();
             return;
         }
 
         if let Some(cached) = self.skills_query_cache.get(&query).cloned() {
-            let mut merged = self.installed_skills.clone();
-            let mut installed_names = std::collections::HashSet::new();
-            for s in &self.installed_skills {
-                installed_names.insert(s.name.clone());
-            }
-            for mut item in cached {
-                if installed_names.contains(&item.name) {
-                    item.installed = true;
-                }
-                merged.push(item);
-            }
-            self.skills_state.all_items = merged;
+            self.skills_remote_loading = false;
+            self.skills_remote_loading_query = None;
+            self.skills_state.all_items = Self::merge_skills(self.installed_skills.clone(), cached);
             self.skills_state.update_search();
             return;
         }
+
+        self.skills_remote_loading = true;
+        self.skills_remote_loading_query = Some(query.clone());
 
         let tx_clone = tx.clone();
         tokio::spawn(async move {
@@ -2503,70 +2541,21 @@ impl<'a> App<'a> {
         });
     }
 
+    /// Search skills.sh API (covers all 60K+ skills).
     fn search_remote_skills_blocking(query: &str) -> Vec<SkillEntry> {
-        let mut out = Vec::new();
-        let output = std::process::Command::new("npx")
-            .arg("-y")
-            .arg("skills")
-            .arg("find")
-            .arg(query)
-            .output();
-
-        let Ok(output) = output else {
-            return out;
-        };
-
-        let raw = String::from_utf8_lossy(&output.stdout).to_string();
-        let clean = Self::strip_ansi(&raw);
-        let mut pending: Option<(String, String, String, u64)> = None; // owner/repo, skill, source, installs
-
-        for line in clean.lines() {
-            let l = line.trim();
-            if l.is_empty() {
-                continue;
-            }
-
-            if let Some((repo, skill, installs)) = Self::parse_find_skill_line(l) {
-                pending = Some((repo, skill, "skills.sh".to_string(), installs));
-                continue;
-            }
-
-            if let Some((repo, skill, source, installs)) = pending.clone() {
-                if l.contains("https://skills.sh/") {
-                    out.push(SkillEntry {
-                        name: skill,
-                        source,
-                        repo,
-                        installed: false,
-                        local_path: None,
-                        url: l.trim_start_matches('└').trim().to_string(),
-                        installs,
-                        trending_rank: None,
-                    });
-                    pending = None;
-                }
-            }
-        }
-
-        out
-    }
-
-    fn parse_find_skill_line(line: &str) -> Option<(String, String, u64)> {
-        let at = line.find('@')?;
-        let repo = line[..at].trim().to_string();
-        if repo.is_empty() || !repo.contains('/') {
-            return None;
-        }
-
-        let rest = line[at + 1..].trim();
-        let mut parts = rest.split_whitespace();
-        let skill = parts.next()?.trim().to_string();
-        if skill.is_empty() {
-            return None;
-        }
-
-        let installs = Self::parse_installs_count(rest).unwrap_or(0);
-        Some((repo, skill, installs))
+        tools::search_skills_api(query)
+            .into_iter()
+            .map(|e| SkillEntry {
+                name: e.name,
+                source: "skills.sh".to_string(),
+                repo: e.repo,
+                installed: false,
+                local_path: None,
+                url: e.url,
+                installs: e.installs,
+                trending_rank: e.trending_rank,
+            })
+            .collect()
     }
 
     fn strip_ansi(text: &str) -> String {
@@ -2606,6 +2595,8 @@ impl<'a> App<'a> {
         }
 
         let key = skill.url.clone();
+        let repo = skill.repo.clone();
+        let skill_name = skill.name.clone();
         if self.skill_preview_cache.contains_key(&key) || self.skill_preview_pending.contains(&key)
         {
             return;
@@ -2615,18 +2606,51 @@ impl<'a> App<'a> {
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             let key_for_fetch = key.clone();
+            let repo_for_fetch = repo.clone();
+            let skill_for_fetch = skill_name.clone();
             let summary = tokio::task::spawn_blocking(move || {
                 let output = std::process::Command::new("curl")
                     .arg("-fsSL")
+                    .arg("--compressed")
                     .arg(&key_for_fetch)
                     .output();
-                let Ok(output) = output else {
+                let html_summary = output.ok().and_then(|out| {
+                    let html = String::from_utf8_lossy(&out.stdout).to_string();
+                    Self::extract_meta_description(&html)
+                        .or_else(|| Self::extract_og_description(&html))
+                        .or_else(|| Self::extract_title(&html))
+                });
+
+                if let Some(v) = html_summary {
+                    return v;
+                }
+
+                if repo_for_fetch.is_empty() {
+                    return String::new();
+                }
+
+                let list_output = std::process::Command::new("npx")
+                    .arg("-y")
+                    .arg("skills")
+                    .arg("add")
+                    .arg(&repo_for_fetch)
+                    .arg("-l")
+                    .output();
+                let Ok(list_output) = list_output else {
                     return String::new();
                 };
-                let html = String::from_utf8_lossy(&output.stdout).to_string();
-                Self::extract_meta_description(&html)
-                    .or_else(|| Self::extract_title(&html))
-                    .unwrap_or_default()
+                let text = Self::strip_ansi(&String::from_utf8_lossy(&list_output.stdout));
+                for line in text.lines() {
+                    let l = line.trim();
+                    if l.is_empty() {
+                        continue;
+                    }
+                    if l.contains(&skill_for_fetch) {
+                        return l.to_string();
+                    }
+                }
+
+                String::new()
             })
             .await
             .unwrap_or_default();
@@ -2645,6 +2669,14 @@ impl<'a> App<'a> {
         Some(rest[..end].replace("&quot;", "\"").replace("&#x27;", "'"))
     }
 
+    fn extract_og_description(html: &str) -> Option<String> {
+        let key = "property=\"og:description\" content=\"";
+        let start = html.find(key)? + key.len();
+        let rest = &html[start..];
+        let end = rest.find('"')?;
+        Some(rest[..end].replace("&quot;", "\"").replace("&#x27;", "'"))
+    }
+
     fn extract_title(html: &str) -> Option<String> {
         let start = html.find("<title>")? + 7;
         let rest = &html[start..];
@@ -2655,7 +2687,7 @@ impl<'a> App<'a> {
     fn load_bg_task_preview(&mut self) {
         self.bg_tasks.preview_lines.clear();
         if let Some(selected) = self.bg_tasks.list_state.selected() {
-            if let Some(item) = self.bg_tasks.items.get(selected) {
+            if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
                 self.bg_tasks.preview_lines.push(
                     Line::from(format!("session: {}", item.id))
                         .style(Style::default().add_modifier(Modifier::BOLD)),
@@ -2792,7 +2824,7 @@ impl<'a> App<'a> {
             }
             KeyCode::Down => {
                 if let Some(selected) = self.bg_tasks.list_state.selected() {
-                    let next = if selected + 1 < self.bg_tasks.items.len() {
+                    let next = if selected + 1 < self.bg_tasks.filtered_items.len() {
                         selected + 1
                     } else {
                         0
@@ -2806,7 +2838,7 @@ impl<'a> App<'a> {
                     let prev = if selected > 0 {
                         selected - 1
                     } else {
-                        self.bg_tasks.items.len().saturating_sub(1)
+                        self.bg_tasks.filtered_items.len().saturating_sub(1)
                     };
                     self.bg_tasks.list_state.select(Some(prev));
                     self.load_bg_task_preview();
@@ -2817,7 +2849,7 @@ impl<'a> App<'a> {
             }
             KeyCode::Char('o') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.bg_tasks.list_state.selected() {
-                    if let Some(item) = self.bg_tasks.items.get(selected) {
+                    if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
                         let _ = tx
                             .send(AppEvent::SuspendAndShell(format!(
                                 "tmux attach -t {}",
@@ -2830,14 +2862,19 @@ impl<'a> App<'a> {
             }
             KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.bg_tasks.list_state.selected() {
-                    if let Some(item) = self.bg_tasks.items.get(selected) {
+                    if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
                         self.textarea.insert_str(&format!("tmux:{}", item.id));
                         self.textarea.insert_str(" ");
                     }
                 }
                 self.mode = AppMode::Chat;
             }
-            _ => {}
+            _ => {
+                if self.bg_tasks.input.input(Input::from(key_event)) {
+                    self.bg_tasks.update_search();
+                    self.load_bg_task_preview();
+                }
+            }
         }
     }
 
@@ -2940,45 +2977,39 @@ impl<'a> App<'a> {
                             return;
                         }
 
-                        if !skill.repo.is_empty() {
-                            self.messages
-                                .push(format!("[THINK] Installing skill: {}", skill.name));
+                        if skill.repo.is_empty() {
+                            self.messages.push(format!(
+                                "[SKILL] '{}' is local-only (no remote repo). Copy to ~/.agents/skills/{}/",
+                                skill.name, skill.name
+                            ));
                             let len = self.messages.len();
                             self.list_state.select(Some(len.saturating_sub(1)));
-
-                            let tx_clone = tx.clone();
-                            let repo = skill.repo.clone();
-                            let skill_name = skill.name.clone();
-                            tokio::spawn(async move {
-                                let command = format!("npx -y skills add {}", repo);
-                                let result = tools::run_command(&command).await;
-                                match result {
-                                    Ok(output) => {
-                                        let msg = if output.trim().is_empty() {
-                                            format!(
-                                                "[SKILL] Installed {} (no command output)",
-                                                skill_name
-                                            )
-                                        } else {
-                                            format!("[SKILL] Installed {}\n{}", skill_name, output)
-                                        };
-                                        let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
-                                    }
-                                    Err(e) => {
-                                        let _ = tx_clone
-                                            .send(AppEvent::AgentResponse(format!(
-                                                "[ERR] Skill install failed: {}\n{}",
-                                                skill_name, e
-                                            )))
-                                            .await;
-                                    }
-                                }
-                                let _ = tx_clone.send(AppEvent::RefreshSkills).await;
-                            });
-
                             self.mode = AppMode::Chat;
                             return;
                         }
+
+                        // Install via git clone (no npx, no interactive GUI)
+                        let install_repo = format!("{}/{}", skill.repo, skill.name);
+                        self.messages.push(format!(
+                            "[THINK] Installing '{}' from {}...",
+                            skill.name, skill.repo
+                        ));
+                        let len = self.messages.len();
+                        self.list_state.select(Some(len.saturating_sub(1)));
+
+                        let tx_clone = tx.clone();
+                        let skill_name = skill.name.clone();
+                        tokio::spawn(async move {
+                            let msg = match tools::install_skill(&install_repo).await {
+                                Ok(output) => format!("[SKILL] ✓ {}", output),
+                                Err(e) => format!("[ERR] Failed to install '{}': {}", skill_name, e),
+                            };
+                            let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
+                            let _ = tx_clone.send(AppEvent::RefreshSkills).await;
+                        });
+
+                        self.mode = AppMode::Chat;
+                        return;
                     }
                 }
                 self.load_skill_preview();
@@ -2990,7 +3021,7 @@ impl<'a> App<'a> {
                             self.textarea.insert_str(&format!("skill:{} ", skill.name));
                         } else if !skill.repo.is_empty() {
                             self.textarea.insert_str(&format!(
-                                "npx skills add {}  # {}\n",
+                                "{}/{} ",
                                 skill.repo, skill.name
                             ));
                         } else {
@@ -3017,63 +3048,49 @@ impl<'a> App<'a> {
                 if let Some(selected) = self.skills_state.list_state.selected() {
                     if let Some(skill) = self.skills_state.filtered_items.get(selected).cloned() {
                         if skill.installed {
-                            if let Some(local_path) = skill.local_path {
-                                if let Some(skill_dir) = std::path::Path::new(&local_path)
-                                    .parent()
-                                    .map(|p| p.to_path_buf())
-                                {
-                                    self.messages.push(format!(
-                                        "[THINK] Uninstalling skill: {}",
-                                        skill.name
-                                    ));
-                                    let len = self.messages.len();
-                                    self.list_state.select(Some(len.saturating_sub(1)));
+                            self.messages.push(format!(
+                                "[THINK] Uninstalling skill: {}...",
+                                skill.name
+                            ));
+                            let len = self.messages.len();
+                            self.list_state.select(Some(len.saturating_sub(1)));
 
-                                    let tx_clone = tx.clone();
-                                    let skill_name = skill.name.clone();
-                                    tokio::spawn(async move {
-                                        let result = tokio::task::spawn_blocking(move || {
-                                            std::fs::remove_dir_all(skill_dir)
-                                        })
-                                        .await;
+                            let tx_clone = tx.clone();
+                            let skill_name = skill.name.clone();
+                            let skill_name2 = skill_name.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    tools::remove_skill(&skill_name)
+                                })
+                                .await;
 
-                                        match result {
-                                            Ok(Ok(())) => {
-                                                let _ = tx_clone
-                                                    .send(AppEvent::AgentResponse(format!(
-                                                        "[SKILL] Uninstalled {}",
-                                                        skill_name
-                                                    )))
-                                                    .await;
-                                            }
-                                            Ok(Err(e)) => {
-                                                let _ = tx_clone
-                                                    .send(AppEvent::AgentResponse(format!(
-                                                        "[ERR] Failed to uninstall {}\n{}",
-                                                        skill_name, e
-                                                    )))
-                                                    .await;
-                                            }
-                                            Err(e) => {
-                                                let _ = tx_clone
-                                                    .send(AppEvent::AgentResponse(format!(
-                                                        "[ERR] Failed to uninstall {}\n{}",
-                                                        skill_name, e
-                                                    )))
-                                                    .await;
-                                            }
-                                        }
-
-                                        let _ = tx_clone.send(AppEvent::RefreshSkills).await;
-                                    });
-                                }
-                            }
+                                let msg = match &result {
+                                    Ok(Ok(())) => format!("[SKILL] ✓ Uninstalled '{}'", skill_name2),
+                                    Ok(Err(e)) => format!("[ERR] Failed to uninstall '{}': {}", skill_name2, e),
+                                    Err(e) => format!("[ERR] Failed to uninstall '{}': {}", skill_name2, e),
+                                };
+                                let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
+                                let _ = tx_clone.send(AppEvent::RefreshSkills).await;
+                            });
                         }
                     }
                 }
             }
             KeyCode::F(5) => {
+                // Force refresh catalog (bypass cache)
+                self.messages.push("[THINK] Refreshing skills catalog...".to_string());
+                let _ = tools::refresh_skills_catalog();
                 self.refresh_skills();
+                // Replace THINK message
+                if let Some(last) = self.messages.last() {
+                    if last.starts_with("[THINK]") {
+                        self.messages.pop();
+                    }
+                }
+                self.messages.push(format!(
+                    "[SKILL] Catalog refreshed ({} skills)",
+                    self.skills_state.all_items.len()
+                ));
             }
             _ => {
                 if self.skills_state.input.input(Input::from(key_event)) {
@@ -3085,7 +3102,7 @@ impl<'a> App<'a> {
                         .join("")
                         .trim()
                         .to_lowercase();
-                    self.search_remote_skills_on_demand(query, tx.clone());
+                    self.schedule_skills_search_debounce(query, tx.clone());
                     self.load_skill_preview();
                     self.maybe_request_skill_preview(tx.clone());
                 }
@@ -3166,7 +3183,7 @@ impl<'a> App<'a> {
             }
             KeyCode::Down => {
                 if let Some(selected) = self.git_history.list_state.selected() {
-                    let next = if selected + 1 < self.git_history.items.len() {
+                    let next = if selected + 1 < self.git_history.filtered_items.len() {
                         selected + 1
                     } else {
                         0
@@ -3180,7 +3197,7 @@ impl<'a> App<'a> {
                     let prev = if selected > 0 {
                         selected - 1
                     } else {
-                        self.git_history.items.len().saturating_sub(1)
+                        self.git_history.filtered_items.len().saturating_sub(1)
                     };
                     self.git_history.list_state.select(Some(prev));
                     self.load_git_history_preview();
@@ -3191,14 +3208,19 @@ impl<'a> App<'a> {
             }
             KeyCode::Char('i') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(selected) = self.git_history.list_state.selected() {
-                    if let Some(item) = self.git_history.items.get(selected) {
+                    if let Some(item) = self.git_history.filtered_items.get(selected) {
                         self.textarea.insert_str(item);
                         self.textarea.insert_str(" ");
                     }
                 }
                 self.mode = AppMode::Chat;
             }
-            _ => {}
+            _ => {
+                if self.git_history.input.input(Input::from(key_event)) {
+                    self.git_history.update_search();
+                    self.load_git_history_preview();
+                }
+            }
         }
     }
 

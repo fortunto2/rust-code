@@ -2,6 +2,7 @@ use anyhow::Result;
 use crate::baml_client::{self, types};
 use crate::tools::{
     read_file, write_file, run_command, FuzzySearcher, git_status, git_diff, git_add, git_commit,
+    build_skills_context,
 };
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
@@ -29,8 +30,18 @@ impl Agent {
         let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         let session_file = PathBuf::from(format!(".rust-code/session_{}.jsonl", timestamp));
 
+        let mut history = Vec::new();
+
+        // Inject installed skills context as system message
+        if let Some(skills_ctx) = build_skills_context() {
+            history.push(types::Message {
+                role: "system".to_string(),
+                content: skills_ctx,
+            });
+        }
+
         Self {
-            history: Vec::new(),
+            history,
             session_file,
         }
     }
