@@ -240,6 +240,22 @@ cargo build
 cargo test
 ```
 
+## Built With
+
+| What | Crate / Link |
+|------|-------------|
+| Agent architecture | [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) — typed tool dispatch via union types |
+| LLM prompt engineering | [BAML](https://github.com/BoundaryML/baml) — DSL for type-safe structured output from LLMs |
+| TUI framework | [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm) |
+| Text input | [tui-textarea](https://github.com/rhysd/tui-textarea) |
+| Fuzzy search | [Nucleo](https://github.com/helix-editor/nucleo) (from Helix editor) |
+| Async runtime | [Tokio](https://tokio.rs) |
+| MCP client | [rmcp](https://github.com/anthropics/rust-sdk) — Rust SDK for Model Context Protocol |
+| CLI | [Clap](https://github.com/clap-rs/clap) |
+| File traversal | [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) (from ripgrep, respects `.gitignore`) |
+| Skills registry | [skills.sh](https://skills.sh) |
+| Background tasks | [tmux](https://github.com/tmux/tmux) |
+
 ## Status
 
 The crate is published on crates.io:
