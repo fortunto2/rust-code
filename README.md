@@ -4,6 +4,8 @@
 
 It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
 
+![rust-code TUI](docs/assets/screenshot.png)
+
 ## Install
 
 From crates.io:
@@ -91,8 +93,8 @@ rust-code
 
 Notes:
 
-- `rust-code` currently initializes BAML clients that are defined in [`crates/rc-baml/baml_src/clients.baml`](/Users/rustam/startups/shared/rust-code/crates/rc-baml/baml_src/clients.baml).
-- The checked-in config currently includes Gemini, Vertex AI, and OpenRouter.
+- BAML clients are defined in [`crates/rc-baml/baml_src/clients.baml`](crates/rc-baml/baml_src/clients.baml).
+- Default: Gemini 3.1 Pro with fallback to Flash and Flash Lite.
 - `BAML_LOG` is suppressed automatically by the app so the TUI stays clean.
 
 ## Quick Start
@@ -200,14 +202,16 @@ This repository now publishes a single crate, `rust-code`, but it still keeps a 
 
 If you change BAML source files, edit them in:
 
-- [`crates/rc-baml/baml_src/`](/Users/rustam/startups/shared/rust-code/crates/rc-baml/baml_src/)
+- [`crates/rc-baml/baml_src/`](crates/rc-baml/baml_src/)
 
 Then regenerate:
 
 ```bash
-cd crates/rc-baml
-npx @boundaryml/baml@0.218.0 generate
+~/.cargo/bin/baml-cli generate --from crates/rc-baml/baml_src
+rm -rf crates/rc-cli/src/baml_client && cp -r crates/rc-baml/src/baml_client crates/rc-cli/src/baml_client
 ```
+
+See [`crates/rc-baml/README.md`](crates/rc-baml/README.md) for the full BAML prompt writing guide.
 
 Useful commands:
 
@@ -223,4 +227,4 @@ The crate is published on crates.io:
 
 - https://crates.io/crates/rust-code
 
-Linux release artifacts are published by GitHub Actions when you push a tag matching `v*`, for example `v0.1.1`.
+Release artifacts (Linux x86_64 + macOS aarch64) are published on GitHub when you push a tag matching `v*`.
