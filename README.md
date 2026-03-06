@@ -18,13 +18,19 @@ It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session
 
 ## Install
 
+Homebrew (macOS, auto-installs tmux):
+
+```bash
+brew install fortunto2/tap/rust-code
+```
+
 One-liner (downloads binary + installs dependencies via `doctor`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fortunto2/rust-code/master/install.sh | bash
 ```
 
-Or from crates.io:
+From crates.io:
 
 ```bash
 cargo install rust-code
