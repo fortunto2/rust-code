@@ -4,8 +4,6 @@
 
 It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
 
-![rust-code TUI](docs/assets/screenshot.png)
-
 ## Install
 
 From crates.io:
