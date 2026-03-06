@@ -827,7 +827,7 @@ impl<'a> App<'a> {
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut crate::tui::Tui, resume: bool) -> Result<()> {
+    pub async fn run(&mut self, terminal: &mut crate::tui::Tui, resume: bool, session: Option<&str>) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(100);
 
         // Share the agent so the background worker can use it
@@ -836,7 +836,9 @@ impl<'a> App<'a> {
         if let Err(e) = agent_instance.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
         }
-        if resume {
+        if let Some(session_path) = session {
+            let _ = agent_instance.load_session_file(std::path::Path::new(session_path));
+        } else if resume {
             let _ = agent_instance.load_last_session();
         }
 
@@ -4093,6 +4095,9 @@ impl<'a> App<'a> {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.add_user_message(prompt_clone);
 
+                        let mut last_action_debug = String::new();
+                        let mut repeat_count: u32 = 0;
+
                         loop {
                             // Inject any queued user notes between reasoning steps
                             let queued_notes = {
@@ -4118,6 +4123,34 @@ impl<'a> App<'a> {
 
                             match locked_agent.step().await {
                                 Ok(step) => {
+                                    // Loop detection: break if same action repeated 3+ times
+                                    let action_debug = format!("{:?}", step.action);
+                                    if action_debug == last_action_debug {
+                                        repeat_count += 1;
+                                        if repeat_count >= 6 {
+                                            // Hard break — model is completely stuck
+                                            locked_agent.add_assistant_message("SYSTEM ABORT: Stuck in a loop after 6 identical actions. Stopping.");
+                                            let _ = agent_tx
+                                                .send(AppEvent::AgentResponse(
+                                                    "[ERR] Agent stuck in loop — aborting task".to_string(),
+                                                ))
+                                                .await;
+                                            break;
+                                        } else if repeat_count >= 3 {
+                                            locked_agent.add_user_message(
+                                                "SYSTEM: You are repeating the same action. STOP and try a completely different approach. If you were using GitDiffTool, try ReadFileTool instead. If a tool keeps failing, skip it and move on."
+                                            );
+                                            let _ = agent_tx
+                                                .send(AppEvent::AgentResponse(
+                                                    "[WARN] Loop detected — injecting correction".to_string(),
+                                                ))
+                                                .await;
+                                        }
+                                    } else {
+                                        repeat_count = 0;
+                                        last_action_debug = action_debug;
+                                    }
+
                                     // Only output Analysis in the chat, plan goes to the sidebar
                                     let analysis_str = format!("Analysis: {}", step.analysis);
 
@@ -4135,18 +4168,18 @@ impl<'a> App<'a> {
 
                                     let is_done = matches!(
                                         step.action,
-                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                        baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                        baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
                                     );
 
                                     // Execute the action
                                     match locked_agent.execute_action(&step.action).await {
                                         Ok(AgentEvent::Message(result)) => {
                                             // Check if it was an edit/write action to update sidebar
-                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
-                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
+                                            if let baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
                                                 let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                             }
 

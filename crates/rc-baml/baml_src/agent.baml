@@ -69,7 +69,7 @@ class McpToolCall {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now")
+  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitAddTool | GitCommitTool | AskUserTool | FinishTaskTool | McpToolCall @description("The specific tool action to execute right now. To see git diff, use BashCommandTool with 'git diff'. To open a file in the editor, use BashCommandTool with 'code <path>'.")
 }
 
 // History message format for the prompt
@@ -79,7 +79,7 @@ class Message {
 }
 
 function GetNextStep(history: Message[]) -> NextStep {
-  client VertexGemini31FlashLite
+  client Gemini31FlashLite
   prompt #"
     {{ _.role("system") }}
     You are rust-code, an expert AI coding assistant operating in a Terminal UI environment.
@@ -91,9 +91,10 @@ function GetNextStep(history: Message[]) -> NextStep {
     ## Tools
 
     ### Built-in Tools
-    ReadFileTool, WriteFileTool, EditFileTool, BashCommandTool, BashBgTool,
-    SearchCodeTool, GitStatusTool, GitDiffTool, GitAddTool, GitCommitTool,
-    OpenEditorTool, AskUserTool, FinishTaskTool.
+    ReadFileTool (read file contents), WriteFileTool (create new file), EditFileTool (edit existing file),
+    BashCommandTool (run shell command), BashBgTool (run in tmux background),
+    SearchCodeTool (ripgrep search), GitStatusTool, GitAddTool, GitCommitTool,
+    AskUserTool, FinishTaskTool.
 
     ### MCP Tools (via McpToolCall)
     MCP servers are connected and their tools listed in system messages above.
@@ -120,6 +121,8 @@ function GetNextStep(history: Message[]) -> NextStep {
     - Use EditFileTool for precise edits, not WriteFileTool for existing files.
     - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window. User can see output via F7 > Ctrl+O.
     - Always explain reasoning in the analysis field.
+    - CRITICAL: To READ a file's contents, ALWAYS use ReadFileTool. GitDiffTool only shows uncommitted changes, NOT file contents. If you need to see what's in a file, use ReadFileTool.
+    - NEVER call the same tool with the same arguments twice in a row. If a tool returned "No changes to show" or an empty result, try a DIFFERENT tool or approach.
 
     {# Loop through conversation history #}
     {% for msg in history %}
@@ -131,5 +134,11 @@ function GetNextStep(history: Message[]) -> NextStep {
     Determine the next action to take based on the history above.
 
     {{ ctx.output_format }}
+
+    CRITICAL TOOL SELECTION RULES:
+    - To see what is INSIDE a file, you MUST use ReadFileTool (set "path" field). This is the ONLY way to read file contents.
+    - EditFileTool requires "path", "old_string", and "new_string" fields.
+    - BashCommandTool requires a "command" field.
+    - Do NOT confuse tools. ReadFileTool reads files. EditFileTool edits files. BashCommandTool runs commands.
   "#
 }

@@ -19,6 +19,10 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     resume: bool,
 
+    /// Resume a specific session by file path (e.g. .rust-code/session_123.jsonl)
+    #[arg(short, long)]
+    session: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -508,20 +512,45 @@ async fn main() -> Result<()> {
     baml_client::init();
 
     if let Some(prompt) = args.prompt {
-        // Single prompt headless mode — always resume last session for context continuity
+        // Single prompt headless mode — fresh session by default
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
         // Initialize MCP servers
         if let Err(e) = agent.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
         }
-        // Auto-resume last session so agent has full context
-        let _ = agent.load_last_session();
+        // Only resume if explicitly requested via --session or --resume
+        if let Some(session_path) = &args.session {
+            let _ = agent.load_session_file(std::path::Path::new(session_path));
+        } else if args.resume {
+            let _ = agent.load_last_session();
+        }
         agent.add_user_message(prompt);
+
+        let mut last_action_debug = String::new();
+        let mut repeat_count: u32 = 0;
 
         loop {
             println!("Thinking...");
             let step = agent.step().await?;
+
+            // Loop detection
+            let action_debug = format!("{:?}", step.action);
+            if action_debug == last_action_debug {
+                repeat_count += 1;
+                if repeat_count >= 6 {
+                    eprintln!("[ERR] Agent stuck in loop after 6 identical actions — aborting");
+                    break;
+                } else if repeat_count >= 3 {
+                    agent.add_user_message(
+                        "SYSTEM: You are repeating the same action. STOP and try a completely different approach. If you were using GitDiffTool, try ReadFileTool instead. If a tool keeps failing, skip it and move on."
+                    );
+                    println!("[WARN] Loop detected — injecting correction");
+                }
+            } else {
+                repeat_count = 0;
+                last_action_debug = action_debug;
+            }
 
             println!("\nAnalysis: {}", step.analysis);
             println!("Plan updates:");
@@ -539,19 +568,23 @@ async fn main() -> Result<()> {
 
             let is_done = matches!(
                 step.action,
-                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                baml_client::types::Union12AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitStatusToolOrMcpToolCallOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
             );
 
-            let result = agent.execute_action(&step.action).await?;
-            match result {
-                AgentEvent::Message(msg) => {
+            match agent.execute_action(&step.action).await {
+                Ok(AgentEvent::Message(msg)) => {
                     println!("\nTool Result:\n{}", msg);
                     agent.add_user_message(format!("Tool result:\n{}", msg));
                 }
-                AgentEvent::OpenEditor(path, _) => {
+                Ok(AgentEvent::OpenEditor(path, _)) => {
                     println!("\nAction requested opening editor for: {}", path);
                     agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
+                }
+                Err(e) => {
+                    let err_msg = format!("Tool error: {}", e);
+                    println!("\n{}", err_msg);
+                    agent.add_user_message(format!("Tool error:\n{}", e));
                 }
             }
 
@@ -565,7 +598,7 @@ async fn main() -> Result<()> {
         let mut terminal = tui::init()?;
         let mut app = app::App::new();
 
-        let result = app.run(&mut terminal, args.resume).await;
+        let result = app.run(&mut terminal, args.resume, args.session.as_deref()).await;
 
         tui::restore()?;
 
