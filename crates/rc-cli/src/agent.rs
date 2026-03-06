@@ -282,23 +282,20 @@ impl Agent {
                 Ok(AgentEvent::Message(format!("Question for user: {}", cmd.question)))
             }
             McpToolCall(cmd) => {
-                if let Some(mcp) = &self.mcp {
-                    // Parse JSON string arguments into serde_json Map
-                    let args = cmd.arguments.as_ref().and_then(|json_str| {
-                        serde_json::from_str::<serde_json::Map<std::string::String, serde_json::Value>>(json_str).ok()
-                    });
-                    let prefixed = format!("mcp__{}_{}", cmd.server, cmd.tool);
-                    match mcp.call_tool(&prefixed, args).await {
-                        Ok(result) => {
-                            let output = crate::tools::mcp::format_tool_result(&result);
-                            Ok(AgentEvent::Message(format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output)))
-                        }
-                        Err(e) => {
-                            Ok(AgentEvent::Message(format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e)))
-                        }
+                let Some(mcp) = &self.mcp else {
+                    return Ok(AgentEvent::Message("MCP not initialized. No .mcp.json found.".to_string()));
+                };
+                let args = cmd.arguments.as_ref().and_then(|json_str| {
+                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str).ok()
+                });
+                match mcp.call_tool(&cmd.server, &cmd.tool, args).await {
+                    Ok(result) => {
+                        let output = crate::tools::mcp::format_tool_result(&result);
+                        Ok(AgentEvent::Message(format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output)))
                     }
-                } else {
-                    Ok(AgentEvent::Message("MCP not initialized. No MCP servers configured.".to_string()))
+                    Err(e) => {
+                        Ok(AgentEvent::Message(format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e)))
+                    }
                 }
             }
         }
