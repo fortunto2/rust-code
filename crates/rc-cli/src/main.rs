@@ -30,6 +30,19 @@ enum Commands {
         #[command(subcommand)]
         action: SkillsAction,
     },
+    /// Show MCP server status and tools
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// List configured MCP servers and their tools
+    List,
+    /// Show .mcp.json config
+    Config,
 }
 
 #[derive(Subcommand, Debug)]
@@ -264,6 +277,61 @@ async fn run_skills_command(action: SkillsAction) -> Result<()> {
     Ok(())
 }
 
+async fn run_mcp_command(action: McpAction) -> Result<()> {
+    use tools::mcp::McpManager;
+
+    match action {
+        McpAction::Config => {
+            let config = McpManager::load_configs();
+            if config.mcp_servers.is_empty() {
+                println!("No MCP servers configured.");
+                println!("\nCreate ~/.mcp.json or .mcp.json with:");
+                println!(r#"  {{"mcpServers": {{"name": {{"command": "...", "args": [...]}}}}}}"#);
+            } else {
+                println!("Configured MCP servers ({}):\n", config.mcp_servers.len());
+                for (name, cfg) in &config.mcp_servers {
+                    println!("  {} -> {} {}", name, cfg.command, cfg.args.join(" "));
+                    if !cfg.env.is_empty() {
+                        for (k, _) in &cfg.env {
+                            println!("    env: {}=***", k);
+                        }
+                    }
+                }
+            }
+        }
+        McpAction::List => {
+            let config = McpManager::load_configs();
+            if config.mcp_servers.is_empty() {
+                println!("No MCP servers configured.");
+                return Ok(());
+            }
+
+            println!("Starting MCP servers...\n");
+            let manager = McpManager::start_all(&config).await?;
+
+            if manager.server_count() == 0 {
+                println!("No servers started successfully.");
+                return Ok(());
+            }
+
+            println!("Connected to {} server(s), {} total tools:\n",
+                manager.server_count(), manager.tool_count());
+
+            for tool in manager.all_tools() {
+                print!("  [{}] {}", tool.server_name, tool.tool.name);
+                if let Some(desc) = &tool.tool.description {
+                    let short = if desc.len() > 80 { &desc[..80] } else { desc };
+                    print!(" - {}", short);
+                }
+                println!();
+            }
+
+            manager.shutdown().await;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -275,8 +343,11 @@ async fn main() -> Result<()> {
     setup_panic_hook();
 
     // Handle subcommands first (no BAML init needed)
-    if let Some(Commands::Skills { action }) = args.command {
-        return run_skills_command(action).await;
+    if let Some(command) = args.command {
+        return match command {
+            Commands::Skills { action } => run_skills_command(action).await,
+            Commands::Mcp { action } => run_mcp_command(action).await,
+        };
     }
 
     // Initialize BAML runtime
@@ -286,6 +357,10 @@ async fn main() -> Result<()> {
         // Single prompt headless mode
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
+        // Initialize MCP servers
+        if let Err(e) = agent.init_mcp().await {
+            tracing::warn!("MCP init failed: {}", e);
+        }
         if args.resume {
             let _ = agent.load_last_session();
         }

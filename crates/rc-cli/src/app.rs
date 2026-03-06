@@ -752,6 +752,10 @@ impl<'a> App<'a> {
 
         // Share the agent so the background worker can use it
         let mut agent_instance = Agent::new();
+        // Initialize MCP servers from .mcp.json
+        if let Err(e) = agent_instance.init_mcp().await {
+            tracing::warn!("MCP init failed: {}", e);
+        }
         if resume {
             let _ = agent_instance.load_last_session();
         }

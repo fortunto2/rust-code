@@ -4,6 +4,7 @@ pub mod search;
 pub mod editor;
 pub mod git;
 pub mod skills;
+pub mod mcp;
 
 pub use fs::*;
 pub use bash::*;

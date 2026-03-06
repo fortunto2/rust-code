@@ -3,6 +3,7 @@ use crate::baml_client::{self, types};
 use crate::tools::{
     read_file, write_file, run_command, FuzzySearcher, git_status, git_diff, git_add, git_commit,
     build_skills_context,
+    mcp::McpManager,
 };
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
@@ -22,6 +23,7 @@ struct PersistedMessage {
 pub struct Agent {
     history: Vec<types::Message>,
     session_file: PathBuf,
+    mcp: Option<McpManager>,
 }
 
 impl Agent {
@@ -43,7 +45,36 @@ impl Agent {
         Self {
             history,
             session_file,
+            mcp: None,
         }
+    }
+
+    /// Initialize MCP servers from .mcp.json configs.
+    pub async fn init_mcp(&mut self) -> Result<()> {
+        let config = McpManager::load_configs();
+        if config.mcp_servers.is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!("Starting {} MCP server(s)...", config.mcp_servers.len());
+        let manager = McpManager::start_all(&config).await?;
+
+        // Inject MCP tools context into history
+        if let Some(mcp_ctx) = manager.build_context() {
+            self.history.push(types::Message {
+                role: "system".to_string(),
+                content: mcp_ctx,
+            });
+        }
+
+        tracing::info!("MCP ready: {} servers, {} tools", manager.server_count(), manager.tool_count());
+        self.mcp = Some(manager);
+        Ok(())
+    }
+
+    /// Get MCP manager reference.
+    pub fn mcp(&self) -> Option<&McpManager> {
+        self.mcp.as_ref()
     }
 
     pub fn load_last_session(&mut self) -> Result<()> {

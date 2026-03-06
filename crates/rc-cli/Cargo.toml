@@ -33,3 +33,4 @@ ignore.workspace = true
 nucleo.workspace = true
 nucleo-matcher.workspace = true
 baml.workspace = true
+rmcp.workspace = true
