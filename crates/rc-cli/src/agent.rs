@@ -51,19 +51,20 @@ pub struct Agent {
     mcp: Option<McpManager>,
 }
 
-const SESSION_DIR: &str = ".rust-code";
+const AGENT_HOME: &str = ".rust-code";
 const MAX_HISTORY: usize = 60;
 
 impl Agent {
     pub fn new() -> Self {
-        let mut session = Session::new(SESSION_DIR, MAX_HISTORY);
+        let mut session = Session::new(AGENT_HOME, MAX_HISTORY);
 
-        // Inject user context files (.rust-code/context/*.md)
-        if let Some(ctx) = baml_agent::load_context_dir(&format!("{}/context", SESSION_DIR)) {
-            session.push(Role::system(), ctx);
+        // Inject agent context (SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md, context/*.md)
+        let ctx = baml_agent::AgentContext::load(AGENT_HOME);
+        if let Some(msg) = ctx.to_system_message() {
+            session.push(Role::system(), msg);
         }
 
-        // Inject installed skills context as system message
+        // Inject installed skills context
         if let Some(skills_ctx) = build_skills_context() {
             session.push(Role::system(), skills_ctx);
         }
@@ -100,14 +101,14 @@ impl Agent {
     }
 
     pub fn load_last_session(&mut self) -> Result<()> {
-        if let Some(resumed) = Session::resume_last(SESSION_DIR, MAX_HISTORY) {
+        if let Some(resumed) = Session::resume_last(AGENT_HOME, MAX_HISTORY) {
             self.session = resumed;
         }
         Ok(())
     }
 
     pub fn load_session_file(&mut self, path: &Path) -> Result<()> {
-        self.session = Session::resume(path, SESSION_DIR, MAX_HISTORY);
+        self.session = Session::resume(path, AGENT_HOME, MAX_HISTORY);
         Ok(())
     }
 
@@ -456,16 +457,18 @@ mod tests {
     }
 
     #[test]
-    fn context_dir_loaded_via_baml_agent() {
-        let dir = std::env::temp_dir().join("rc_test_context_dir");
-        let ctx_dir = dir.join("context");
+    fn agent_context_loaded_from_home() {
+        let dir = std::env::temp_dir().join("rc_test_agent_home");
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&ctx_dir).unwrap();
-        std::fs::write(ctx_dir.join("rules.md"), "# Rules\nAgent discipline").unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
+        std::fs::write(dir.join("IDENTITY.md"), "Name: test-agent").unwrap();
 
-        let ctx = baml_agent::load_context_dir(ctx_dir.to_str().unwrap());
-        assert!(ctx.is_some());
-        assert!(ctx.unwrap().contains("Agent discipline"));
+        let ctx = baml_agent::AgentContext::load(dir.to_str().unwrap());
+        assert_eq!(ctx.parts.len(), 2);
+        let msg = ctx.to_system_message().unwrap();
+        assert!(msg.contains("Be direct"));
+        assert!(msg.contains("test-agent"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

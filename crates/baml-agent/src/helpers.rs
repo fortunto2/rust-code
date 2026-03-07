@@ -87,12 +87,7 @@ pub fn truncate_json_array(value: &mut serde_json::Value, key: &str, max: usize)
 /// Checks `agent.md` and `.director/agent.md` in the current directory.
 /// Returns empty string if none found.
 pub fn load_manifesto() -> String {
-    for path in &["agent.md", ".director/agent.md"] {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            return format!("Project Agent Manifesto:\n---\n{}\n---", content);
-        }
-    }
-    String::new()
+    load_manifesto_from(std::path::Path::new("."))
 }
 
 /// Load agent manifesto from a specific directory.
@@ -106,33 +101,103 @@ pub fn load_manifesto_from(dir: &std::path::Path) -> String {
     String::new()
 }
 
-/// Load all `.md` files from a context directory, sorted alphabetically, concatenated.
+/// Agent context loaded from the agent's home directory.
 ///
-/// Each project can have a context dir (e.g. `.rust-code/context/`, `.va-sessions/context/`)
-/// where users place additional instructions as markdown files. These are injected as
-/// system messages alongside the BAML prompt.
+/// ## File convention
 ///
-/// Returns `None` if the directory doesn't exist or contains no `.md` files.
-pub fn load_context_dir(dir: &str) -> Option<String> {
-    let path = std::path::Path::new(dir);
-    if !path.is_dir() { return None; }
+/// Each agent has a home dir (e.g. `.rust-code/`, `.va-sessions/`, `.epiphan/`).
+/// Inside it, markdown files provide layered context:
+///
+/// | File | What | Always loaded |
+/// |------|------|---------------|
+/// | `SOUL.md` | Who the agent is: values, boundaries, tone | yes |
+/// | `MANIFESTO.md` | Dev principles: harness, SGR, TDD, anti-patterns | yes |
+/// | `IDENTITY.md` | Name, role, stack, domain | yes |
+/// | `RULES.md` | Coding rules, workflow, constraints | yes |
+/// | `MEMORY.md` | Cross-session learnings, preferences | yes |
+/// | `context/*.md` | User-extensible extras (any name) | yes |
+///
+/// All files are optional. Missing files are silently skipped.
+/// Files are combined into system messages at agent init.
+#[derive(Debug, Default)]
+pub struct AgentContext {
+    /// Combined context text for system message injection.
+    pub parts: Vec<(String, String)>, // (label, content)
+}
 
-    let mut entries: Vec<_> = std::fs::read_dir(path).ok()?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
+impl AgentContext {
+    /// Load context from an agent home directory.
+    pub fn load(home_dir: &str) -> Self {
+        let dir = std::path::Path::new(home_dir);
+        let mut ctx = Self::default();
 
-    let mut parts = Vec::new();
-    for entry in entries {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-            if !content.trim().is_empty() {
-                parts.push(content);
+        // Known files in priority order
+        const KNOWN_FILES: &[(&str, &str)] = &[
+            ("SOUL.md", "Soul"),
+            ("IDENTITY.md", "Identity"),
+            ("MANIFESTO.md", "Manifesto"),
+            ("RULES.md", "Rules"),
+            ("MEMORY.md", "Memory"),
+        ];
+
+        for (filename, label) in KNOWN_FILES {
+            let path = dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if !content.trim().is_empty() {
+                    ctx.parts.push((label.to_string(), content));
+                }
             }
         }
+
+        // Extra context files from context/ subdir
+        let ctx_dir = dir.join("context");
+        if ctx_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&ctx_dir) {
+                let mut extras: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+                    .collect();
+                extras.sort_by_key(|e| e.file_name());
+
+                for entry in extras {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if !content.trim().is_empty() {
+                            let label = entry.path()
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("context")
+                                .to_string();
+                            ctx.parts.push((label, content));
+                        }
+                    }
+                }
+            }
+        }
+
+        ctx
     }
 
-    if parts.is_empty() { None } else { Some(parts.join("\n\n---\n\n")) }
+    /// Whether any context was found.
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+
+    /// Combine all parts into a single string for system message injection.
+    pub fn to_system_message(&self) -> Option<String> {
+        if self.parts.is_empty() { return None; }
+        let sections: Vec<String> = self.parts.iter()
+            .map(|(label, content)| format!("## {}\n{}", label, content.trim()))
+            .collect();
+        Some(sections.join("\n\n"))
+    }
+}
+
+/// Load all `.md` files from a directory (flat, no convention).
+///
+/// Simpler alternative to [`AgentContext`] when you just need raw file concat.
+pub fn load_context_dir(dir: &str) -> Option<String> {
+    let ctx = AgentContext::load(dir);
+    ctx.to_system_message()
 }
 
 #[cfg(test)]
@@ -203,32 +268,59 @@ mod tests {
 
     #[test]
     fn load_manifesto_returns_empty_when_not_found() {
-        // In test context, CWD is unlikely to have agent.md
         let m = load_manifesto_from(std::path::Path::new("/nonexistent"));
         assert!(m.is_empty());
     }
 
     #[test]
-    fn load_context_dir_combines_files() {
-        let dir = std::env::temp_dir().join("baml_test_ctx_dir");
+    fn agent_context_loads_known_files() {
+        let dir = std::env::temp_dir().join("baml_test_agent_ctx");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("01-rules.md"), "# Rules\nBe concise.").unwrap();
-        std::fs::write(dir.join("02-persona.md"), "# Persona\nExpert coder.").unwrap();
-        std::fs::write(dir.join("ignore.txt"), "not loaded").unwrap();
+        std::fs::write(dir.join("SOUL.md"), "Be direct and honest.").unwrap();
+        std::fs::write(dir.join("IDENTITY.md"), "Name: rust-code\nRole: coding agent").unwrap();
+        std::fs::write(dir.join("MANIFESTO.md"), "TDD first. Ship > perfect.").unwrap();
 
-        let ctx = load_context_dir(dir.to_str().unwrap()).unwrap();
-        assert!(ctx.contains("Be concise"));
-        assert!(ctx.contains("Expert coder"));
-        assert!(!ctx.contains("not loaded"));
-        // Files joined with separator
-        assert!(ctx.contains("---"));
+        let ctx = AgentContext::load(dir.to_str().unwrap());
+        assert_eq!(ctx.parts.len(), 3);
+        assert_eq!(ctx.parts[0].0, "Soul");
+        assert_eq!(ctx.parts[1].0, "Identity");
+        assert_eq!(ctx.parts[2].0, "Manifesto");
+
+        let msg = ctx.to_system_message().unwrap();
+        assert!(msg.contains("Be direct"));
+        assert!(msg.contains("rust-code"));
+        assert!(msg.contains("TDD first"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn load_context_dir_none_when_missing() {
-        assert!(load_context_dir("/nonexistent/path").is_none());
+    fn agent_context_loads_extras_from_context_dir() {
+        let dir = std::env::temp_dir().join("baml_test_agent_ctx_extras");
+        let _ = std::fs::remove_dir_all(&dir);
+        let ctx_dir = dir.join("context");
+        std::fs::create_dir_all(&ctx_dir).unwrap();
+        std::fs::write(dir.join("RULES.md"), "Validate at boundaries.").unwrap();
+        std::fs::write(ctx_dir.join("stacks.md"), "Rust + Tokio").unwrap();
+        std::fs::write(ctx_dir.join("ignore.txt"), "not loaded").unwrap();
+
+        let ctx = AgentContext::load(dir.to_str().unwrap());
+        assert_eq!(ctx.parts.len(), 2); // RULES + stacks
+        assert_eq!(ctx.parts[1].0, "stacks");
+
+        let msg = ctx.to_system_message().unwrap();
+        assert!(msg.contains("Validate at boundaries"));
+        assert!(msg.contains("Rust + Tokio"));
+        assert!(!msg.contains("not loaded"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_context_empty_when_no_dir() {
+        let ctx = AgentContext::load("/nonexistent/path");
+        assert!(ctx.is_empty());
+        assert!(ctx.to_system_message().is_none());
     }
 }
