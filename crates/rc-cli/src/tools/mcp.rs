@@ -64,7 +64,9 @@ impl McpManager {
             merged.extend(cfg.mcp_servers);
         }
 
-        McpConfig { mcp_servers: merged }
+        McpConfig {
+            mcp_servers: merged,
+        }
     }
 
     /// Start all configured servers. Failures are logged, not fatal.
@@ -93,25 +95,33 @@ impl McpManager {
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<CallToolResult> {
-        let server = self.servers.iter()
+        let server = self
+            .servers
+            .iter()
             .find(|s| s.name == server_name)
             .ok_or_else(|| anyhow!("MCP server '{}' not connected", server_name))?;
 
-        let result = server.service.call_tool(CallToolRequestParam {
-            name: tool_name.to_string().into(),
-            arguments,
-        }).await?;
+        let result = server
+            .service
+            .call_tool(CallToolRequestParam {
+                name: tool_name.to_string().into(),
+                arguments,
+            })
+            .await?;
 
         Ok(result)
     }
 
     /// All tools across all connected servers.
     pub fn all_tools(&self) -> Vec<McpTool> {
-        self.servers.iter()
-            .flat_map(|s| s.tools.iter().map(|t| McpTool {
-                server_name: s.name.clone(),
-                tool: t.clone(),
-            }))
+        self.servers
+            .iter()
+            .flat_map(|s| {
+                s.tools.iter().map(|t| McpTool {
+                    server_name: s.name.clone(),
+                    tool: t.clone(),
+                })
+            })
             .collect()
     }
 
@@ -122,7 +132,9 @@ impl McpManager {
             return None;
         }
 
-        let mut ctx = String::from("## MCP Tools\n\nUse McpToolCall to call these. Specify server, tool, and arguments as JSON.\n\n");
+        let mut ctx = String::from(
+            "## MCP Tools\n\nUse McpToolCall to call these. Specify server, tool, and arguments as JSON.\n\n",
+        );
 
         let mut by_server: HashMap<&str, Vec<&McpTool>> = HashMap::new();
         for tool in &tools {
@@ -130,7 +142,11 @@ impl McpManager {
         }
 
         for (server, server_tools) in &by_server {
-            ctx.push_str(&format!("### {} ({} tools)\n\n", server, server_tools.len()));
+            ctx.push_str(&format!(
+                "### {} ({} tools)\n\n",
+                server,
+                server_tools.len()
+            ));
             for t in server_tools {
                 ctx.push_str(&format!("- **{}**", t.tool.name));
                 if let Some(desc) = &t.tool.description {
@@ -153,9 +169,15 @@ impl McpManager {
         }
     }
 
-    pub fn server_count(&self) -> usize { self.servers.len() }
-    pub fn tool_count(&self) -> usize { self.servers.iter().map(|s| s.tools.len()).sum() }
-    pub fn server_names(&self) -> Vec<&str> { self.servers.iter().map(|s| s.name.as_str()).collect() }
+    pub fn server_count(&self) -> usize {
+        self.servers.len()
+    }
+    pub fn tool_count(&self) -> usize {
+        self.servers.iter().map(|s| s.tools.len()).sum()
+    }
+    pub fn server_names(&self) -> Vec<&str> {
+        self.servers.iter().map(|s| s.name.as_str()).collect()
+    }
 
     // --- Private ---
 
@@ -174,7 +196,11 @@ impl McpManager {
         let service: McpService = ().serve(transport).await?;
         let tools = service.list_tools(Default::default()).await?.tools;
 
-        Ok(McpServer { name: name.to_string(), service, tools })
+        Ok(McpServer {
+            name: name.to_string(),
+            service,
+            tools,
+        })
     }
 }
 
@@ -190,10 +216,19 @@ pub fn format_tool_result(result: &CallToolResult) -> String {
     let mut output = String::new();
     for content in &result.content {
         match &content.raw {
-            RawContent::Text(text) => { output.push_str(&text.text); output.push('\n'); }
-            RawContent::Image(img) => { output.push_str(&format!("[Image: {} bytes]\n", img.data.len())); }
-            RawContent::Audio(audio) => { output.push_str(&format!("[Audio: {} bytes]\n", audio.data.len())); }
-            _ => { output.push_str("[Unsupported content type]\n"); }
+            RawContent::Text(text) => {
+                output.push_str(&text.text);
+                output.push('\n');
+            }
+            RawContent::Image(img) => {
+                output.push_str(&format!("[Image: {} bytes]\n", img.data.len()));
+            }
+            RawContent::Audio(audio) => {
+                output.push_str(&format!("[Audio: {} bytes]\n", audio.data.len()));
+            }
+            _ => {
+                output.push_str("[Unsupported content type]\n");
+            }
         }
     }
     if result.is_error.unwrap_or(false) {

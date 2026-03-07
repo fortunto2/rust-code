@@ -1,14 +1,14 @@
-pub mod tui;
-pub mod app;
-pub mod preview;
 pub mod agent;
-pub mod tools;
+pub mod app;
 pub mod baml_client;
+pub mod preview;
+pub mod tools;
+pub mod tui;
 
-use anyhow::Result;
-use clap::{Parser, Subcommand};
 use crate::agent::Agent;
+use anyhow::Result;
 use baml_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -167,15 +167,13 @@ async fn run_skills_command(action: SkillsAction) -> Result<()> {
                 }
             }
         }
-        SkillsAction::Remove { name } => {
-            match tools::remove_skill(&name) {
-                Ok(()) => println!("Removed skill '{}'.", name),
-                Err(e) => {
-                    eprintln!("Failed to remove '{}': {}", name, e);
-                    std::process::exit(1);
-                }
+        SkillsAction::Remove { name } => match tools::remove_skill(&name) {
+            Ok(()) => println!("Removed skill '{}'.", name),
+            Err(e) => {
+                eprintln!("Failed to remove '{}': {}", name, e);
+                std::process::exit(1);
             }
-        }
+        },
         SkillsAction::Show { name, brief } => {
             match if brief {
                 tools::read_skill_content(&name)
@@ -216,7 +214,10 @@ async fn run_skills_command(action: SkillsAction) -> Result<()> {
             } else if !remote.is_empty() {
                 println!("Remote results ({}):\n", remote.len());
                 for entry in &remote {
-                    println!("  {} ({})  {} installs", entry.name, entry.repo, entry.installs);
+                    println!(
+                        "  {} ({})  {} installs",
+                        entry.name, entry.repo, entry.installs
+                    );
                 }
                 println!("\nInstall: rust-code skills add <owner/repo/skill-name>");
             }
@@ -256,11 +257,18 @@ async fn run_skills_command(action: SkillsAction) -> Result<()> {
             } else {
                 println!("Skills catalog ({} skills):\n", filtered.len());
                 for (i, entry) in filtered.iter().enumerate().take(50) {
-                    let trend = entry.trending_rank
+                    let trend = entry
+                        .trending_rank
                         .map(|r| format!(" 🔥#{}", r + 1))
                         .unwrap_or_default();
-                    print!("  {:>3}. {} ({})  {} installs{}",
-                        i + 1, entry.name, entry.repo, entry.installs, trend);
+                    print!(
+                        "  {:>3}. {} ({})  {} installs{}",
+                        i + 1,
+                        entry.name,
+                        entry.repo,
+                        entry.installs,
+                        trend
+                    );
                     if let Some(desc) = &entry.description {
                         print!("\n       {}", desc);
                     }
@@ -313,8 +321,11 @@ async fn run_mcp_command(action: McpAction) -> Result<()> {
                 return Ok(());
             }
 
-            println!("Connected to {} server(s), {} total tools:\n",
-                manager.server_count(), manager.tool_count());
+            println!(
+                "Connected to {} server(s), {} total tools:\n",
+                manager.server_count(),
+                manager.tool_count()
+            );
 
             for tool in manager.all_tools() {
                 print!("  [{}] {}", tool.server_name, tool.tool.name);
@@ -406,13 +417,30 @@ async fn run_doctor(fix: bool) -> Result<()> {
             Ok(o) if o.status.success() => {
                 let ver = String::from_utf8_lossy(&o.stdout);
                 let ver_line = ver.lines().next().unwrap_or("ok");
-                let tag = if check.required { "required" } else { "optional" };
-                println!("  \x1b[32m✓\x1b[0m {} — {} [{}]", check.name, ver_line.trim(), tag);
+                let tag = if check.required {
+                    "required"
+                } else {
+                    "optional"
+                };
+                println!(
+                    "  \x1b[32m✓\x1b[0m {} — {} [{}]",
+                    check.name,
+                    ver_line.trim(),
+                    tag
+                );
                 ok_count += 1;
             }
             _ => {
-                let tag = if check.required { "\x1b[31m✗\x1b[0m" } else { "\x1b[33m-\x1b[0m" };
-                let install = if is_mac { check.install_brew } else { check.install_other };
+                let tag = if check.required {
+                    "\x1b[31m✗\x1b[0m"
+                } else {
+                    "\x1b[33m-\x1b[0m"
+                };
+                let install = if is_mac {
+                    check.install_brew
+                } else {
+                    check.install_other
+                };
                 println!("  {} {} — missing [fix: {}]", tag, check.name, install);
                 missing.push((check.name, install.to_string()));
             }
@@ -428,7 +456,10 @@ async fn run_doctor(fix: bool) -> Result<()> {
     let mcp_local = std::path::Path::new(".mcp.json");
     if mcp_global.exists() || mcp_local.exists() {
         let config = tools::mcp::McpManager::load_configs();
-        println!("  \x1b[32m✓\x1b[0m .mcp.json — {} server(s) configured", config.mcp_servers.len());
+        println!(
+            "  \x1b[32m✓\x1b[0m .mcp.json — {} server(s) configured",
+            config.mcp_servers.len()
+        );
     } else {
         println!("  \x1b[33m-\x1b[0m .mcp.json — not found (optional, for MCP tools)");
     }
@@ -448,8 +479,12 @@ async fn run_doctor(fix: bool) -> Result<()> {
     }
 
     // Summary
-    println!("\n{}/{} checks passed, {} missing\n",
-        ok_count, checks.len(), missing.len());
+    println!(
+        "\n{}/{} checks passed, {} missing\n",
+        ok_count,
+        checks.len(),
+        missing.len()
+    );
 
     if missing.is_empty() {
         println!("\x1b[32mAll good!\x1b[0m rust-code is ready.");
@@ -463,7 +498,10 @@ async fn run_doctor(fix: bool) -> Result<()> {
             let status = Cmd::new("sh").arg("-c").arg(cmd).status();
             match status {
                 Ok(s) if s.success() => println!("    \x1b[32m✓\x1b[0m installed"),
-                Ok(s) => println!("    \x1b[31m✗\x1b[0m failed (exit {})", s.code().unwrap_or(-1)),
+                Ok(s) => println!(
+                    "    \x1b[31m✗\x1b[0m failed (exit {})",
+                    s.code().unwrap_or(-1)
+                ),
                 Err(e) => println!("    \x1b[31m✗\x1b[0m error: {}", e),
             }
         }
@@ -486,7 +524,10 @@ fn run_sessions_command(query: Option<String>) -> Result<()> {
             return Ok(());
         }
         println!("Sessions matching '{}' ({}):\n", q, matches.len());
-        matches.into_iter().map(|(score, m)| (Some(score), m)).collect::<Vec<_>>()
+        matches
+            .into_iter()
+            .map(|(score, m)| (Some(score), m))
+            .collect::<Vec<_>>()
     } else {
         let all = baml_agent::list_sessions(".rust-code");
         if all.is_empty() {
@@ -511,11 +552,21 @@ fn run_sessions_command(query: Option<String>) -> Result<()> {
             format!("{}d ago", age / 86400)
         };
 
-        let topic = if meta.topic.is_empty() { "(no topic)" } else { &meta.topic };
-        if let Some(s) = score {
-            println!("  \x1b[1m{}\x1b[0m  [score:{}] {} msgs, {}", topic, s, meta.message_count, age_str);
+        let topic = if meta.topic.is_empty() {
+            "(no topic)"
         } else {
-            println!("  \x1b[1m{}\x1b[0m  {} msgs, {}", topic, meta.message_count, age_str);
+            &meta.topic
+        };
+        if let Some(s) = score {
+            println!(
+                "  \x1b[1m{}\x1b[0m  [score:{}] {} msgs, {}",
+                topic, s, meta.message_count, age_str
+            );
+        } else {
+            println!(
+                "  \x1b[1m{}\x1b[0m  {} msgs, {}",
+                topic, meta.message_count, age_str
+            );
         }
         println!("    {}", meta.path.display());
     }
@@ -574,7 +625,10 @@ async fn main() -> Result<()> {
         }
         agent.add_user_message(&prompt);
 
-        let config = LoopConfig { max_steps: 50, loop_abort_threshold: 6 };
+        let config = LoopConfig {
+            max_steps: 50,
+            loop_abort_threshold: 6,
+        };
 
         // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
         let mut session = std::mem::replace(
@@ -583,49 +637,51 @@ async fn main() -> Result<()> {
         );
 
         use std::io::Write as _;
-        let result = run_loop_stream(&agent, &mut session, &config, |event| {
-            match event {
-                LoopEvent::StepStart(n) => {
-                    print!("\n[Step {}] Thinking...", n);
-                    std::io::stdout().flush().ok();
-                }
-                LoopEvent::Decision { situation, task } => {
-                    print!("\r\x1b[K");
-                    println!("\x1b[2mSituation:\x1b[0m {}", situation);
-                    if !task.is_empty() {
-                        println!("Task:");
-                        for t in task {
-                            println!(" - {}", t);
-                        }
+        let result = run_loop_stream(&agent, &mut session, &config, |event| match event {
+            LoopEvent::StepStart(n) => {
+                print!("\n[Step {}] Thinking...", n);
+                std::io::stdout().flush().ok();
+            }
+            LoopEvent::Decision { situation, task } => {
+                print!("\r\x1b[K");
+                println!("\x1b[2mSituation:\x1b[0m {}", situation);
+                if !task.is_empty() {
+                    println!("Task:");
+                    for t in task {
+                        println!(" - {}", t);
                     }
                 }
-                LoopEvent::Completed => {
-                    println!("\n[DONE] Task completed.");
-                }
-                LoopEvent::ActionStart(action) => {
-                    println!("\nAction: {}", Agent::action_signature(action));
-                }
-                LoopEvent::ActionDone(result) => {
-                    println!("\nTool Result:\n{}", result.output);
-                }
-                LoopEvent::LoopWarning(n) => {
-                    println!("[WARN] Loop detected — {} repeats", n);
-                }
-                LoopEvent::LoopAbort(n) => {
-                    eprintln!("[ERR] Agent stuck in loop after {} identical actions — aborting", n);
-                }
-                LoopEvent::Trimmed(n) => {
-                    println!("[TRIM] Removed {} messages", n);
-                }
-                LoopEvent::MaxStepsReached(n) => {
-                    eprintln!("[ERR] Max steps ({}) reached", n);
-                }
-                LoopEvent::StreamToken(token) => {
-                    print!("{}", token);
-                    std::io::stdout().flush().ok();
-                }
             }
-        }).await;
+            LoopEvent::Completed => {
+                println!("\n[DONE] Task completed.");
+            }
+            LoopEvent::ActionStart(action) => {
+                println!("\nAction: {}", Agent::action_signature(action));
+            }
+            LoopEvent::ActionDone(result) => {
+                println!("\nTool Result:\n{}", result.output);
+            }
+            LoopEvent::LoopWarning(n) => {
+                println!("[WARN] Loop detected — {} repeats", n);
+            }
+            LoopEvent::LoopAbort(n) => {
+                eprintln!(
+                    "[ERR] Agent stuck in loop after {} identical actions — aborting",
+                    n
+                );
+            }
+            LoopEvent::Trimmed(n) => {
+                println!("[TRIM] Removed {} messages", n);
+            }
+            LoopEvent::MaxStepsReached(n) => {
+                eprintln!("[ERR] Max steps ({}) reached", n);
+            }
+            LoopEvent::StreamToken(token) => {
+                print!("{}", token);
+                std::io::stdout().flush().ok();
+            }
+        })
+        .await;
 
         // Restore session
         *agent.session_mut() = session;
@@ -638,7 +694,13 @@ async fn main() -> Result<()> {
         let mut terminal = tui::init()?;
         let mut app = app::App::new();
 
-        let result = app.run(&mut terminal, args.resume.as_deref(), args.session.as_deref()).await;
+        let result = app
+            .run(
+                &mut terminal,
+                args.resume.as_deref(),
+                args.session.as_deref(),
+            )
+            .await;
 
         tui::restore()?;
 

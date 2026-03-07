@@ -1,6 +1,6 @@
 use baml_agent::{
-    SgrAgentStream, Session, AgentMessage, MessageRole,
-    LoopConfig, LoopEvent, LoopDetector, process_step,
+    process_step, AgentMessage, LoopConfig, LoopDetector, LoopEvent, MessageRole, Session,
+    SgrAgentStream,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -12,7 +12,10 @@ pub enum AgentTaskEvent {
     /// Streaming text chunk from LLM.
     StreamChunk(String),
     /// LLM decision: situation + task (STAR).
-    Decision { situation: String, task: Vec<String> },
+    Decision {
+        situation: String,
+        task: Vec<String>,
+    },
     /// About to execute an action (human-readable label).
     ActionStart(String),
     /// Action executed, result output.
@@ -141,9 +144,10 @@ where
                         format!("User note while task is running:\n{}", note),
                     );
                 }
-                handler.on_event(AgentTaskEvent::Warning(
-                    format!("[NOTE] {} queued note(s) injected", notes.len()),
-                ));
+                handler.on_event(AgentTaskEvent::Warning(format!(
+                    "[NOTE] {} queued note(s) injected",
+                    notes.len()
+                )));
             }
         }
 
@@ -167,9 +171,12 @@ where
         };
 
         // --- Stream LLM decision ---
-        let decision = agent.decide_stream(&messages, |token| {
-            handler.on_event(AgentTaskEvent::StreamChunk(token.to_string()));
-        }).await.map_err(|e| format!("{}", e))?;
+        let decision = agent
+            .decide_stream(&messages, |token| {
+                handler.on_event(AgentTaskEvent::StreamChunk(token.to_string()));
+            })
+            .await
+            .map_err(|e| format!("{}", e))?;
 
         // --- Process step (session LOCKED during execution) ---
         let mut sess = session.lock().await;
@@ -196,37 +203,49 @@ where
                     handler.on_event(AgentTaskEvent::ActionDone(result.output.clone()));
                 }
                 LoopEvent::LoopWarning(n) => {
-                    handler.on_event(AgentTaskEvent::Warning(
-                        format!("Loop detected — {} repeats", n),
-                    ));
+                    handler.on_event(AgentTaskEvent::Warning(format!(
+                        "Loop detected — {} repeats",
+                        n
+                    )));
                 }
                 LoopEvent::LoopAbort(n) => {
-                    handler.on_event(AgentTaskEvent::Error(
-                        format!("Agent stuck after {} identical actions — aborting", n),
-                    ));
+                    handler.on_event(AgentTaskEvent::Error(format!(
+                        "Agent stuck after {} identical actions — aborting",
+                        n
+                    )));
                 }
                 LoopEvent::Trimmed(n) => {
                     handler.on_event(AgentTaskEvent::Trimmed(n));
                 }
                 LoopEvent::MaxStepsReached(n) => {
-                    handler.on_event(AgentTaskEvent::Warning(
-                        format!("Max steps ({}) reached", n),
-                    ));
+                    handler.on_event(AgentTaskEvent::Warning(format!(
+                        "Max steps ({}) reached",
+                        n
+                    )));
                 }
-                LoopEvent::StepStart(_) => {} // handled above
+                LoopEvent::StepStart(_) => {}   // handled above
                 LoopEvent::StreamToken(_) => {} // handled above via decide_stream
             }
         };
 
         if let Some(final_step) = process_step(
-            agent, &mut sess, decision, step_num, &mut detector, &mut on_event,
-        ).await.map_err(|e| format!("{}", e))? {
+            agent,
+            &mut sess,
+            decision,
+            step_num,
+            &mut detector,
+            &mut on_event,
+        )
+        .await
+        .map_err(|e| format!("{}", e))?
+        {
             return Ok(final_step);
         }
     }
 
-    handler.on_event(AgentTaskEvent::Warning(
-        format!("Max steps ({}) reached", config.max_steps),
-    ));
+    handler.on_event(AgentTaskEvent::Warning(format!(
+        "Max steps ({}) reached",
+        config.max_steps
+    )));
     Ok(config.max_steps)
 }

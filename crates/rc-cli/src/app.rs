@@ -9,10 +9,10 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tui_textarea::{Input, TextArea};
 
-use crate::agent::{Agent, Action};
+use crate::agent::{Action, Agent};
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
-use baml_agent::{SgrAgent, LoopDetector, LoopStatus};
+use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
 
 #[derive(PartialEq)]
 pub enum AppMode {
@@ -379,7 +379,10 @@ impl<'a> BgTasksState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            use nucleo_matcher::{
+                Utf32Str,
+                pattern::{CaseMatching, Normalization, Pattern},
+            };
             let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
             let mut scored: Vec<(u32, BgTaskItem)> = self
                 .all_items
@@ -522,23 +525,30 @@ impl<'a> SkillsState<'a> {
             self.filtered_items = self.all_items.clone();
         } else {
             // Fuzzy search against name + description using nucleo
-            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            use nucleo_matcher::{
+                Utf32Str,
+                pattern::{CaseMatching, Normalization, Pattern},
+            };
             let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
 
             let mut scored: Vec<(u32, SkillEntry)> = self
                 .all_items
                 .iter()
                 .filter_map(|s| {
-                    let name_score = pattern.score(
-                        Utf32Str::Ascii(s.name.as_bytes()),
-                        &mut self.searcher.matcher,
-                    ).unwrap_or(0);
+                    let name_score = pattern
+                        .score(
+                            Utf32Str::Ascii(s.name.as_bytes()),
+                            &mut self.searcher.matcher,
+                        )
+                        .unwrap_or(0);
 
                     let haystack = format!("{} {}", s.name, s.source);
-                    let full_score = pattern.score(
-                        Utf32Str::Ascii(haystack.as_bytes()),
-                        &mut self.searcher.matcher,
-                    ).unwrap_or(0);
+                    let full_score = pattern
+                        .score(
+                            Utf32Str::Ascii(haystack.as_bytes()),
+                            &mut self.searcher.matcher,
+                        )
+                        .unwrap_or(0);
 
                     let best = name_score.max(full_score);
                     if best > 0 {
@@ -611,16 +621,17 @@ impl<'a> GitHistoryState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            use nucleo_matcher::{Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+            use nucleo_matcher::{
+                Utf32Str,
+                pattern::{CaseMatching, Normalization, Pattern},
+            };
             let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
             let mut scored: Vec<(u32, String)> = self
                 .all_items
                 .iter()
                 .filter_map(|item| {
-                    let score = pattern.score(
-                        Utf32Str::Ascii(item.as_bytes()),
-                        &mut self.searcher.matcher,
-                    )?;
+                    let score = pattern
+                        .score(Utf32Str::Ascii(item.as_bytes()), &mut self.searcher.matcher)?;
                     Some((score, item.clone()))
                 })
                 .collect();
@@ -690,21 +701,21 @@ pub struct UiRegions {
 // Context map: tracks what fills the agent context window
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ContextCategory {
-    System,   // Skills, MCP tools context
-    User,     // User messages
-    Assistant,// Analysis, plans
-    Tool,     // Tool results, file contents
-    Thinking, // [THINK] messages
+    System,    // Skills, MCP tools context
+    User,      // User messages
+    Assistant, // Analysis, plans
+    Tool,      // Tool results, file contents
+    Thinking,  // [THINK] messages
 }
 
 impl ContextCategory {
     fn color(self) -> Color {
         match self {
-            ContextCategory::System => Color::Rgb(130, 80, 220),   // Purple
-            ContextCategory::User => Color::Rgb(100, 200, 255),    // Blue
+            ContextCategory::System => Color::Rgb(130, 80, 220), // Purple
+            ContextCategory::User => Color::Rgb(100, 200, 255),  // Blue
             ContextCategory::Assistant => Color::Rgb(200, 200, 200), // Gray
-            ContextCategory::Tool => Color::Rgb(100, 200, 100),    // Green
-            ContextCategory::Thinking => Color::Rgb(80, 80, 80),   // Dark
+            ContextCategory::Tool => Color::Rgb(100, 200, 100),  // Green
+            ContextCategory::Thinking => Color::Rgb(80, 80, 80), // Dark
         }
     }
 }
@@ -721,7 +732,9 @@ pub struct ContextMap {
 
 impl ContextMap {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn total_chars(&self) -> usize {
@@ -729,7 +742,11 @@ impl ContextMap {
     }
 
     pub fn category_chars(&self, cat: ContextCategory) -> usize {
-        self.entries.iter().filter(|e| e.category == cat).map(|e| e.chars).sum()
+        self.entries
+            .iter()
+            .filter(|e| e.category == cat)
+            .map(|e| e.chars)
+            .sum()
     }
 
     /// Rebuild from display messages.
@@ -753,10 +770,14 @@ impl ContextMap {
             ContextCategory::Assistant
         } else if msg.starts_with("[THINK]") {
             ContextCategory::Thinking
-        } else if msg.starts_with("[TOOL]") || msg.starts_with("Tool result:")
-            || msg.starts_with("MCP [") || msg.starts_with("File contents of")
-            || msg.starts_with("Command output:") || msg.starts_with("Successfully")
-            || msg.starts_with("Git ") || msg.starts_with("Content search")
+        } else if msg.starts_with("[TOOL]")
+            || msg.starts_with("Tool result:")
+            || msg.starts_with("MCP [")
+            || msg.starts_with("File contents of")
+            || msg.starts_with("Command output:")
+            || msg.starts_with("Successfully")
+            || msg.starts_with("Git ")
+            || msg.starts_with("Content search")
         {
             ContextCategory::Tool
         } else {
@@ -831,7 +852,12 @@ impl<'a> App<'a> {
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut crate::tui::Tui, resume: Option<&str>, session: Option<&str>) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        terminal: &mut crate::tui::Tui,
+        resume: Option<&str>,
+        session: Option<&str>,
+    ) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(100);
 
         // Share the agent so the background worker can use it
@@ -1355,7 +1381,12 @@ impl<'a> App<'a> {
                     5 => format!(" ({})", self.bg_tasks.filtered_items.len()),
                     6 => format!(" ({})", self.bash_history_state.all_items.len()),
                     7 => {
-                        let installed = self.skills_state.all_items.iter().filter(|s| s.installed).count();
+                        let installed = self
+                            .skills_state
+                            .all_items
+                            .iter()
+                            .filter(|s| s.installed)
+                            .count();
                         let total = self.skills_state.all_items.len();
                         format!(" ({}/{})", installed, total)
                     }
@@ -1399,7 +1430,9 @@ impl<'a> App<'a> {
             for entry in &ctx.entries {
                 let n = ((entry.chars as f64 / total as f64) * grid_cells as f64).round() as usize;
                 for _ in 0..n.max(1) {
-                    if cells.len() >= grid_cells { break; }
+                    if cells.len() >= grid_cells {
+                        break;
+                    }
                     cells.push(entry.category);
                 }
             }
@@ -1413,9 +1446,10 @@ impl<'a> App<'a> {
             cells.truncate(grid_cells);
 
             for row in cells.chunks(inner_w.max(1)) {
-                let spans: Vec<Span> = row.iter().map(|cat| {
-                    Span::styled("▄", Style::default().fg(cat.color()))
-                }).collect();
+                let spans: Vec<Span> = row
+                    .iter()
+                    .map(|cat| Span::styled("▄", Style::default().fg(cat.color())))
+                    .collect();
                 ctx_lines.push(Line::from(spans));
             }
         }
@@ -1458,7 +1492,11 @@ impl<'a> App<'a> {
             self.symbols_state.all_items.len(),
             self.bg_tasks.filtered_items.len(),
             self.bash_history_state.all_items.len(),
-            self.skills_state.all_items.iter().filter(|s| s.installed).count(),
+            self.skills_state
+                .all_items
+                .iter()
+                .filter(|s| s.installed)
+                .count(),
             self.skills_state.all_items.len()
         );
         frame.render_widget(
@@ -1500,7 +1538,9 @@ impl<'a> App<'a> {
         frame.render_widget(Clear, popup_area);
 
         let popup_block = Block::default()
-            .title(" BG Tasks (Esc close, Enter refresh, Ctrl+O attach, Ctrl+K kill, Ctrl+I insert) ")
+            .title(
+                " BG Tasks (Esc close, Enter refresh, Ctrl+O attach, Ctrl+K kill, Ctrl+I insert) ",
+            )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(popup_block, popup_area);
@@ -2200,7 +2240,9 @@ impl<'a> App<'a> {
             for line in stdout.lines().take(20) {
                 let cleaned = line.trim().trim_start_matches('*').trim();
                 if !cleaned.is_empty() {
-                    self.git_history.all_items.push(format!("branch: {}", cleaned));
+                    self.git_history
+                        .all_items
+                        .push(format!("branch: {}", cleaned));
                 }
             }
         }
@@ -2390,8 +2432,11 @@ impl<'a> App<'a> {
         // 1. List rc-bg windows (agent-spawned tasks) — show first
         if let Ok(output) = std::process::Command::new("tmux")
             .args([
-                "list-windows", "-t", "rc-bg",
-                "-F", "#{window_name}|#{pane_current_command}|#{pane_dead}",
+                "list-windows",
+                "-t",
+                "rc-bg",
+                "-F",
+                "#{window_name}|#{pane_current_command}|#{pane_dead}",
             ])
             .output()
         {
@@ -2429,8 +2474,14 @@ impl<'a> App<'a> {
                 let parts: Vec<&str> = line.split('|').collect();
                 if parts.len() >= 3 {
                     let name = parts[0];
-                    if name == "rc-bg" { continue; } // already listed above
-                    let attached = if parts[1] == "1" { "attached" } else { "detached" };
+                    if name == "rc-bg" {
+                        continue;
+                    } // already listed above
+                    let attached = if parts[1] == "1" {
+                        "attached"
+                    } else {
+                        "detached"
+                    };
                     let title = format!("{} [{}] ({} win)", name, attached, parts[2]);
                     self.bg_tasks.all_items.push(BgTaskItem {
                         id: name.to_string(),
@@ -3042,7 +3093,9 @@ impl<'a> App<'a> {
                 }
                 self.refresh_bg_tasks();
             }
-            KeyCode::Delete | KeyCode::Backspace if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Delete | KeyCode::Backspace
+                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 // Alt kill binding
                 if let Some(selected) = self.bg_tasks.list_state.selected() {
                     if let Some(item) = self.bg_tasks.filtered_items.get(selected) {
@@ -3200,7 +3253,9 @@ impl<'a> App<'a> {
                         tokio::spawn(async move {
                             let msg = match tools::install_skill(&install_repo).await {
                                 Ok(output) => format!("[SKILL] ✓ {}", output),
-                                Err(e) => format!("[ERR] Failed to install '{}': {}", skill_name, e),
+                                Err(e) => {
+                                    format!("[ERR] Failed to install '{}': {}", skill_name, e)
+                                }
                             };
                             let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
                             let _ = tx_clone.send(AppEvent::RefreshSkills).await;
@@ -3218,10 +3273,8 @@ impl<'a> App<'a> {
                         if skill.installed {
                             self.textarea.insert_str(&format!("skill:{} ", skill.name));
                         } else if !skill.repo.is_empty() {
-                            self.textarea.insert_str(&format!(
-                                "{}/{} ",
-                                skill.repo, skill.name
-                            ));
+                            self.textarea
+                                .insert_str(&format!("{}/{} ", skill.repo, skill.name));
                         } else {
                             self.textarea.insert_str(&skill.name);
                             self.textarea.insert_str(" ");
@@ -3246,10 +3299,8 @@ impl<'a> App<'a> {
                 if let Some(selected) = self.skills_state.list_state.selected() {
                     if let Some(skill) = self.skills_state.filtered_items.get(selected).cloned() {
                         if skill.installed {
-                            self.messages.push(format!(
-                                "[THINK] Uninstalling skill: {}...",
-                                skill.name
-                            ));
+                            self.messages
+                                .push(format!("[THINK] Uninstalling skill: {}...", skill.name));
                             let len = self.messages.len();
                             self.list_state.select(Some(len.saturating_sub(1)));
 
@@ -3263,9 +3314,17 @@ impl<'a> App<'a> {
                                 .await;
 
                                 let msg = match &result {
-                                    Ok(Ok(())) => format!("[SKILL] ✓ Uninstalled '{}'", skill_name2),
-                                    Ok(Err(e)) => format!("[ERR] Failed to uninstall '{}': {}", skill_name2, e),
-                                    Err(e) => format!("[ERR] Failed to uninstall '{}': {}", skill_name2, e),
+                                    Ok(Ok(())) => {
+                                        format!("[SKILL] ✓ Uninstalled '{}'", skill_name2)
+                                    }
+                                    Ok(Err(e)) => format!(
+                                        "[ERR] Failed to uninstall '{}': {}",
+                                        skill_name2, e
+                                    ),
+                                    Err(e) => format!(
+                                        "[ERR] Failed to uninstall '{}': {}",
+                                        skill_name2, e
+                                    ),
                                 };
                                 let _ = tx_clone.send(AppEvent::AgentResponse(msg)).await;
                                 let _ = tx_clone.send(AppEvent::RefreshSkills).await;
@@ -3276,7 +3335,8 @@ impl<'a> App<'a> {
             }
             KeyCode::F(5) => {
                 // Force refresh catalog (bypass cache)
-                self.messages.push("[THINK] Refreshing skills catalog...".to_string());
+                self.messages
+                    .push("[THINK] Refreshing skills catalog...".to_string());
                 let _ = tools::refresh_skills_catalog();
                 self.refresh_skills();
                 // Replace THINK message
@@ -4189,8 +4249,14 @@ impl<'a> App<'a> {
                                             Ok(partial_step) => {
                                                 if let Some(ref analysis) = partial_step.situation {
                                                     if analysis.len() > last_analysis_len {
-                                                        let new_text = analysis[last_analysis_len..].to_string();
-                                                        let _ = agent_tx.send(AppEvent::AgentStreamChunk(new_text)).await;
+                                                        let new_text = analysis
+                                                            [last_analysis_len..]
+                                                            .to_string();
+                                                        let _ = agent_tx
+                                                            .send(AppEvent::AgentStreamChunk(
+                                                                new_text,
+                                                            ))
+                                                            .await;
                                                         last_analysis_len = analysis.len();
                                                     }
                                                 }
@@ -4214,7 +4280,9 @@ impl<'a> App<'a> {
                             match step_result {
                                 Ok(step) => {
                                     // Loop detection via shared LoopDetector
-                                    let sig = step.actions.iter()
+                                    let sig = step
+                                        .actions
+                                        .iter()
                                         .map(|a| Agent::action_signature(a))
                                         .collect::<Vec<_>>()
                                         .join("|");
@@ -4226,7 +4294,8 @@ impl<'a> App<'a> {
                                             );
                                             let _ = agent_tx
                                                 .send(AppEvent::AgentResponse(
-                                                    "[ERR] Agent stuck in loop — aborting task".to_string(),
+                                                    "[ERR] Agent stuck in loop — aborting task"
+                                                        .to_string(),
                                                 ))
                                                 .await;
                                             break;
@@ -4236,9 +4305,10 @@ impl<'a> App<'a> {
                                                 "SYSTEM: You are repeating the same action. Try a different approach or report completion."
                                             );
                                             let _ = agent_tx
-                                                .send(AppEvent::AgentResponse(
-                                                    format!("[WARN] Loop detected — {} repeats", n),
-                                                ))
+                                                .send(AppEvent::AgentResponse(format!(
+                                                    "[WARN] Loop detected — {} repeats",
+                                                    n
+                                                )))
                                                 .await;
                                         }
                                         LoopStatus::Ok => {}
@@ -4247,9 +4317,8 @@ impl<'a> App<'a> {
                                     // Replace streaming message with final situation
                                     let situation_str = format!("Situation: {}", step.situation);
 
-                                    let _ = agent_tx
-                                        .send(AppEvent::AgentPlan(step.task.clone()))
-                                        .await;
+                                    let _ =
+                                        agent_tx.send(AppEvent::AgentPlan(step.task.clone())).await;
                                     let _ =
                                         agent_tx.send(AppEvent::AgentResponse(situation_str)).await;
 
@@ -4262,7 +4331,10 @@ impl<'a> App<'a> {
                                     // Execute all actions sequentially
                                     let mut is_done = false;
                                     for action in &step.actions {
-                                        if matches!(action, Action::FinishTaskTool(_) | Action::AskUserTool(_)) {
+                                        if matches!(
+                                            action,
+                                            Action::FinishTaskTool(_) | Action::AskUserTool(_)
+                                        ) {
                                             is_done = true;
                                         }
 
@@ -4270,14 +4342,25 @@ impl<'a> App<'a> {
                                             Ok(result) => {
                                                 if let Action::OpenEditorTool(cmd) = action {
                                                     let _ = agent_tx
-                                                        .send(AppEvent::SuspendAndRun(cmd.path.clone(), cmd.line))
+                                                        .send(AppEvent::SuspendAndRun(
+                                                            cmd.path.clone(),
+                                                            cmd.line,
+                                                        ))
                                                         .await;
                                                 }
                                                 if let Action::EditFileTool(cmd) = action {
-                                                    let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                                    let _ = agent_tx
+                                                        .send(AppEvent::FileModified(
+                                                            cmd.path.clone(),
+                                                        ))
+                                                        .await;
                                                 }
                                                 if let Action::WriteFileTool(cmd) = action {
-                                                    let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                                    let _ = agent_tx
+                                                        .send(AppEvent::FileModified(
+                                                            cmd.path.clone(),
+                                                        ))
+                                                        .await;
                                                 }
 
                                                 locked_agent.add_user_message(format!(
@@ -4292,8 +4375,10 @@ impl<'a> App<'a> {
                                                     .await;
                                             }
                                             Err(e) => {
-                                                locked_agent
-                                                    .add_user_message(format!("Tool error:\n{}", e));
+                                                locked_agent.add_user_message(format!(
+                                                    "Tool error:\n{}",
+                                                    e
+                                                ));
                                                 let _ = agent_tx
                                                     .send(AppEvent::AgentResponse(format!(
                                                         "[ERR] Tool Error\n{}",
@@ -4557,14 +4642,16 @@ impl<'a> App<'a> {
             }
             "/reset" => {
                 self.messages.clear();
-                self.messages.push("Session reset. History cleared.".to_string());
+                self.messages
+                    .push("Session reset. History cleared.".to_string());
                 true
             }
             "/status" => {
                 self.messages.push("> /status".to_string());
                 match crate::tools::git_status() {
                     Ok(Some(status)) => {
-                        let mut result = format!("Branch: {}\nDirty: {}", status.branch, status.dirty);
+                        let mut result =
+                            format!("Branch: {}\nDirty: {}", status.branch, status.dirty);
                         if !status.modified_files.is_empty() {
                             result.push_str("\nModified:");
                             for f in &status.modified_files {
@@ -4578,7 +4665,10 @@ impl<'a> App<'a> {
                             }
                         }
                         if !status.untracked_files.is_empty() {
-                            result.push_str(&format!("\nUntracked: {} files", status.untracked_files.len()));
+                            result.push_str(&format!(
+                                "\nUntracked: {} files",
+                                status.untracked_files.len()
+                            ));
                         }
                         self.messages.push(result);
                     }
@@ -4589,13 +4679,15 @@ impl<'a> App<'a> {
             }
             "/model" => {
                 self.messages.push("> /model".to_string());
-                self.messages.push("Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string());
+                self.messages
+                    .push("Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string());
                 true
             }
             "/skills" => {
                 self.messages.push("> /skills".to_string());
                 if self.installed_skills.is_empty() {
-                    self.messages.push("No skills installed. Use F9 to browse skills.".to_string());
+                    self.messages
+                        .push("No skills installed. Use F9 to browse skills.".to_string());
                 } else {
                     let mut lines = format!("Installed skills ({}):", self.installed_skills.len());
                     for skill in &self.installed_skills {
@@ -4618,7 +4710,10 @@ impl<'a> App<'a> {
             _ => {
                 // Unknown slash command — show hint
                 self.messages.push(format!("> {}", input));
-                self.messages.push(format!("Unknown command: {}. Type /help for available commands.", cmd));
+                self.messages.push(format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    cmd
+                ));
                 true
             }
         }

@@ -47,7 +47,7 @@ impl FuzzySearcher {
     /// Sort a list of files based on a fuzzy search query using nucleo-matcher
     pub fn fuzzy_match_files(&mut self, query: &str, files: &[String]) -> Vec<(u32, String)> {
         let mut matches = Vec::new();
-        
+
         let pattern = nucleo_matcher::pattern::Pattern::parse(
             query,
             nucleo_matcher::pattern::CaseMatching::Ignore,
@@ -57,11 +57,8 @@ impl FuzzySearcher {
         for file in files {
             // nucleo needs UTF-32 or ascii
             let utf32 = nucleo_matcher::Utf32Str::Ascii(file.as_bytes()); // Assuming paths are mostly ASCII for speed
-            
-            if let Some(score) = pattern.score(
-                utf32,
-                &mut self.matcher,
-            ) {
+
+            if let Some(score) = pattern.score(utf32, &mut self.matcher) {
                 matches.push((score, file.clone()));
             }
         }

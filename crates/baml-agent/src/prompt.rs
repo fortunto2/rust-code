@@ -68,7 +68,7 @@ pub fn build_system_prompt(role: &str, tools_reference: &str, domain_rules: &str
         .replace("{role}", role)
         .replace("{tools_reference}", tools_reference)
         .replace("{domain_rules}", domain_rules)
-        // Leave {output_format} as-is — BAML replaces it with {{ ctx.output_format }}
+    // Leave {output_format} as-is — BAML replaces it with {{ ctx.output_format }}
 }
 
 #[cfg(test)]

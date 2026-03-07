@@ -38,32 +38,41 @@ impl AgentConfig {
 
         let mut providers = HashMap::new();
 
-        providers.insert("vertex".into(), ProviderConfig {
-            provider_type: "vertex-ai".into(),
-            model: "gemini-3.1-flash-lite-preview".into(),
-            api_key_env_var: None,
-            base_url: None,
-            location: Some("global".into()),
-            project_id: Some(project_id.clone()),
-        });
+        providers.insert(
+            "vertex".into(),
+            ProviderConfig {
+                provider_type: "vertex-ai".into(),
+                model: "gemini-3.1-flash-lite-preview".into(),
+                api_key_env_var: None,
+                base_url: None,
+                location: Some("global".into()),
+                project_id: Some(project_id.clone()),
+            },
+        );
 
-        providers.insert("vertex_fallback".into(), ProviderConfig {
-            provider_type: "vertex-ai".into(),
-            model: "gemini-3-flash-preview".into(),
-            api_key_env_var: None,
-            base_url: None,
-            location: Some("global".into()),
-            project_id: Some(project_id),
-        });
+        providers.insert(
+            "vertex_fallback".into(),
+            ProviderConfig {
+                provider_type: "vertex-ai".into(),
+                model: "gemini-3-flash-preview".into(),
+                api_key_env_var: None,
+                base_url: None,
+                location: Some("global".into()),
+                project_id: Some(project_id),
+            },
+        );
 
-        providers.insert("local".into(), ProviderConfig {
-            provider_type: "openai-generic".into(),
-            model: "llama3.2".into(),
-            api_key_env_var: None,
-            base_url: Some("http://localhost:11434/v1".into()),
-            location: None,
-            project_id: None,
-        });
+        providers.insert(
+            "local".into(),
+            ProviderConfig {
+                provider_type: "openai-generic".into(),
+                model: "llama3.2".into(),
+                api_key_env_var: None,
+                base_url: Some("http://localhost:11434/v1".into()),
+                location: None,
+                project_id: None,
+            },
+        );
 
         Ok(Self {
             default_provider: "vertex".into(),

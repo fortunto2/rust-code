@@ -1,4 +1,4 @@
-use crate::loop_detect::{LoopDetector, LoopStatus, normalize_signature};
+use crate::loop_detect::{normalize_signature, LoopDetector, LoopStatus};
 use crate::session::{AgentMessage, MessageRole, Session};
 use std::fmt;
 use std::future::Future;
@@ -28,7 +28,10 @@ pub enum LoopEvent<'a, A> {
     /// Step started (step number, 1-based).
     StepStart(usize),
     /// LLM returned a decision.
-    Decision { situation: &'a str, task: &'a [String] },
+    Decision {
+        situation: &'a str,
+        task: &'a [String],
+    },
     /// Task completed by LLM (task_completed=true).
     Completed,
     /// About to execute an action.
@@ -322,7 +325,16 @@ where
 
         let decision = agent.decide(session.messages()).await?;
 
-        if let Some(final_step) = process_step(agent, session, decision, step_num, &mut detector, &mut on_event).await? {
+        if let Some(final_step) = process_step(
+            agent,
+            session,
+            decision,
+            step_num,
+            &mut detector,
+            &mut on_event,
+        )
+        .await?
+        {
             return Ok(final_step);
         }
     }
@@ -357,11 +369,22 @@ where
 
         on_event(LoopEvent::StepStart(step_num));
 
-        let decision = agent.decide_stream(session.messages(), |token| {
-            on_event(LoopEvent::StreamToken(token));
-        }).await?;
+        let decision = agent
+            .decide_stream(session.messages(), |token| {
+                on_event(LoopEvent::StreamToken(token));
+            })
+            .await?;
 
-        if let Some(final_step) = process_step(agent, session, decision, step_num, &mut detector, &mut on_event).await? {
+        if let Some(final_step) = process_step(
+            agent,
+            session,
+            decision,
+            step_num,
+            &mut detector,
+            &mut on_event,
+        )
+        .await?
+        {
             return Ok(final_step);
         }
     }
@@ -426,17 +449,20 @@ mod tests {
         let agent = MockAgent {
             steps_before_done: AtomicUsize::new(3),
         };
-        let config = LoopConfig { max_steps: 10, loop_abort_threshold: 6 };
+        let config = LoopConfig {
+            max_steps: 10,
+            loop_abort_threshold: 6,
+        };
 
         let mut events = vec![];
-        let steps = run_loop(&agent, &mut session, &config, |event| {
-            match &event {
-                LoopEvent::StepStart(n) => events.push(format!("step:{}", n)),
-                LoopEvent::Completed => events.push("completed".into()),
-                LoopEvent::ActionDone(r) => events.push(format!("done:{}", r.output)),
-                _ => {}
-            }
-        }).await.unwrap();
+        let steps = run_loop(&agent, &mut session, &config, |event| match &event {
+            LoopEvent::StepStart(n) => events.push(format!("step:{}", n)),
+            LoopEvent::Completed => events.push("completed".into()),
+            LoopEvent::ActionDone(r) => events.push(format!("done:{}", r.output)),
+            _ => {}
+        })
+        .await
+        .unwrap();
 
         assert_eq!(steps, 3);
         assert!(events.contains(&"completed".to_string()));
@@ -480,17 +506,20 @@ mod tests {
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "do something".into());
 
-        let config = LoopConfig { max_steps: 20, loop_abort_threshold: 4 };
+        let config = LoopConfig {
+            max_steps: 20,
+            loop_abort_threshold: 4,
+        };
 
         let mut got_warning = false;
         let mut got_abort = false;
-        let steps = run_loop(&LoopyAgent, &mut session, &config, |event| {
-            match event {
-                LoopEvent::LoopWarning(_) => got_warning = true,
-                LoopEvent::LoopAbort(_) => got_abort = true,
-                _ => {}
-            }
-        }).await.unwrap();
+        let steps = run_loop(&LoopyAgent, &mut session, &config, |event| match event {
+            LoopEvent::LoopWarning(_) => got_warning = true,
+            LoopEvent::LoopAbort(_) => got_abort = true,
+            _ => {}
+        })
+        .await
+        .unwrap();
 
         assert!(got_warning);
         assert!(got_abort);
@@ -518,7 +547,10 @@ mod tests {
         }
 
         async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
-            Ok(ActionResult { output: "ok".into(), done: false })
+            Ok(ActionResult {
+                output: "ok".into(),
+                done: false,
+            })
         }
 
         fn action_signature(action: &String) -> String {
@@ -527,6 +559,7 @@ mod tests {
     }
 
     impl SgrAgentStream for StreamingAgent {
+        #[allow(clippy::manual_async_fn)]
         fn decide_stream<T>(
             &self,
             _messages: &[TestMsg],
@@ -556,17 +589,25 @@ mod tests {
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "hello".into());
 
-        let config = LoopConfig { max_steps: 5, loop_abort_threshold: 6 };
+        let config = LoopConfig {
+            max_steps: 5,
+            loop_abort_threshold: 6,
+        };
 
         let mut tokens = vec![];
         let mut completed = false;
-        run_loop_stream(&StreamingAgent, &mut session, &config, |event| {
-            match event {
+        run_loop_stream(
+            &StreamingAgent,
+            &mut session,
+            &config,
+            |event| match event {
                 LoopEvent::StreamToken(t) => tokens.push(t.to_string()),
                 LoopEvent::Completed => completed = true,
                 _ => {}
-            }
-        }).await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(completed);
         assert_eq!(tokens, vec!["Thin", "king", "..."]);
@@ -607,7 +648,10 @@ mod tests {
         }
 
         async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
-            Ok(ActionResult { output: "ok".into(), done: false })
+            Ok(ActionResult {
+                output: "ok".into(),
+                done: false,
+            })
         }
 
         fn action_signature(action: &String) -> String {
@@ -622,13 +666,22 @@ mod tests {
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "do something".into());
 
-        let agent = EmptyActionsAgent { call_count: AtomicUsize::new(0) };
-        let config = LoopConfig { max_steps: 10, loop_abort_threshold: 6 };
+        let agent = EmptyActionsAgent {
+            call_count: AtomicUsize::new(0),
+        };
+        let config = LoopConfig {
+            max_steps: 10,
+            loop_abort_threshold: 6,
+        };
 
         let mut completed = false;
         let steps = run_loop(&agent, &mut session, &config, |event| {
-            if matches!(event, LoopEvent::Completed) { completed = true; }
-        }).await.unwrap();
+            if matches!(event, LoopEvent::Completed) {
+                completed = true;
+            }
+        })
+        .await
+        .unwrap();
 
         assert!(completed, "agent should recover after nudge");
         // 2 empty steps + 1 completed = 3 decide calls, but empty steps return Ok(None)
@@ -637,8 +690,14 @@ mod tests {
 
         // Session should contain nudge messages
         let messages: Vec<&str> = session.messages().iter().map(|m| m.content()).collect();
-        let nudges = messages.iter().filter(|m| m.contains("empty next_actions")).count();
-        assert_eq!(nudges, 2, "should have 2 nudge messages for 2 empty action steps");
+        let nudges = messages
+            .iter()
+            .filter(|m| m.contains("empty next_actions"))
+            .count();
+        assert_eq!(
+            nudges, 2,
+            "should have 2 nudge messages for 2 empty action steps"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -652,7 +711,10 @@ mod tests {
 
         // Agent that always returns empty actions — never recovers
         // Set threshold low so it aborts quickly
-        let config = LoopConfig { max_steps: 20, loop_abort_threshold: 4 };
+        let config = LoopConfig {
+            max_steps: 20,
+            loop_abort_threshold: 4,
+        };
 
         // Use a separate agent that never completes
         struct NeverRecoverAgent;
@@ -669,15 +731,24 @@ mod tests {
                 })
             }
             async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
-                Ok(ActionResult { output: "ok".into(), done: false })
+                Ok(ActionResult {
+                    output: "ok".into(),
+                    done: false,
+                })
             }
-            fn action_signature(action: &String) -> String { action.clone() }
+            fn action_signature(action: &String) -> String {
+                action.clone()
+            }
         }
 
         let mut got_abort = false;
         let _steps = run_loop(&NeverRecoverAgent, &mut session, &config, |event| {
-            if matches!(event, LoopEvent::LoopAbort(_)) { got_abort = true; }
-        }).await.unwrap();
+            if matches!(event, LoopEvent::LoopAbort(_)) {
+                got_abort = true;
+            }
+        })
+        .await
+        .unwrap();
 
         assert!(got_abort, "should abort after repeated empty actions");
 
@@ -692,13 +763,20 @@ mod tests {
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "hello".into());
 
-        let config = LoopConfig { max_steps: 5, loop_abort_threshold: 6 };
+        let config = LoopConfig {
+            max_steps: 5,
+            loop_abort_threshold: 6,
+        };
 
         // StreamingAgent also implements SgrAgent, so run_loop works
         let mut completed = false;
         run_loop(&StreamingAgent, &mut session, &config, |event| {
-            if matches!(event, LoopEvent::Completed) { completed = true; }
-        }).await.unwrap();
+            if matches!(event, LoopEvent::Completed) {
+                completed = true;
+            }
+        })
+        .await
+        .unwrap();
 
         assert!(completed);
         let _ = std::fs::remove_dir_all(&dir);

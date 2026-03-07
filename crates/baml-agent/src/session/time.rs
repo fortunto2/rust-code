@@ -13,22 +13,42 @@ pub(crate) fn now_iso() -> String {
     let s = time_of_day % 60;
     let ms = dur.subsec_millis();
     let (y, mo, d) = days_to_ymd(days);
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, m, s, ms)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        y, mo, d, h, m, s, ms
+    )
 }
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let mut y = 1970;
     loop {
         let year_days = if is_leap(y) { 366 } else { 365 };
-        if days < year_days { break; }
+        if days < year_days {
+            break;
+        }
         days -= year_days;
         y += 1;
     }
     let leap = is_leap(y);
-    let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1;
     for &ml in &months {
-        if days < ml { break; }
+        if days < ml {
+            break;
+        }
         days -= ml;
         mo += 1;
     }

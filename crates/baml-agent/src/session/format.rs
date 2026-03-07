@@ -48,14 +48,21 @@ pub(crate) struct PersistedMessage {
     pub cwd: Option<String>,
 }
 
-pub(crate) fn make_persisted(entry_type: EntryType, content: &str, session_id: &str, parent_uuid: Option<&str>) -> PersistedMessage {
+pub(crate) fn make_persisted(
+    entry_type: EntryType,
+    content: &str,
+    session_id: &str,
+    parent_uuid: Option<&str>,
+) -> PersistedMessage {
     let message = MessageBody {
         role: entry_type,
         content: match entry_type {
             EntryType::User | EntryType::System => MessageContent::Text(content.to_string()),
-            EntryType::Assistant | EntryType::Tool => MessageContent::Blocks(vec![
-                ContentBlock::Text { text: content.to_string() },
-            ]),
+            EntryType::Assistant | EntryType::Tool => {
+                MessageContent::Blocks(vec![ContentBlock::Text {
+                    text: content.to_string(),
+                }])
+            }
         },
     };
     PersistedMessage {
@@ -65,7 +72,9 @@ pub(crate) fn make_persisted(entry_type: EntryType, content: &str, session_id: &
         parent_uuid: parent_uuid.map(String::from),
         session_id: session_id.to_string(),
         timestamp: now_iso(),
-        cwd: std::env::current_dir().ok().and_then(|p| p.to_str().map(String::from)),
+        cwd: std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from)),
     }
 }
 
@@ -103,18 +112,26 @@ fn extract_content(message: &serde_json::Value) -> Option<String> {
 
     // Array of content blocks (assistant format)
     if let Some(arr) = content.as_array() {
-        let parts: Vec<String> = arr.iter()
+        let parts: Vec<String> = arr
+            .iter()
             .filter_map(|block| {
                 match block["type"].as_str()? {
                     "text" => block["text"].as_str().map(String::from),
-                    "tool_use" => Some(format!("[tool: {}]", block["name"].as_str().unwrap_or("?"))),
-                    "tool_result" => block["content"].as_str()
+                    "tool_use" => {
+                        Some(format!("[tool: {}]", block["name"].as_str().unwrap_or("?")))
+                    }
+                    "tool_result" => block["content"]
+                        .as_str()
                         .map(|s| format!("[result: {}]", super::time::truncate_str(s, 200))),
                     _ => None, // skip thinking, etc.
                 }
             })
             .collect();
-        return if parts.is_empty() { None } else { Some(parts.join("\n")) };
+        return if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        };
     }
 
     // Plain string content (user format)

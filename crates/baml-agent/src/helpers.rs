@@ -77,7 +77,10 @@ pub fn truncate_json_array(value: &mut serde_json::Value, key: &str, max: usize)
         let total = arr.len();
         if total > max {
             arr.truncate(max);
-            arr.push(serde_json::json!(format!("... showing {} of {} total", max, total)));
+            arr.push(serde_json::json!(format!(
+                "... showing {} of {} total",
+                max, total
+            )));
         }
     }
 }
@@ -238,8 +241,12 @@ impl AgentContext {
 
     /// Combine all parts into a single string for system message injection.
     pub fn to_system_message(&self) -> Option<String> {
-        if self.parts.is_empty() { return None; }
-        let sections: Vec<String> = self.parts.iter()
+        if self.parts.is_empty() {
+            return None;
+        }
+        let sections: Vec<String> = self
+            .parts
+            .iter()
             .map(|(label, content)| format!("## {}\n{}", label, content.trim()))
             .collect();
         Some(sections.join("\n\n"))
@@ -254,7 +261,9 @@ impl AgentContext {
     /// 4. Rules, Identity, Project/Local Instructions
     /// 5. Soul, Memory (user notes) — never dropped
     pub fn to_system_message_with_budget(&self, max_tokens: usize) -> Option<String> {
-        if self.parts.is_empty() { return None; }
+        if self.parts.is_empty() {
+            return None;
+        }
 
         // Priority: higher = keep longer. Soul and user memory are sacred.
         fn priority(label: &str) -> u8 {
@@ -270,7 +279,9 @@ impl AgentContext {
             }
         }
 
-        let mut indexed: Vec<(u8, &str, &str)> = self.parts.iter()
+        let mut indexed: Vec<(u8, &str, &str)> = self
+            .parts
+            .iter()
             .map(|(label, content)| (priority(label), label.as_str(), content.as_str()))
             .collect();
         // Sort by priority descending — we'll drop from the end
@@ -282,16 +293,21 @@ impl AgentContext {
         // Drop lowest priority parts until we fit
         while total_chars > max_chars && !indexed.is_empty() {
             let last = indexed.last().unwrap();
-            if last.0 >= 9 { break; } // never drop Soul or user memory
+            if last.0 >= 9 {
+                break;
+            } // never drop Soul or user memory
             total_chars -= last.1.len() + last.2.len() + 10;
             indexed.pop();
         }
 
-        if indexed.is_empty() { return None; }
+        if indexed.is_empty() {
+            return None;
+        }
 
         // Restore original order for readability
         indexed.sort_by(|a, b| b.0.cmp(&a.0));
-        let sections: Vec<String> = indexed.iter()
+        let sections: Vec<String> = indexed
+            .iter()
             .map(|(_, label, content)| format!("## {}\n{}", label, content.trim()))
             .collect();
         Some(sections.join("\n\n"))
@@ -305,44 +321,64 @@ impl AgentContext {
 /// - Limits to last 50 entries to keep context manageable
 fn format_memory_jsonl(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
-    let mut entries: Vec<serde_json::Value> = content.lines()
+    let mut entries: Vec<serde_json::Value> = content
+        .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
-    if entries.is_empty() { return None; }
+    if entries.is_empty() {
+        return None;
+    }
 
     // GC: remove tentative entries older than 7 days
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default().as_secs();
+        .unwrap_or_default()
+        .as_secs();
     let seven_days = 7 * 24 * 3600;
     let before_gc = entries.len();
     entries.retain(|e| {
         let confidence = e["confidence"].as_str().unwrap_or("tentative");
-        if confidence == "confirmed" { return true; }
+        if confidence == "confirmed" {
+            return true;
+        }
         let created = e["created"].as_u64().unwrap_or(now_secs);
         now_secs.saturating_sub(created) < seven_days
     });
 
     // Write back if GC removed anything
     if entries.len() < before_gc {
-        let lines: Vec<String> = entries.iter()
+        let lines: Vec<String> = entries
+            .iter()
             .filter_map(|e| serde_json::to_string(e).ok())
             .collect();
         let _ = std::fs::write(path, lines.join("\n") + "\n");
     }
 
-    if entries.is_empty() { return None; }
+    if entries.is_empty() {
+        return None;
+    }
 
     // Keep last 50 entries
-    let entries = if entries.len() > 50 { &entries[entries.len()-50..] } else { &entries[..] };
-    let mut sections: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    let entries = if entries.len() > 50 {
+        &entries[entries.len() - 50..]
+    } else {
+        &entries[..]
+    };
+    let mut sections: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
     for entry in entries {
         let section = entry["section"].as_str().unwrap_or("General").to_string();
         let category = entry["category"].as_str().unwrap_or("note");
         let confidence = entry["confidence"].as_str().unwrap_or("tentative");
         let content = entry["content"].as_str().unwrap_or("");
-        let marker = if confidence == "confirmed" { "✓" } else { "?" };
-        sections.entry(section).or_default()
+        let marker = if confidence == "confirmed" {
+            "✓"
+        } else {
+            "?"
+        };
+        sections
+            .entry(section)
+            .or_default()
             .push(format!("- [{}|{}] {}", marker, category, content));
     }
 
@@ -363,7 +399,9 @@ fn format_memory_jsonl(path: &std::path::Path) -> Option<String> {
 /// Replaces `@relative/path` with the file contents inline.
 /// Max depth 5 to prevent cycles. Relative paths resolve from `base_dir`.
 fn expand_imports(content: &str, base_dir: &std::path::Path, depth: u8) -> String {
-    if depth > 5 { return content.to_string(); }
+    if depth > 5 {
+        return content.to_string();
+    }
 
     let mut result = String::with_capacity(content.len());
     for line in content.lines() {
@@ -386,7 +424,8 @@ fn expand_line_imports(line: &str, base_dir: &std::path::Path, depth: u8) -> Str
         let after_at = &rest[at_pos + 1..];
 
         // Extract path: sequence of non-whitespace chars after @
-        let path_end = after_at.find(|c: char| c.is_whitespace() || c == ',' || c == ')' || c == ']')
+        let path_end = after_at
+            .find(|c: char| c.is_whitespace() || c == ',' || c == ')' || c == ']')
             .unwrap_or(after_at.len());
         let ref_path = &after_at[..path_end];
 
@@ -428,7 +467,9 @@ fn expand_line_imports(line: &str, base_dir: &std::path::Path, depth: u8) -> Str
 
 /// Load all `*.md` files from a directory, sorted alphabetically.
 fn load_rules_dir(dir: &std::path::Path, ctx: &mut AgentContext) {
-    if !dir.is_dir() { return; }
+    if !dir.is_dir() {
+        return;
+    }
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut files: Vec<_> = entries
             .filter_map(|e| e.ok())
@@ -439,7 +480,8 @@ fn load_rules_dir(dir: &std::path::Path, ctx: &mut AgentContext) {
         for entry in files {
             if let Ok(content) = std::fs::read_to_string(entry.path()) {
                 if !content.trim().is_empty() {
-                    let label = entry.path()
+                    let label = entry
+                        .path()
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("rule")
@@ -537,7 +579,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("SOUL.md"), "Be direct and honest.").unwrap();
-        std::fs::write(dir.join("IDENTITY.md"), "Name: rust-code\nRole: coding agent").unwrap();
+        std::fs::write(
+            dir.join("IDENTITY.md"),
+            "Name: rust-code\nRole: coding agent",
+        )
+        .unwrap();
         std::fs::write(dir.join("MANIFESTO.md"), "TDD first. Ship > perfect.").unwrap();
 
         let ctx = AgentContext::load(dir.to_str().unwrap());
@@ -666,10 +712,14 @@ mod tests {
         let ctx = AgentContext::load(dir.to_str().unwrap());
         // SOUL + Memory (learned)
         assert!(ctx.parts.iter().any(|(l, _)| l == "Memory (learned)"));
-        let mem = ctx.parts.iter().find(|(l, _)| l == "Memory (learned)").unwrap();
+        let mem = ctx
+            .parts
+            .iter()
+            .find(|(l, _)| l == "Memory (learned)")
+            .unwrap();
         assert!(mem.1.contains("Use cargo, not make"));
         assert!(mem.1.contains("[✓|decision]")); // confirmed
-        assert!(mem.1.contains("[?|pattern]"));   // tentative
+        assert!(mem.1.contains("[?|pattern]")); // tentative
         assert!(mem.1.contains("### Style"));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -709,7 +759,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let old = now - 8 * 24 * 3600; // 8 days ago
 
         let entries = format!(
@@ -743,7 +795,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("README.md"), "# My Project\nThis is the readme.").unwrap();
-        std::fs::write(dir.join("CLAUDE.md"), "See @README.md for overview.\nDo stuff.").unwrap();
+        std::fs::write(
+            dir.join("CLAUDE.md"),
+            "See @README.md for overview.\nDo stuff.",
+        )
+        .unwrap();
 
         let ctx = AgentContext::load_project(&dir);
         let msg = ctx.to_system_message().unwrap();
@@ -770,9 +826,9 @@ mod tests {
     #[test]
     fn token_budget_drops_low_priority() {
         let mut ctx = AgentContext::default();
-        ctx.parts.push(("Soul".into(), "Be direct.".into()));       // priority 10
-        ctx.parts.push(("Manifesto".into(), "x".repeat(10000).into())); // priority 5, big
-        ctx.parts.push(("Identity".into(), "Name: test".into()));   // priority 8
+        ctx.parts.push(("Soul".into(), "Be direct.".into())); // priority 10
+        ctx.parts.push(("Manifesto".into(), "x".repeat(10000))); // priority 5, big
+        ctx.parts.push(("Identity".into(), "Name: test".into())); // priority 8
 
         // Budget that fits Soul + Identity but not Manifesto
         let msg = ctx.to_system_message_with_budget(100).unwrap(); // ~400 chars budget
@@ -784,7 +840,7 @@ mod tests {
     #[test]
     fn token_budget_never_drops_soul() {
         let mut ctx = AgentContext::default();
-        ctx.parts.push(("Soul".into(), "x".repeat(5000).into()));
+        ctx.parts.push(("Soul".into(), "x".repeat(5000)));
 
         // Even tiny budget keeps Soul
         let msg = ctx.to_system_message_with_budget(10).unwrap();

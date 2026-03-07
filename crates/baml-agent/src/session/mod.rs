@@ -7,32 +7,45 @@
 //! - `store` — Session struct (CRUD, trimming)
 //! - `meta` — SessionMeta, list/search/import
 
-pub mod traits;
 pub(crate) mod format;
-pub(crate) mod time;
-mod store;
 mod meta;
+mod store;
+pub(crate) mod time;
+pub mod traits;
 
-pub use traits::{MessageRole, AgentMessage, EntryType};
-pub use store::Session;
-pub use meta::{SessionMeta, list_sessions, import_claude_session};
 #[cfg(feature = "search")]
 pub use meta::search_sessions;
+pub use meta::{import_claude_session, list_sessions, SessionMeta};
+pub use store::Session;
+pub use traits::{AgentMessage, EntryType, MessageRole};
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
     use super::format::{make_persisted, parse_entry};
     use super::time::{now_iso, truncate_str, truncate_topic, uuid_v7_timestamp};
+    use super::*;
 
     #[derive(Clone, Debug, PartialEq)]
-    pub(crate) enum TestRole { System, User, Assistant, Tool }
+    pub(crate) enum TestRole {
+        System,
+        User,
+        Assistant,
+        Tool,
+    }
 
     impl MessageRole for TestRole {
-        fn system() -> Self { Self::System }
-        fn user() -> Self { Self::User }
-        fn assistant() -> Self { Self::Assistant }
-        fn tool() -> Self { Self::Tool }
+        fn system() -> Self {
+            Self::System
+        }
+        fn user() -> Self {
+            Self::User
+        }
+        fn assistant() -> Self {
+            Self::Assistant
+        }
+        fn tool() -> Self {
+            Self::Tool
+        }
         fn as_str(&self) -> &str {
             match self {
                 Self::System => "system",
@@ -53,20 +66,34 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone)]
-    pub(crate) struct TestMsg { pub role: TestRole, pub content: String }
+    pub(crate) struct TestMsg {
+        pub role: TestRole,
+        pub content: String,
+    }
 
     impl AgentMessage for TestMsg {
         type Role = TestRole;
-        fn new(role: TestRole, content: String) -> Self { Self { role, content } }
-        fn role(&self) -> &TestRole { &self.role }
-        fn content(&self) -> &str { &self.content }
+        fn new(role: TestRole, content: String) -> Self {
+            Self { role, content }
+        }
+        fn role(&self) -> &TestRole {
+            &self.role
+        }
+        fn content(&self) -> &str {
+            &self.content
+        }
     }
 
     // --- EntryType ---
 
     #[test]
     fn entry_type_roundtrip() {
-        for t in [EntryType::User, EntryType::Assistant, EntryType::System, EntryType::Tool] {
+        for t in [
+            EntryType::User,
+            EntryType::Assistant,
+            EntryType::System,
+            EntryType::Tool,
+        ] {
             let json = serde_json::to_string(&t).unwrap();
             let back: EntryType = serde_json::from_str(&json).unwrap();
             assert_eq!(t, back);
@@ -142,16 +169,16 @@ pub(crate) mod tests {
     #[test]
     fn parse_entry_skips_progress() {
         let entry: serde_json::Value = serde_json::from_str(
-            r#"{"type":"progress","data":{"type":"hook_progress"},"uuid":"a"}"#
-        ).unwrap();
+            r#"{"type":"progress","data":{"type":"hook_progress"},"uuid":"a"}"#,
+        )
+        .unwrap();
         assert!(parse_entry(&entry).is_none());
     }
 
     #[test]
     fn parse_entry_legacy_format() {
-        let entry: serde_json::Value = serde_json::from_str(
-            r#"{"role":"user","content":"hello legacy"}"#
-        ).unwrap();
+        let entry: serde_json::Value =
+            serde_json::from_str(r#"{"role":"user","content":"hello legacy"}"#).unwrap();
         let (et, content) = parse_entry(&entry).unwrap();
         assert_eq!(et, EntryType::User);
         assert_eq!(content, "hello legacy");
@@ -209,16 +236,25 @@ pub(crate) mod tests {
         let id1 = uuid::Uuid::now_v7().to_string();
         std::thread::sleep(std::time::Duration::from_millis(2));
         let id2 = uuid::Uuid::now_v7().to_string();
-        assert!(id2 > id1, "v7 UUIDs should be time-ordered: {} > {}", id2, id1);
+        assert!(
+            id2 > id1,
+            "v7 UUIDs should be time-ordered: {} > {}",
+            id2,
+            id1
+        );
     }
 
     #[test]
     fn uuid_v7_timestamp_extraction() {
         let before = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let id = uuid::Uuid::now_v7().to_string();
         let after = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let ts = uuid_v7_timestamp(&id).unwrap();
         assert!(ts >= before && ts <= after);
     }
@@ -239,7 +275,11 @@ pub(crate) mod tests {
 
         session.push(TestRole::System, "sys prompt".into());
         for i in 0..20 {
-            let role = if i % 2 == 0 { TestRole::User } else { TestRole::Assistant };
+            let role = if i % 2 == 0 {
+                TestRole::User
+            } else {
+                TestRole::Assistant
+            };
             session.push(role, format!("msg {}", i));
         }
         assert_eq!(session.len(), 21);
@@ -300,13 +340,20 @@ pub(crate) mod tests {
         session.push(TestRole::User, "third".into());
 
         let raw = std::fs::read_to_string(session.session_file()).unwrap();
-        let entries: Vec<serde_json::Value> = raw.lines()
+        let entries: Vec<serde_json::Value> = raw
+            .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
         assert!(entries[0]["parentUuid"].is_null());
-        assert_eq!(entries[1]["parentUuid"].as_str(), entries[0]["uuid"].as_str());
-        assert_eq!(entries[2]["parentUuid"].as_str(), entries[1]["uuid"].as_str());
+        assert_eq!(
+            entries[1]["parentUuid"].as_str(),
+            entries[0]["uuid"].as_str()
+        );
+        assert_eq!(
+            entries[2]["parentUuid"].as_str(),
+            entries[1]["uuid"].as_str()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -316,12 +363,18 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_multibyte");
         let _ = std::fs::remove_dir_all(&dir);
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
-        session.push(TestRole::User, "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}".into());
+        session.push(
+            TestRole::User,
+            "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}".into(),
+        );
         session.push(TestRole::Assistant, "got it! \u{1f389}".into());
 
         let path = session.session_file().to_path_buf();
         let loaded = Session::<TestMsg>::resume(&path, dir.to_str().unwrap(), 60);
-        assert_eq!(loaded.messages()[0].content(), "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}");
+        assert_eq!(
+            loaded.messages()[0].content(),
+            "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}"
+        );
         assert_eq!(loaded.messages()[1].content(), "got it! \u{1f389}");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -334,7 +387,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let path = dir.join("session_1234567890.jsonl");
-        let legacy = vec![
+        let legacy = [
             r#"{"role":"user","content":"hello legacy"}"#,
             r#"{"role":"assistant","content":"hi from old format"}"#,
         ];
@@ -391,11 +444,15 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let before = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s.push(TestRole::User, "test".into());
         let after = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         let meta = SessionMeta::from_path(s.session_file()).unwrap();
         assert!(meta.created >= before && meta.created <= after);
@@ -479,7 +536,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let claude_session = dir.join("claude_session.jsonl");
-        let lines = vec![
+        let lines = [
             r#"{"type":"progress","data":{"type":"hook_progress"},"uuid":"a","timestamp":"2026-03-07"}"#,
             r#"{"type":"user","message":{"role":"user","content":"fix the parser bug"},"uuid":"b","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Looking at the parser..."},{"type":"tool_use","name":"Read","id":"x","input":{}}]},"uuid":"c","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
@@ -493,7 +550,8 @@ pub(crate) mod tests {
 
         let output = result.unwrap();
         let content = std::fs::read_to_string(&output).unwrap();
-        let entries: Vec<serde_json::Value> = content.lines()
+        let entries: Vec<serde_json::Value> = content
+            .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
@@ -512,19 +570,31 @@ pub(crate) mod tests {
 
     #[test]
     fn load_real_claude_session() {
-        let Ok(home) = std::env::var("HOME") else { return };
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
         let claude_dir = std::path::Path::new(&home).join(".claude/projects");
-        if !claude_dir.exists() { return; }
+        if !claude_dir.exists() {
+            return;
+        }
 
-        let Some(project_dir) = std::fs::read_dir(&claude_dir).ok()
-            .and_then(|rd| rd.filter_map(|e| e.ok())
-                .find(|e| e.path().is_dir() && std::fs::read_dir(e.path()).ok()
-                    .map(|rd2| rd2.filter_map(|e2| e2.ok())
-                        .any(|e2| e2.path().extension().is_some_and(|ext| ext == "jsonl")))
-                    .unwrap_or(false)))
-        else { return };
+        let Some(project_dir) = std::fs::read_dir(&claude_dir).ok().and_then(|rd| {
+            rd.filter_map(|e| e.ok()).find(|e| {
+                e.path().is_dir()
+                    && std::fs::read_dir(e.path())
+                        .ok()
+                        .map(|rd2| {
+                            rd2.filter_map(|e2| e2.ok())
+                                .any(|e2| e2.path().extension().is_some_and(|ext| ext == "jsonl"))
+                        })
+                        .unwrap_or(false)
+            })
+        }) else {
+            return;
+        };
 
-        let smallest = std::fs::read_dir(project_dir.path()).unwrap()
+        let smallest = std::fs::read_dir(project_dir.path())
+            .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
             .min_by_key(|e| e.metadata().map(|m| m.len()).unwrap_or(u64::MAX));

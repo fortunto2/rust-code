@@ -73,7 +73,7 @@ impl MessageRole for MyRole {
     fn assistant() -> Self { Self(Role::Assistant) }
     fn tool() -> Self { Self(Role::Tool) }
     fn as_str(&self) -> &str { /* match self.0 */ }
-    fn from_str(s: &str) -> Option<Self> { /* match s */ }
+    fn parse_role(s: &str) -> Option<Self> { /* match s */ }
 }
 
 #[derive(Clone)]

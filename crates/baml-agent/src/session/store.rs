@@ -4,8 +4,8 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use super::traits::{MessageRole, AgentMessage, EntryType};
 use super::format::{make_persisted, parse_entry};
+use super::traits::{AgentMessage, EntryType, MessageRole};
 
 /// Session manager: JSONL persistence, history access, context trimming.
 ///
@@ -101,13 +101,15 @@ impl<M: AgentMessage> Session<M> {
             return 0;
         }
 
-        let system_msgs: Vec<M> = self.messages
+        let system_msgs: Vec<M> = self
+            .messages
             .iter()
             .filter(|m| m.role().is_system())
             .cloned()
             .collect();
 
-        let non_system: Vec<M> = self.messages
+        let non_system: Vec<M> = self
+            .messages
             .iter()
             .filter(|m| !m.role().is_system())
             .cloned()
@@ -133,8 +135,12 @@ impl<M: AgentMessage> Session<M> {
     // --- Private ---
 
     fn persist_last(&mut self) {
-        let Some(msg) = self.messages.last() else { return };
-        let Some(entry_type) = EntryType::parse(msg.role().as_str()) else { return };
+        let Some(msg) = self.messages.last() else {
+            return;
+        };
+        let Some(entry_type) = EntryType::parse(msg.role().as_str()) else {
+            return;
+        };
         let persisted = make_persisted(
             entry_type,
             msg.content(),
@@ -142,8 +148,16 @@ impl<M: AgentMessage> Session<M> {
             self.last_uuid.as_deref(),
         );
         self.last_uuid = Some(persisted.uuid.clone());
-        let Ok(json) = serde_json::to_string(&persisted) else { return };
-        let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&self.session_file) else { return };
+        let Ok(json) = serde_json::to_string(&persisted) else {
+            return;
+        };
+        let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.session_file)
+        else {
+            return;
+        };
         let _ = writeln!(f, "{}", json);
     }
 
@@ -159,7 +173,9 @@ impl<M: AgentMessage> Session<M> {
         let mut last_uuid = None;
 
         for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
 
             if let Some(sid) = value["sessionId"].as_str() {
                 session_id = Some(sid.to_string());
@@ -169,7 +185,10 @@ impl<M: AgentMessage> Session<M> {
             }
 
             if let Some((entry_type, content)) = parse_entry(&value) {
-                messages.push(M::new(entry_type.into_role::<<M as AgentMessage>::Role>(), content));
+                messages.push(M::new(
+                    entry_type.into_role::<<M as AgentMessage>::Role>(),
+                    content,
+                ));
             }
         }
 

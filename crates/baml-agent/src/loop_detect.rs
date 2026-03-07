@@ -114,7 +114,10 @@ struct ConsecutiveTracker {
 
 impl ConsecutiveTracker {
     fn new() -> Self {
-        Self { last: None, count: 0 }
+        Self {
+            last: None,
+            count: 0,
+        }
     }
 
     /// Record a value. Returns the current consecutive count (≥ 1).
@@ -146,7 +149,10 @@ struct HashTracker {
 
 impl HashTracker {
     fn new() -> Self {
-        Self { last_hash: None, count: 0 }
+        Self {
+            last_hash: None,
+            count: 0,
+        }
     }
 
     fn record(&mut self, value: &str) -> usize {
@@ -301,7 +307,8 @@ impl LoopDetector {
 
     /// Current repeat count (max across all signals).
     pub fn repeat_count(&self) -> usize {
-        self.exact.count()
+        self.exact
+            .count()
             .max(self.category.count())
             .max(self.output.count())
     }
@@ -360,7 +367,10 @@ mod tests {
     #[test]
     fn normalize_non_bash_unchanged() {
         assert_eq!(normalize_signature("read:src/main.rs"), "read:src/main.rs");
-        assert_eq!(normalize_signature("write:config.toml"), "write:config.toml");
+        assert_eq!(
+            normalize_signature("write:config.toml"),
+            "write:config.toml"
+        );
         assert_eq!(normalize_signature("edit:src/lib.rs"), "edit:src/lib.rs");
     }
 
@@ -434,7 +444,7 @@ mod tests {
     #[test]
     fn category_catches_semantic_loop() {
         let mut d = LoopDetector::new(4); // warn at 2, abort at 4
-        // Different exact signatures, same normalized category
+                                          // Different exact signatures, same normalized category
         let sigs = [
             "bash:rg -n 'TODO' src/",
             "bash:rg 'TODO' src/",
@@ -453,10 +463,10 @@ mod tests {
         // All exact sigs differ → exact count stays at 1.
         // All categories same → category count 1, 2, 3, 4.
         // max(exact, category) determines result.
-        assert_eq!(results[0], LoopStatus::Ok);        // max(1,1) = 1 < 2
+        assert_eq!(results[0], LoopStatus::Ok); // max(1,1) = 1 < 2
         assert_eq!(results[1], LoopStatus::Warning(2)); // max(1,2) = 2
         assert_eq!(results[2], LoopStatus::Warning(3)); // max(1,3) = 3
-        assert_eq!(results[3], LoopStatus::Abort(4));   // max(1,4) = 4
+        assert_eq!(results[3], LoopStatus::Abort(4)); // max(1,4) = 4
     }
 
     #[test]
@@ -464,7 +474,7 @@ mod tests {
         let mut d = LoopDetector::new(4);
         d.check_with_category("bash:rg 'A' src/", "bash-search:A src");
         d.check_with_category("bash:rg 'A' src/", "bash-search:A src"); // cat=2
-        // Different category resets
+                                                                        // Different category resets
         d.check_with_category("bash:cargo test", "bash:cargo:test");
         assert_eq!(d.category.count(), 1);
     }
@@ -497,12 +507,24 @@ mod tests {
         let mut d = LoopDetector::new(6); // warn at 3, abort at 6
 
         let steps: Vec<(&str, &str)> = vec![
-            ("bash:rg \"TODO|FIXME\" crates/baml-agent/src/",                   ""),
-            ("bash:rg -n 'TODO|FIXME' crates/baml-agent/src/",                  ""),
-            ("bash:rg -n \"TODO|FIXME\" crates/baml-agent/src/ || echo 'No'",   "No TODO or FIXME found"),
-            ("bash:rg 'TODO|FIXME' crates/baml-agent/src/ || (echo && ls)",     "Search failed..."),
-            ("bash:rg 'TODO|FIXME' crates/baml-agent/src/",                     "No TODO or FIXME found"),
-            ("bash:rg -n 'TODO|FIXME' crates/baml-agent/src/ || echo 'No'",     "No TODO or FIXME found"),
+            ("bash:rg \"TODO|FIXME\" crates/baml-agent/src/", ""),
+            ("bash:rg -n 'TODO|FIXME' crates/baml-agent/src/", ""),
+            (
+                "bash:rg -n \"TODO|FIXME\" crates/baml-agent/src/ || echo 'No'",
+                "No TODO or FIXME found",
+            ),
+            (
+                "bash:rg 'TODO|FIXME' crates/baml-agent/src/ || (echo && ls)",
+                "Search failed...",
+            ),
+            (
+                "bash:rg 'TODO|FIXME' crates/baml-agent/src/",
+                "No TODO or FIXME found",
+            ),
+            (
+                "bash:rg -n 'TODO|FIXME' crates/baml-agent/src/ || echo 'No'",
+                "No TODO or FIXME found",
+            ),
         ];
 
         let mut first_warning = None;
@@ -512,7 +534,9 @@ mod tests {
             let cat = normalize_signature(sig);
             match d.check_with_category(sig, &cat) {
                 LoopStatus::Warning(n) => {
-                    if first_warning.is_none() { first_warning = Some(i + 1); }
+                    if first_warning.is_none() {
+                        first_warning = Some(i + 1);
+                    }
                     let _ = n;
                 }
                 LoopStatus::Abort(_) => {

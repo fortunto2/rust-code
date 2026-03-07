@@ -37,19 +37,27 @@ Agent loop: user message → BAML `GetNextStep()` → model returns `NextStep { 
 
 ## Development Rules
 - TDD — write tests before implementing features
-- `cargo check` after every code change
-- `cargo test` before committing
+- Always run `make check` before committing (test + lint + fmt)
 - Minimal changes — don't over-engineer
 - Don't edit generated `baml_client/` files directly
 - app.rs is ~3000+ lines — be careful with edits, read before modifying
+- Pre-commit hook enforces: tests, clippy (-D warnings on baml-agent), fmt check
+- Clippy is gated on `baml-agent` + `baml-agent-tui` only (rc-cli has legacy warnings)
+- `cargo fmt` scoped to `baml-agent` + `baml-agent-tui` + `rust-code` (skip rc-baml generated code)
 
 ## Commands
 ```bash
-cargo check          # type check
-cargo build          # dev build
-cargo test           # run tests
-cargo build --release -p rust-code  # release build
-cargo run -- -p "prompt"            # test headless
+make build           # dev build
+make test            # run all tests (workspace)
+make lint            # clippy on baml-agent + baml-agent-tui (-D warnings)
+make fmt             # auto-format
+make fmt-check       # format check (no write)
+make check           # test + lint + fmt-check (pre-commit gate)
+make release         # optimized release build
+make install         # build + strip + install to /usr/local/bin
+make audit           # unused deps + large files audit
+make help            # show all targets
+cargo run -- -p "prompt"  # test headless
 ```
 
 ## Release Process
@@ -88,6 +96,8 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/rc-baml/baml_src/clients.baml` | LLM providers, fallback chain, retry policy |
 | `crates/baml-agent/src/session/` | Session module: traits, format, time, store, meta (UUID v7, typed entries) |
 | `crates/baml-agent/src/helpers.rs` | AgentContext, memory GC, token budget, @import |
+| `Makefile` | Build targets: check, lint, fmt, test, release, audit |
+| `.githooks/pre-commit` | Pre-commit gate: test + clippy + fmt-check |
 | `install.sh` | One-liner installer with doctor |
 | `.github/workflows/release.yml` | CI: Linux build, crates.io, Homebrew update |
 

@@ -1,11 +1,13 @@
-use anyhow::Result;
 use crate::baml_client::{self, types};
 use crate::tools::{
-    read_file, write_file, run_command, FuzzySearcher, git_status, git_diff, git_add, git_commit,
-    build_skills_context,
-    mcp::McpManager,
+    FuzzySearcher, build_skills_context, git_add, git_commit, git_diff, git_status,
+    mcp::McpManager, read_file, run_command, write_file,
 };
-use baml_agent::{AgentMessage, MessageRole, Session, LoopDetector, SgrAgent, SgrAgentStream, StepDecision, ActionResult};
+use anyhow::Result;
+use baml_agent::{
+    ActionResult, AgentMessage, LoopDetector, MessageRole, Session, SgrAgent, SgrAgentStream,
+    StepDecision,
+};
 use std::path::Path;
 
 /// Shorthand for the 15-variant BAML action union.
@@ -17,11 +19,21 @@ pub use types::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFi
 pub struct Role(String);
 
 impl MessageRole for Role {
-    fn system() -> Self { Self("system".into()) }
-    fn user() -> Self { Self("user".into()) }
-    fn assistant() -> Self { Self("assistant".into()) }
-    fn tool() -> Self { Self("tool".into()) }
-    fn as_str(&self) -> &str { &self.0 }
+    fn system() -> Self {
+        Self("system".into())
+    }
+    fn user() -> Self {
+        Self("user".into())
+    }
+    fn assistant() -> Self {
+        Self("assistant".into())
+    }
+    fn tool() -> Self {
+        Self("tool".into())
+    }
+    fn as_str(&self) -> &str {
+        &self.0
+    }
     fn parse_role(s: &str) -> Option<Self> {
         match s {
             "system" | "user" | "assistant" | "tool" => Some(Self(s.into())),
@@ -37,13 +49,18 @@ pub struct Msg(pub types::Message);
 impl AgentMessage for Msg {
     type Role = Role;
     fn new(role: Role, content: String) -> Self {
-        Self(types::Message { role: role.0, content })
+        Self(types::Message {
+            role: role.0,
+            content,
+        })
     }
     fn role(&self) -> &Role {
         // Safety: Role is repr(String), same layout
         unsafe { &*((&self.0.role) as *const String as *const Role) }
     }
-    fn content(&self) -> &str { &self.0.content }
+    fn content(&self) -> &str {
+        &self.0.content
+    }
 }
 
 pub struct Agent {
@@ -92,7 +109,11 @@ impl Agent {
             self.session.push(Role::system(), mcp_ctx);
         }
 
-        tracing::info!("MCP ready: {} servers, {} tools", manager.server_count(), manager.tool_count());
+        tracing::info!(
+            "MCP ready: {} servers, {} tools",
+            manager.server_count(),
+            manager.tool_count()
+        );
         self.mcp = Some(manager);
         Ok(())
     }
@@ -124,7 +145,11 @@ impl Agent {
 
     /// Get raw BAML messages for the LLM call.
     fn baml_history(&self) -> Vec<types::Message> {
-        self.session.messages().iter().map(|m| m.0.clone()).collect()
+        self.session
+            .messages()
+            .iter()
+            .map(|m| m.0.clone())
+            .collect()
     }
 
     pub fn add_user_message(&mut self, content: impl Into<String>) {
@@ -136,7 +161,10 @@ impl Agent {
     }
 
     /// TUI-only: get streaming BAML call (used by app.rs manual loop).
-    pub fn step_stream(&mut self) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>> {
+    pub fn step_stream(
+        &mut self,
+    ) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>>
+    {
         self.session.trim();
         let history = self.baml_history();
         let stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
@@ -148,7 +176,12 @@ impl Agent {
         use Action::*;
         match action {
             ReadFileTool(cmd) => {
-                let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
+                let content = read_file(
+                    &cmd.path,
+                    cmd.offset.map(|o| o as usize),
+                    cmd.limit.map(|l| l as usize),
+                )
+                .await?;
                 Ok(ActionResult {
                     output: format!("File contents of {}:\n{}", cmd.path, content),
                     done: false,
@@ -210,7 +243,10 @@ impl Agent {
                             let lines: Vec<&str> = output.lines().collect();
                             if lines.len() > 100 {
                                 result.push_str(&lines[..100].join("\n"));
-                                result.push_str(&format!("\n...[Truncated {} more lines]...", lines.len() - 100));
+                                result.push_str(&format!(
+                                    "\n...[Truncated {} more lines]...",
+                                    lines.len() - 100
+                                ));
                             } else {
                                 result.push_str(&output);
                             }
@@ -221,35 +257,45 @@ impl Agent {
                     }
                 }
 
-                Ok(ActionResult { output: result, done: false })
+                Ok(ActionResult {
+                    output: result,
+                    done: false,
+                })
             }
-            GitStatusTool(_cmd) => {
-                match git_status()? {
-                    Some(status) => {
-                        let mut result = format!("Git Status:\nBranch: {}\nDirty: {}\n", status.branch, status.dirty);
-                        if !status.modified_files.is_empty() {
-                            result.push_str("\nModified files:\n");
-                            for f in &status.modified_files {
-                                result.push_str(&format!("  - {}\n", f));
-                            }
+            GitStatusTool(_cmd) => match git_status()? {
+                Some(status) => {
+                    let mut result = format!(
+                        "Git Status:\nBranch: {}\nDirty: {}\n",
+                        status.branch, status.dirty
+                    );
+                    if !status.modified_files.is_empty() {
+                        result.push_str("\nModified files:\n");
+                        for f in &status.modified_files {
+                            result.push_str(&format!("  - {}\n", f));
                         }
-                        if !status.staged_files.is_empty() {
-                            result.push_str("\nStaged files:\n");
-                            for f in &status.staged_files {
-                                result.push_str(&format!("  + {}\n", f));
-                            }
-                        }
-                        if !status.untracked_files.is_empty() {
-                            result.push_str("\nUntracked files:\n");
-                            for f in &status.untracked_files {
-                                result.push_str(&format!("  ? {}\n", f));
-                            }
-                        }
-                        Ok(ActionResult { output: result, done: false })
                     }
-                    None => Ok(ActionResult { output: "Not in a git repository".into(), done: false }),
+                    if !status.staged_files.is_empty() {
+                        result.push_str("\nStaged files:\n");
+                        for f in &status.staged_files {
+                            result.push_str(&format!("  + {}\n", f));
+                        }
+                    }
+                    if !status.untracked_files.is_empty() {
+                        result.push_str("\nUntracked files:\n");
+                        for f in &status.untracked_files {
+                            result.push_str(&format!("  ? {}\n", f));
+                        }
+                    }
+                    Ok(ActionResult {
+                        output: result,
+                        done: false,
+                    })
                 }
-            }
+                None => Ok(ActionResult {
+                    output: "Not in a git repository".into(),
+                    done: false,
+                }),
+            },
             GitDiffTool(cmd) => {
                 let diff = git_diff(cmd.path.as_deref(), cmd.cached.unwrap_or(false))?;
                 let output = if diff.is_empty() {
@@ -257,7 +303,10 @@ impl Agent {
                 } else {
                     format!("Git Diff:\n{}", diff)
                 };
-                Ok(ActionResult { output, done: false })
+                Ok(ActionResult {
+                    output,
+                    done: false,
+                })
             }
             GitAddTool(cmd) => {
                 git_add(&cmd.paths)?;
@@ -273,24 +322,18 @@ impl Agent {
                     done: false,
                 })
             }
-            OpenEditorTool(cmd) => {
-                Ok(ActionResult {
-                    output: format!("Opened {} in editor", cmd.path),
-                    done: false,
-                })
-            }
-            FinishTaskTool(cmd) => {
-                Ok(ActionResult {
-                    output: format!("Task finished: {}", cmd.summary),
-                    done: true,
-                })
-            }
-            AskUserTool(cmd) => {
-                Ok(ActionResult {
-                    output: format!("Question for user: {}", cmd.question),
-                    done: true,
-                })
-            }
+            OpenEditorTool(cmd) => Ok(ActionResult {
+                output: format!("Opened {} in editor", cmd.path),
+                done: false,
+            }),
+            FinishTaskTool(cmd) => Ok(ActionResult {
+                output: format!("Task finished: {}", cmd.summary),
+                done: true,
+            }),
+            AskUserTool(cmd) => Ok(ActionResult {
+                output: format!("Question for user: {}", cmd.question),
+                done: true,
+            }),
             MemoryTool(cmd) => {
                 let memory_path = Path::new(AGENT_HOME).join("MEMORY.jsonl");
                 let op = baml_agent::norm(&format!("{:?}", cmd.operation));
@@ -310,20 +353,26 @@ impl Agent {
                                 .unwrap_or_default().as_secs(),
                         });
                         let mut file = std::fs::OpenOptions::new()
-                            .create(true).append(true).open(&memory_path)
+                            .create(true)
+                            .append(true)
+                            .open(&memory_path)
                             .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
                         use std::io::Write;
                         writeln!(file, "{}", entry)
                             .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
                         Ok(ActionResult {
-                            output: format!("Memory saved: [{}] {} ({})", category, cmd.section, confidence),
+                            output: format!(
+                                "Memory saved: [{}] {} ({})",
+                                category, cmd.section, confidence
+                            ),
                             done: false,
                         })
                     }
                     "forget" => {
                         if memory_path.exists() {
                             let content = std::fs::read_to_string(&memory_path).unwrap_or_default();
-                            let filtered: Vec<&str> = content.lines()
+                            let filtered: Vec<&str> = content
+                                .lines()
                                 .filter(|line| {
                                     serde_json::from_str::<serde_json::Value>(line)
                                         .map(|v| v["section"].as_str() != Some(&cmd.section))
@@ -334,7 +383,10 @@ impl Agent {
                             std::fs::write(&memory_path, filtered.join("\n") + "\n")
                                 .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
                             Ok(ActionResult {
-                                output: format!("Memory: forgot {} entries from '{}'", removed, cmd.section),
+                                output: format!(
+                                    "Memory: forgot {} entries from '{}'",
+                                    removed, cmd.section
+                                ),
                                 done: false,
                             })
                         } else {
@@ -358,7 +410,8 @@ impl Agent {
                     });
                 };
                 let args = cmd.arguments.as_ref().and_then(|json_str| {
-                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str).ok()
+                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str)
+                        .ok()
                 });
                 match mcp.call_tool(&cmd.server, &cmd.tool, args).await {
                     Ok(result) => {
@@ -368,12 +421,10 @@ impl Agent {
                             done: false,
                         })
                     }
-                    Err(e) => {
-                        Ok(ActionResult {
-                            output: format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e),
-                            done: false,
-                        })
-                    }
+                    Err(e) => Ok(ActionResult {
+                        output: format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e),
+                        done: false,
+                    }),
                 }
             }
         }
@@ -391,11 +442,15 @@ impl SgrAgent for Agent {
 
     async fn decide(&self, messages: &[Msg]) -> Result<StepDecision<Action>> {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
-        let step = baml_client::async_client::B.GetNextStep.call(&history).await?;
+        let step = baml_client::async_client::B
+            .GetNextStep
+            .call(&history)
+            .await?;
 
-        let done = step.actions.iter().any(|a| {
-            matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_))
-        });
+        let done = step
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
         Ok(StepDecision {
             situation: step.situation,
@@ -460,9 +515,10 @@ impl SgrAgentStream for Agent {
             }
 
             let step = stream.get_final_response().await?;
-            let done = step.actions.iter().any(|a| {
-                matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_))
-            });
+            let done = step
+                .actions
+                .iter()
+                .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
             Ok(StepDecision {
                 situation: step.situation,

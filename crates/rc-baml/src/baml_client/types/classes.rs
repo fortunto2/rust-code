@@ -3,31 +3,18 @@
 //
 // Learn more at https://docs.boundaryml.com
 
-
 //! Generated class types.
 
-use baml::{BamlEncode, BamlDecode};
 use super::*;
-
-
-
+use baml::{BamlDecode, BamlEncode};
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct AskUserTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub question: String,
-
-
 }
-
-
 
 impl AsRef<AskUserTool> for AskUserTool {
     fn as_ref(&self) -> &AskUserTool {
@@ -35,29 +22,15 @@ impl AsRef<AskUserTool> for AskUserTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct BashBgTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub name: String,
 
-
-
     pub command: String,
-
-
 }
-
-
 
 impl AsRef<BashBgTool> for BashBgTool {
     fn as_ref(&self) -> &BashBgTool {
@@ -65,25 +38,13 @@ impl AsRef<BashBgTool> for BashBgTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct BashCommandTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub command: String,
-
-
 }
-
-
 
 impl AsRef<BashCommandTool> for BashCommandTool {
     fn as_ref(&self) -> &BashCommandTool {
@@ -91,33 +52,17 @@ impl AsRef<BashCommandTool> for BashCommandTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct EditFileTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub path: String,
 
-
-
     pub old_string: String,
 
-
-
     pub new_string: String,
-
-
 }
-
-
 
 impl AsRef<EditFileTool> for EditFileTool {
     fn as_ref(&self) -> &EditFileTool {
@@ -125,25 +70,13 @@ impl AsRef<EditFileTool> for EditFileTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct FinishTaskTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub summary: String,
-
-
 }
-
-
 
 impl AsRef<FinishTaskTool> for FinishTaskTool {
     fn as_ref(&self) -> &FinishTaskTool {
@@ -151,25 +84,13 @@ impl AsRef<FinishTaskTool> for FinishTaskTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitAddTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub paths: Vec<String>,
-
-
 }
-
-
 
 impl AsRef<GitAddTool> for GitAddTool {
     fn as_ref(&self) -> &GitAddTool {
@@ -177,25 +98,13 @@ impl AsRef<GitAddTool> for GitAddTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitCommitTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub message: String,
-
-
 }
-
-
 
 impl AsRef<GitCommitTool> for GitCommitTool {
     fn as_ref(&self) -> &GitCommitTool {
@@ -203,29 +112,15 @@ impl AsRef<GitCommitTool> for GitCommitTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitDiffTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub path: Option<String>,
 
-
-
     pub cached: Option<bool>,
-
-
 }
-
-
 
 impl AsRef<GitDiffTool> for GitDiffTool {
     fn as_ref(&self) -> &GitDiffTool {
@@ -233,25 +128,13 @@ impl AsRef<GitDiffTool> for GitDiffTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct GitStatusTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub dummy: Option<String>,
-
-
 }
-
-
 
 impl AsRef<GitStatusTool> for GitStatusTool {
     fn as_ref(&self) -> &GitStatusTool {
@@ -259,33 +142,17 @@ impl AsRef<GitStatusTool> for GitStatusTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct McpToolCall {
-
-
-
     pub tool_name: String,
-
-
 
     pub server: String,
 
-
-
     pub tool: String,
 
-
-
     pub arguments: Option<String>,
-
-
 }
-
-
 
 impl AsRef<McpToolCall> for McpToolCall {
     fn as_ref(&self) -> &McpToolCall {
@@ -293,45 +160,23 @@ impl AsRef<McpToolCall> for McpToolCall {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct MemoryTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub operation: Union2KforgetOrKsave,
 
-
-
     pub category: Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference,
-
-
 
     pub section: String,
 
-
-
     pub content: String,
-
-
 
     pub context: Option<String>,
 
-
-
     pub confidence: Union2KconfirmedOrKtentative,
-
-
 }
-
-
 
 impl AsRef<MemoryTool> for MemoryTool {
     fn as_ref(&self) -> &MemoryTool {
@@ -339,34 +184,19 @@ impl AsRef<MemoryTool> for MemoryTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct Message {
-
-
-
     pub role: String,
 
-
-
     pub content: String,
-
-
 }
-
-
 
 impl AsRef<Message> for Message {
     fn as_ref(&self) -> &Message {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
@@ -387,37 +217,21 @@ pub struct NextStep {
 
 }
 
-
-
 impl AsRef<NextStep> for NextStep {
     fn as_ref(&self) -> &NextStep {
         self
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct OpenEditorTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub path: String,
 
-
-
     pub line: Option<i64>,
-
-
 }
-
-
 
 impl AsRef<OpenEditorTool> for OpenEditorTool {
     fn as_ref(&self) -> &OpenEditorTool {
@@ -425,33 +239,17 @@ impl AsRef<OpenEditorTool> for OpenEditorTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct ReadFileTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub path: String,
 
-
-
     pub offset: Option<i64>,
 
-
-
     pub limit: Option<i64>,
-
-
 }
-
-
 
 impl AsRef<ReadFileTool> for ReadFileTool {
     fn as_ref(&self) -> &ReadFileTool {
@@ -459,25 +257,13 @@ impl AsRef<ReadFileTool> for ReadFileTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct SearchCodeTool {
-
-
-
     pub tool_name: String,
 
-
-
     pub query: String,
-
-
 }
-
-
 
 impl AsRef<SearchCodeTool> for SearchCodeTool {
     fn as_ref(&self) -> &SearchCodeTool {
@@ -485,33 +271,18 @@ impl AsRef<SearchCodeTool> for SearchCodeTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
 pub struct WriteFileTool {
-
-
-
     pub tool_name: String,
-
-
 
     pub path: String,
 
-
-
     pub content: String,
-
-
 }
-
-
 
 impl AsRef<WriteFileTool> for WriteFileTool {
     fn as_ref(&self) -> &WriteFileTool {
         self
     }
 }
-

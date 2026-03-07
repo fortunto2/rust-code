@@ -45,7 +45,11 @@ impl AgentEngine {
     /// Iterates all providers, sets options (model, base_url, location,
     /// project_id, api_key), and sets the primary client.
     pub fn build_registry<R: BamlRegistry>(&self) -> Result<R, String> {
-        if !self.config.providers.contains_key(&self.config.default_provider) {
+        if !self
+            .config
+            .providers
+            .contains_key(&self.config.default_provider)
+        {
             return Err(format!(
                 "default provider '{}' is not configured",
                 self.config.default_provider
@@ -68,7 +72,10 @@ impl AgentEngine {
                 options.insert("project_id".into(), serde_json::json!(pid));
             }
             if let Some(env_var) = &conf.api_key_env_var {
-                options.insert("api_key".into(), serde_json::json!(format!("env.{}", env_var)));
+                options.insert(
+                    "api_key".into(),
+                    serde_json::json!(format!("env.{}", env_var)),
+                );
             }
 
             registry.add_llm_client(name, &conf.provider_type, options);

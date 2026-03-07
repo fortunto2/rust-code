@@ -50,164 +50,162 @@ impl TypeBuilder {
     // Schema Class Accessors (1:1 with schema class names)
     // =========================================================================
 
-
     /// Access the `AskUserTool` class builder.
     pub fn AskUserTool(&self) -> AskUserToolClassBuilder {
         AskUserToolClassBuilder::new(
-            self.inner.get_class("AskUserTool")
-                .expect("class AskUserTool is defined in schema")
+            self.inner
+                .get_class("AskUserTool")
+                .expect("class AskUserTool is defined in schema"),
         )
     }
-
 
     /// Access the `BashBgTool` class builder.
     pub fn BashBgTool(&self) -> BashBgToolClassBuilder {
         BashBgToolClassBuilder::new(
-            self.inner.get_class("BashBgTool")
-                .expect("class BashBgTool is defined in schema")
+            self.inner
+                .get_class("BashBgTool")
+                .expect("class BashBgTool is defined in schema"),
         )
     }
-
 
     /// Access the `BashCommandTool` class builder.
     pub fn BashCommandTool(&self) -> BashCommandToolClassBuilder {
         BashCommandToolClassBuilder::new(
-            self.inner.get_class("BashCommandTool")
-                .expect("class BashCommandTool is defined in schema")
+            self.inner
+                .get_class("BashCommandTool")
+                .expect("class BashCommandTool is defined in schema"),
         )
     }
-
 
     /// Access the `EditFileTool` class builder.
     pub fn EditFileTool(&self) -> EditFileToolClassBuilder {
         EditFileToolClassBuilder::new(
-            self.inner.get_class("EditFileTool")
-                .expect("class EditFileTool is defined in schema")
+            self.inner
+                .get_class("EditFileTool")
+                .expect("class EditFileTool is defined in schema"),
         )
     }
-
 
     /// Access the `FinishTaskTool` class builder.
     pub fn FinishTaskTool(&self) -> FinishTaskToolClassBuilder {
         FinishTaskToolClassBuilder::new(
-            self.inner.get_class("FinishTaskTool")
-                .expect("class FinishTaskTool is defined in schema")
+            self.inner
+                .get_class("FinishTaskTool")
+                .expect("class FinishTaskTool is defined in schema"),
         )
     }
-
 
     /// Access the `GitAddTool` class builder.
     pub fn GitAddTool(&self) -> GitAddToolClassBuilder {
         GitAddToolClassBuilder::new(
-            self.inner.get_class("GitAddTool")
-                .expect("class GitAddTool is defined in schema")
+            self.inner
+                .get_class("GitAddTool")
+                .expect("class GitAddTool is defined in schema"),
         )
     }
-
 
     /// Access the `GitCommitTool` class builder.
     pub fn GitCommitTool(&self) -> GitCommitToolClassBuilder {
         GitCommitToolClassBuilder::new(
-            self.inner.get_class("GitCommitTool")
-                .expect("class GitCommitTool is defined in schema")
+            self.inner
+                .get_class("GitCommitTool")
+                .expect("class GitCommitTool is defined in schema"),
         )
     }
-
 
     /// Access the `GitDiffTool` class builder.
     pub fn GitDiffTool(&self) -> GitDiffToolClassBuilder {
         GitDiffToolClassBuilder::new(
-            self.inner.get_class("GitDiffTool")
-                .expect("class GitDiffTool is defined in schema")
+            self.inner
+                .get_class("GitDiffTool")
+                .expect("class GitDiffTool is defined in schema"),
         )
     }
-
 
     /// Access the `GitStatusTool` class builder.
     pub fn GitStatusTool(&self) -> GitStatusToolClassBuilder {
         GitStatusToolClassBuilder::new(
-            self.inner.get_class("GitStatusTool")
-                .expect("class GitStatusTool is defined in schema")
+            self.inner
+                .get_class("GitStatusTool")
+                .expect("class GitStatusTool is defined in schema"),
         )
     }
-
 
     /// Access the `McpToolCall` class builder.
     pub fn McpToolCall(&self) -> McpToolCallClassBuilder {
         McpToolCallClassBuilder::new(
-            self.inner.get_class("McpToolCall")
-                .expect("class McpToolCall is defined in schema")
+            self.inner
+                .get_class("McpToolCall")
+                .expect("class McpToolCall is defined in schema"),
         )
     }
-
 
     /// Access the `MemoryTool` class builder.
     pub fn MemoryTool(&self) -> MemoryToolClassBuilder {
         MemoryToolClassBuilder::new(
-            self.inner.get_class("MemoryTool")
-                .expect("class MemoryTool is defined in schema")
+            self.inner
+                .get_class("MemoryTool")
+                .expect("class MemoryTool is defined in schema"),
         )
     }
-
 
     /// Access the `Message` class builder.
     pub fn Message(&self) -> MessageClassBuilder {
         MessageClassBuilder::new(
-            self.inner.get_class("Message")
-                .expect("class Message is defined in schema")
+            self.inner
+                .get_class("Message")
+                .expect("class Message is defined in schema"),
         )
     }
-
 
     /// Access the `NextStep` class builder.
     pub fn NextStep(&self) -> NextStepClassBuilder {
         NextStepClassBuilder::new(
-            self.inner.get_class("NextStep")
-                .expect("class NextStep is defined in schema")
+            self.inner
+                .get_class("NextStep")
+                .expect("class NextStep is defined in schema"),
         )
     }
-
 
     /// Access the `OpenEditorTool` class builder.
     pub fn OpenEditorTool(&self) -> OpenEditorToolClassBuilder {
         OpenEditorToolClassBuilder::new(
-            self.inner.get_class("OpenEditorTool")
-                .expect("class OpenEditorTool is defined in schema")
+            self.inner
+                .get_class("OpenEditorTool")
+                .expect("class OpenEditorTool is defined in schema"),
         )
     }
-
 
     /// Access the `ReadFileTool` class builder.
     pub fn ReadFileTool(&self) -> ReadFileToolClassBuilder {
         ReadFileToolClassBuilder::new(
-            self.inner.get_class("ReadFileTool")
-                .expect("class ReadFileTool is defined in schema")
+            self.inner
+                .get_class("ReadFileTool")
+                .expect("class ReadFileTool is defined in schema"),
         )
     }
-
 
     /// Access the `SearchCodeTool` class builder.
     pub fn SearchCodeTool(&self) -> SearchCodeToolClassBuilder {
         SearchCodeToolClassBuilder::new(
-            self.inner.get_class("SearchCodeTool")
-                .expect("class SearchCodeTool is defined in schema")
+            self.inner
+                .get_class("SearchCodeTool")
+                .expect("class SearchCodeTool is defined in schema"),
         )
     }
-
 
     /// Access the `WriteFileTool` class builder.
     pub fn WriteFileTool(&self) -> WriteFileToolClassBuilder {
         WriteFileToolClassBuilder::new(
-            self.inner.get_class("WriteFileTool")
-                .expect("class WriteFileTool is defined in schema")
+            self.inner
+                .get_class("WriteFileTool")
+                .expect("class WriteFileTool is defined in schema"),
         )
     }
-
 
     // =========================================================================
     // Schema Enum Accessors (1:1 with schema enum names)
     // =========================================================================
-
 
     // =========================================================================
     // Primitive Types (all infallible)

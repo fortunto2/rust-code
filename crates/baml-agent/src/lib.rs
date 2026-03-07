@@ -1,28 +1,39 @@
+pub mod agent_loop;
 pub mod config;
 pub mod engine;
-pub mod session;
-pub mod loop_detect;
-pub mod agent_loop;
-pub mod prompt;
 pub mod helpers;
 #[cfg(feature = "logging")]
 pub mod logging;
+pub mod loop_detect;
+pub mod prompt;
+pub mod session;
 
-pub use config::{AgentConfig, ProviderConfig, AgentConfigError};
-pub use engine::{BamlRegistry, AgentEngine};
-pub use session::{AgentMessage, MessageRole, EntryType, Session, SessionMeta, list_sessions, import_claude_session};
-#[cfg(feature = "search")]
-pub use session::search_sessions;
-pub use loop_detect::{LoopDetector, LoopStatus, normalize_signature};
-pub use agent_loop::{SgrAgent, SgrAgentStream, StepDecision, ActionResult, LoopConfig, LoopEvent, run_loop, run_loop_stream, process_step};
-pub use prompt::{BASE_SYSTEM_PROMPT, build_system_prompt};
-pub use helpers::{norm, norm_owned, action_result_json, action_result_from, action_result_done, truncate_json_array, load_manifesto, load_manifesto_from, load_context_dir, AgentContext};
+pub use agent_loop::{
+    process_step, run_loop, run_loop_stream, ActionResult, LoopConfig, LoopEvent, SgrAgent,
+    SgrAgentStream, StepDecision,
+};
+pub use config::{AgentConfig, AgentConfigError, ProviderConfig};
+pub use engine::{AgentEngine, BamlRegistry};
+pub use helpers::{
+    action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
+    load_manifesto_from, norm, norm_owned, truncate_json_array, AgentContext,
+};
 #[cfg(feature = "logging")]
 pub use logging::init_logging;
+pub use loop_detect::{normalize_signature, LoopDetector, LoopStatus};
+pub use prompt::{build_system_prompt, BASE_SYSTEM_PROMPT};
+#[cfg(feature = "search")]
+pub use session::search_sessions;
+pub use session::{
+    import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
+    SessionMeta,
+};
 
 /// Suppress BAML's default stdout logging (prompts, responses, timing).
 /// Call once at startup before any BAML calls.
 pub fn suppress_baml_log() {
     // SAFETY: single-threaded init, before any BAML calls
-    unsafe { std::env::set_var("BAML_LOG", "off"); }
+    unsafe {
+        std::env::set_var("BAML_LOG", "off");
+    }
 }

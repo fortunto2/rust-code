@@ -64,10 +64,14 @@ impl ChatState {
 
     /// Render messages as a List widget with role-based styling.
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, title: &str) {
-        let items: Vec<ListItem> = self.messages.iter().map(|m| {
-            let style = Self::message_style(m);
-            ListItem::new(Line::from(m.as_str()).style(style))
-        }).collect();
+        let items: Vec<ListItem> = self
+            .messages
+            .iter()
+            .map(|m| {
+                let style = Self::message_style(m);
+                ListItem::new(Line::from(m.as_str()).style(style))
+            })
+            .collect();
 
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -82,7 +86,9 @@ impl ChatState {
             // User message
             Style::default().fg(Color::Cyan)
         } else if msg.starts_with("[THINK]") || msg.starts_with("[STREAM]") {
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC)
         } else if msg.starts_with("[TOOL]") {
             Style::default().fg(Color::Green)
         } else if msg.starts_with("[ERR]") {

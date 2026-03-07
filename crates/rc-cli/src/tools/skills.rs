@@ -1,26 +1,26 @@
 use anyhow::{Result, anyhow};
-use nucleo_matcher::{Config, Matcher, Utf32Str, pattern::{CaseMatching, Normalization, Pattern}};
+use nucleo_matcher::{
+    Config, Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Global skill directories (relative to $HOME).
 const GLOBAL_SKILL_DIRS: &[&str] = &[
-    ".agents/skills",      // universal (npx skills canonical)
-    ".claude/skills",      // claude-specific
+    ".agents/skills", // universal (npx skills canonical)
+    ".claude/skills", // claude-specific
     ".config/opencode/skills",
 ];
 
 /// Project-local skill directories (relative to CWD).
-const LOCAL_SKILL_DIRS: &[&str] = &[
-    ".agents/skills",
-    ".claude/skills",
-];
+const LOCAL_SKILL_DIRS: &[&str] = &[".agents/skills", ".claude/skills"];
 
 #[derive(Debug, Clone)]
 pub struct InstalledSkill {
     pub name: String,
-    pub path: PathBuf,        // canonical path to SKILL.md
+    pub path: PathBuf, // canonical path to SKILL.md
     pub description: Option<String>,
     pub source: SkillSource,
 }
@@ -41,7 +41,12 @@ pub fn collect_installed_skills() -> Vec<InstalledSkill> {
     // Global dirs first (higher priority for name dedup)
     let global_dirs: Vec<(PathBuf, SkillSource)> = GLOBAL_SKILL_DIRS
         .iter()
-        .map(|d| (PathBuf::from(format!("{}/{}", home, d)), SkillSource::Global))
+        .map(|d| {
+            (
+                PathBuf::from(format!("{}/{}", home, d)),
+                SkillSource::Global,
+            )
+        })
         .collect();
 
     // Project-local dirs
@@ -163,7 +168,13 @@ pub async fn install_skill(repo: &str) -> Result<String> {
     }
 
     let clone_output = tokio::process::Command::new("git")
-        .args(["clone", "--depth", "1", &github_url, &tmp_dir.to_string_lossy()])
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            &github_url,
+            &tmp_dir.to_string_lossy(),
+        ])
         .output()
         .await?;
 
@@ -189,11 +200,13 @@ pub async fn install_skill(repo: &str) -> Result<String> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() && path.join("SKILL.md").exists() {
-                    let dir_name = path.file_name()
+                    let dir_name = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
                     // Read frontmatter name if available (e.g. "name: solo-build")
-                    let fm_name = std::fs::read_to_string(path.join("SKILL.md")).ok()
+                    let fm_name = std::fs::read_to_string(path.join("SKILL.md"))
+                        .ok()
                         .and_then(|c| {
                             c.lines()
                                 .find(|l| l.starts_with("name:"))
@@ -218,11 +231,11 @@ pub async fn install_skill(repo: &str) -> Result<String> {
     }
 
     // Filter to specific skill if requested — match by dir name OR frontmatter name
-    let to_install: Vec<(String, Option<String>, PathBuf)> = if let Some(ref name) = specific_skill {
-        let matching: Vec<_> = found_skills.into_iter()
-            .filter(|(dir_name, fm_name, _)| {
-                dir_name == name || fm_name.as_deref() == Some(name)
-            })
+    let to_install: Vec<(String, Option<String>, PathBuf)> = if let Some(ref name) = specific_skill
+    {
+        let matching: Vec<_> = found_skills
+            .into_iter()
+            .filter(|(dir_name, fm_name, _)| dir_name == name || fm_name.as_deref() == Some(name))
             .collect();
         if matching.is_empty() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -247,7 +260,11 @@ pub async fn install_skill(repo: &str) -> Result<String> {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
-    Ok(format!("Installed {} skill(s): {}", installed.len(), installed.join(", ")))
+    Ok(format!(
+        "Installed {} skill(s): {}",
+        installed.len(),
+        installed.join(", ")
+    ))
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
@@ -274,10 +291,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 /// Also cleans up any symlinks pointing to it.
 pub fn remove_skill(name: &str) -> Result<()> {
     let skills = collect_installed_skills();
-    let skill = skills
-        .iter()
-        .find(|s| s.name == name)
-        .ok_or_else(|| anyhow!("Skill '{}' not found. Run `rust-code skills list` to see installed skills.", name))?;
+    let skill = skills.iter().find(|s| s.name == name).ok_or_else(|| {
+        anyhow!(
+            "Skill '{}' not found. Run `rust-code skills list` to see installed skills.",
+            name
+        )
+    })?;
 
     let skill_dir = skill
         .path
@@ -376,11 +395,17 @@ pub fn build_skills_context() -> Option<String> {
                 SkillSource::Project => "project",
             };
             // Prefer bundled version (has rust-code commands) over system one
-            let skill_path = bundled.as_ref()
+            let skill_path = bundled
+                .as_ref()
                 .map(|b| b.join(&skill.name).join("SKILL.md"))
                 .filter(|p| p.exists())
                 .unwrap_or_else(|| skill.path.clone());
-            ctx.push_str(&format!("- **{}** [{}] `{}`", skill.name, scope, skill_path.display()));
+            ctx.push_str(&format!(
+                "- **{}** [{}] `{}`",
+                skill.name,
+                scope,
+                skill_path.display()
+            ));
             if let Some(desc) = &skill.description {
                 ctx.push_str(&format!(": {}", desc));
             }
@@ -399,13 +424,14 @@ pub fn build_skills_context() -> Option<String> {
 
 /// Get a skill by name. Returns None if not found.
 pub fn get_skill(name: &str) -> Option<InstalledSkill> {
-    collect_installed_skills().into_iter().find(|s| s.name == name)
+    collect_installed_skills()
+        .into_iter()
+        .find(|s| s.name == name)
 }
 
 /// Read the full SKILL.md content for a skill.
 pub fn read_skill_content(name: &str) -> Result<String> {
-    let skill = get_skill(name)
-        .ok_or_else(|| anyhow!("Skill '{}' not found", name))?;
+    let skill = get_skill(name).ok_or_else(|| anyhow!("Skill '{}' not found", name))?;
     let content = std::fs::read_to_string(&skill.path)?;
     Ok(content)
 }
@@ -413,10 +439,11 @@ pub fn read_skill_content(name: &str) -> Result<String> {
 /// Read SKILL.md + all supplementary .md files in the skill directory.
 /// Returns concatenated content suitable for agent context injection.
 pub fn load_skill_full(name: &str) -> Result<String> {
-    let skill = get_skill(name)
-        .ok_or_else(|| anyhow!("Skill '{}' not found", name))?;
+    let skill = get_skill(name).ok_or_else(|| anyhow!("Skill '{}' not found", name))?;
 
-    let skill_dir = skill.path.parent()
+    let skill_dir = skill
+        .path
+        .parent()
         .ok_or_else(|| anyhow!("Cannot determine skill directory"))?;
 
     let mut content = String::new();
@@ -463,15 +490,16 @@ pub fn fuzzy_search_skills(query: &str) -> Vec<(u32, InstalledSkill)> {
 
     for skill in skills {
         // Score name separately (short string → higher scores for good matches)
-        let name_score = pattern.score(
-            Utf32Str::Ascii(skill.name.as_bytes()),
-            &mut matcher,
-        ).unwrap_or(0);
+        let name_score = pattern
+            .score(Utf32Str::Ascii(skill.name.as_bytes()), &mut matcher)
+            .unwrap_or(0);
 
         // Score description
-        let desc_score = skill.description.as_ref().and_then(|desc| {
-            pattern.score(Utf32Str::Ascii(desc.as_bytes()), &mut matcher)
-        }).unwrap_or(0);
+        let desc_score = skill
+            .description
+            .as_ref()
+            .and_then(|desc| pattern.score(Utf32Str::Ascii(desc.as_bytes()), &mut matcher))
+            .unwrap_or(0);
 
         let best = name_score.max(desc_score);
         if best > 0 {
@@ -492,7 +520,7 @@ const CACHE_FILE: &str = "skills-catalog.json";
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CatalogEntry {
     pub name: String,
-    pub repo: String,       // "owner/repo"
+    pub repo: String, // "owner/repo"
     pub url: String,
     pub installs: u64,
     pub trending_rank: Option<usize>,
@@ -555,7 +583,9 @@ pub fn fetch_skills_catalog() -> Vec<CatalogEntry> {
     let main_skills = parse_skill_links(&main_page);
     for (owner, repo, skill) in &main_skills {
         let key = format!("{}/{}/{}", owner, repo, skill);
-        if seen.contains(&key) { continue; }
+        if seen.contains(&key) {
+            continue;
+        }
         seen.insert(key.clone());
         let installs = parse_installs_near(&main_page, &key).unwrap_or(0);
         entries.push(CatalogEntry {
@@ -573,9 +603,10 @@ pub fn fetch_skills_catalog() -> Vec<CatalogEntry> {
     let trending_skills = parse_skill_links(&trending);
     for (i, (owner, repo, skill)) in trending_skills.iter().enumerate() {
         let key = format!("{}/{}/{}", owner, repo, skill);
-        if let Some(existing) = entries.iter_mut().find(|e| {
-            e.name == *skill && e.repo == format!("{}/{}", owner, repo)
-        }) {
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|e| e.name == *skill && e.repo == format!("{}/{}", owner, repo))
+        {
             existing.trending_rank = Some(i);
         } else if !seen.contains(&key) {
             seen.insert(key.clone());
@@ -596,7 +627,9 @@ pub fn fetch_skills_catalog() -> Vec<CatalogEntry> {
     let hot_skills = parse_skill_links(&hot_page);
     for (owner, repo, skill) in &hot_skills {
         let key = format!("{}/{}/{}", owner, repo, skill);
-        if seen.contains(&key) { continue; }
+        if seen.contains(&key) {
+            continue;
+        }
         seen.insert(key.clone());
         let installs = parse_installs_near(&hot_page, &key).unwrap_or(0);
         entries.push(CatalogEntry {
@@ -621,23 +654,32 @@ pub fn fetch_skills_catalog() -> Vec<CatalogEntry> {
 /// Search skills.sh API — searches across ALL 60K+ skills server-side.
 /// Returns up to 20 results per query, sorted by relevance.
 pub fn search_skills_api(query: &str) -> Vec<CatalogEntry> {
-    if query.trim().len() < 2 { return Vec::new(); }
+    if query.trim().len() < 2 {
+        return Vec::new();
+    }
 
-    let encoded_query: String = query.bytes().map(|b| {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' {
-            format!("{}", b as char)
-        } else {
-            format!("%{:02X}", b)
-        }
-    }).collect();
+    let encoded_query: String = query
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' {
+                format!("{}", b as char)
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect();
     let url = format!("https://skills.sh/api/search?q={}", encoded_query);
     let output = std::process::Command::new("curl")
         .args(["-fsSL", "--max-time", "5", &url])
         .output()
         .ok();
 
-    let Some(output) = output else { return Vec::new() };
-    if !output.status.success() { return Vec::new(); }
+    let Some(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
 
     let json = String::from_utf8_lossy(&output.stdout);
 
@@ -714,7 +756,11 @@ fn parse_skill_links(html: &str) -> Vec<(String, String, String)> {
         if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
             continue;
         }
-        out.push((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()));
+        out.push((
+            parts[0].to_string(),
+            parts[1].to_string(),
+            parts[2].to_string(),
+        ));
     }
     out
 }
@@ -728,11 +774,18 @@ fn parse_installs_near(html: &str, key: &str) -> Option<u64> {
     // Skip plain numbers like "1</span>" which are row numbers
     let mut i = 0;
     while i < snippet.len() {
-        if snippet.as_bytes().get(i).map(|b| b.is_ascii_digit()).unwrap_or(false) {
+        if snippet
+            .as_bytes()
+            .get(i)
+            .map(|b| b.is_ascii_digit())
+            .unwrap_or(false)
+        {
             let num_start = i;
-            while i < snippet.len() && (snippet.as_bytes()[i].is_ascii_digit()
-                || snippet.as_bytes()[i] == b'.'
-                || snippet.as_bytes()[i] == b',') {
+            while i < snippet.len()
+                && (snippet.as_bytes()[i].is_ascii_digit()
+                    || snippet.as_bytes()[i] == b'.'
+                    || snippet.as_bytes()[i] == b',')
+            {
                 i += 1;
             }
             let suffix = snippet.as_bytes().get(i).copied().unwrap_or(0);
@@ -755,7 +808,6 @@ fn parse_installs_near(html: &str, key: &str) -> Option<u64> {
     None
 }
 
-
 /// Fuzzy search catalog entries by query.
 pub fn fuzzy_search_catalog(query: &str, catalog: &[CatalogEntry]) -> Vec<(u32, CatalogEntry)> {
     if query.trim().is_empty() {
@@ -769,9 +821,11 @@ pub fn fuzzy_search_catalog(query: &str, catalog: &[CatalogEntry]) -> Vec<(u32, 
         let name_score = pattern
             .score(Utf32Str::Ascii(entry.name.as_bytes()), &mut matcher)
             .unwrap_or(0);
-        let desc_score = entry.description.as_ref().and_then(|d| {
-            pattern.score(Utf32Str::Ascii(d.as_bytes()), &mut matcher)
-        }).unwrap_or(0);
+        let desc_score = entry
+            .description
+            .as_ref()
+            .and_then(|d| pattern.score(Utf32Str::Ascii(d.as_bytes()), &mut matcher))
+            .unwrap_or(0);
         let repo_score = pattern
             .score(Utf32Str::Ascii(entry.repo.as_bytes()), &mut matcher)
             .unwrap_or(0);
@@ -786,12 +840,11 @@ pub fn fuzzy_search_catalog(query: &str, catalog: &[CatalogEntry]) -> Vec<(u32, 
 
 /// Common stop words to exclude from skill matching.
 const STOP_WORDS: &[&str] = &[
-    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her",
-    "was", "one", "our", "out", "use", "when", "will", "how", "its", "let", "may",
-    "who", "did", "get", "has", "him", "his", "she", "too", "than", "that", "this",
-    "with", "from", "have", "been", "said", "each", "which", "their", "them",
-    "then", "into", "some", "could", "other", "about", "would", "make", "like",
-    "just", "over", "such", "also", "back", "should", "well", "only", "very",
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one",
+    "our", "out", "use", "when", "will", "how", "its", "let", "may", "who", "did", "get", "has",
+    "him", "his", "she", "too", "than", "that", "this", "with", "from", "have", "been", "said",
+    "each", "which", "their", "them", "then", "into", "some", "could", "other", "about", "would",
+    "make", "like", "just", "over", "such", "also", "back", "should", "well", "only", "very",
     "where", "after", "most", "what", "want", "needs", "user", "based", "using",
 ];
 
@@ -817,7 +870,8 @@ pub fn match_skills_for_message(message: &str) -> Vec<InstalledSkill> {
         let mut best_name_score: u32 = 0;
         for word in &msg_words {
             let pattern = Pattern::parse(word, CaseMatching::Ignore, Normalization::Smart);
-            if let Some(score) = pattern.score(Utf32Str::Ascii(name_lower.as_bytes()), &mut matcher) {
+            if let Some(score) = pattern.score(Utf32Str::Ascii(name_lower.as_bytes()), &mut matcher)
+            {
                 best_name_score = best_name_score.max(score);
             }
         }
@@ -844,7 +898,10 @@ pub fn match_skills_for_message(message: &str) -> Vec<InstalledSkill> {
         if total == 0 {
             continue;
         }
-        let hits = desc_keywords.iter().filter(|kw| msg_lower.contains(kw.as_str())).count();
+        let hits = desc_keywords
+            .iter()
+            .filter(|kw| msg_lower.contains(kw.as_str()))
+            .count();
 
         // Boost: if name partially matches (score >= 30), lower keyword threshold
         if best_name_score >= 30 && hits >= 1 {
@@ -860,9 +917,7 @@ pub fn match_skills_for_message(message: &str) -> Vec<InstalledSkill> {
 }
 
 /// Default skills that should always be available.
-const DEFAULT_SKILLS: &[(&str, &str)] = &[
-    ("find-skills", "vercel-labs/skills"),
-];
+const DEFAULT_SKILLS: &[(&str, &str)] = &[("find-skills", "vercel-labs/skills")];
 
 /// Check if default skills are installed, return missing ones.
 pub fn check_default_skills() -> Vec<(&'static str, &'static str)> {

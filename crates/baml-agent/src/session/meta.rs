@@ -4,9 +4,9 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use super::traits::EntryType;
 use super::format::{make_persisted, parse_entry};
-use super::time::{uuid_v7_timestamp, truncate_topic};
+use super::time::{truncate_topic, uuid_v7_timestamp};
+use super::traits::EntryType;
 
 /// Metadata about a saved session (lightweight, no full message load).
 #[derive(Debug, Clone)]
@@ -39,7 +39,9 @@ impl SessionMeta {
         let mut first_uuid = None;
 
         for line in reader.lines().map_while(Result::ok) {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
             message_count += 1;
 
             if session_id.is_none() {
@@ -57,11 +59,13 @@ impl SessionMeta {
         }
 
         // Determine creation time: UUID v7 timestamp > filename > file mtime
-        let created = first_uuid.as_deref()
+        let created = first_uuid
+            .as_deref()
             .and_then(uuid_v7_timestamp)
             .or_else(|| filename.strip_prefix("session_")?.parse::<u64>().ok())
             .or_else(|| {
-                meta.modified().ok()
+                meta.modified()
+                    .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
             })
@@ -80,7 +84,9 @@ impl SessionMeta {
 
 /// List all sessions in a directory, sorted by creation time (newest first).
 pub fn list_sessions(session_dir: &str) -> Vec<SessionMeta> {
-    let Ok(entries) = fs::read_dir(session_dir) else { return vec![] };
+    let Ok(entries) = fs::read_dir(session_dir) else {
+        return vec![];
+    };
     let mut sessions: Vec<SessionMeta> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
@@ -95,8 +101,8 @@ pub fn list_sessions(session_dir: &str) -> Vec<SessionMeta> {
 /// Returns matches sorted by score (best first). Requires the `search` feature.
 #[cfg(feature = "search")]
 pub fn search_sessions(session_dir: &str, query: &str) -> Vec<(u32, SessionMeta)> {
+    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
     use nucleo_matcher::{Config, Matcher, Utf32Str};
-    use nucleo_matcher::pattern::{Pattern, CaseMatching, Normalization};
 
     let sessions = list_sessions(session_dir);
     if sessions.is_empty() || query.is_empty() {
@@ -110,7 +116,9 @@ pub fn search_sessions(session_dir: &str, query: &str) -> Vec<(u32, SessionMeta)
         .into_iter()
         .filter_map(|s| {
             let haystack = Utf32Str::Ascii(s.topic.as_bytes());
-            pattern.score(haystack, &mut matcher).map(|score| (score, s))
+            pattern
+                .score(haystack, &mut matcher)
+                .map(|score| (score, s))
         })
         .collect();
 
@@ -125,10 +133,7 @@ pub fn search_sessions(session_dir: &str, query: &str) -> Vec<(u32, SessionMeta)
 /// with different structure are also handled.
 ///
 /// Returns the output path of the imported session.
-pub fn import_claude_session(
-    claude_path: &Path,
-    output_dir: &str,
-) -> Option<PathBuf> {
+pub fn import_claude_session(claude_path: &Path, output_dir: &str) -> Option<PathBuf> {
     let file = fs::File::open(claude_path).ok()?;
     let reader = BufReader::new(file);
 
@@ -137,10 +142,14 @@ pub fn import_claude_session(
     let mut last_uuid = None;
 
     for line in reader.lines().map_while(Result::ok) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
 
         let type_str = value["type"].as_str().unwrap_or("");
-        if EntryType::parse(type_str).is_none() { continue; }
+        if EntryType::parse(type_str).is_none() {
+            continue;
+        }
 
         // If it already has the full format, pass through with our session_id
         if value.get("message").is_some() && value.get("uuid").is_some() {
@@ -165,12 +174,19 @@ pub fn import_claude_session(
         }
     }
 
-    if entries.is_empty() { return None; }
+    if entries.is_empty() {
+        return None;
+    }
 
     fs::create_dir_all(output_dir).ok()?;
     let output_path = Path::new(output_dir).join(format!("{}.jsonl", session_id));
 
-    let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(&output_path).ok()?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&output_path)
+        .ok()?;
     for json in &entries {
         let _ = writeln!(file, "{}", json);
     }
