@@ -10,6 +10,17 @@ client<llm> Gemini31Pro {
   }
 }
 
+// Primary via Vertex AI (Google Cloud project auth)
+client<llm> VertexGemini {
+  provider vertex-ai
+  retry_policy Backoff
+  options {
+    model "gemini-3.1-pro-preview"
+    project_id env.VERTEX_PROJECT
+    location "global"
+  }
+}
+
 // Fast: Gemini 2.5 Flash (native google-ai)
 client<llm> Gemini25Flash {
   provider google-ai

@@ -32,6 +32,12 @@ pub static KNOWN_PROVIDERS: &[ProviderEntry] = &[
         auth: || ProviderAuth::EnvKey("GEMINI_API_KEY"),
     },
     ProviderEntry {
+        name: "vertex",
+        aliases: &["vertex-ai"],
+        baml_client: "VertexGemini",
+        auth: || ProviderAuth::EnvKey("GOOGLE_APPLICATION_CREDENTIALS"),
+    },
+    ProviderEntry {
         name: "openai",
         aliases: &[],
         baml_client: "OpenAI",

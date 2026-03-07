@@ -238,6 +238,20 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                 ProviderAuth::CliProxy(cli_name) => {
                     return start_cli_provider(cli_name, Some(client)).await;
                 }
+                ProviderAuth::EnvKey(_) if provider == "vertex" => {
+                    // Auto-detect VERTEX_PROJECT from gcloud if not set
+                    if std::env::var("VERTEX_PROJECT").is_err() {
+                        if let Ok(out) = std::process::Command::new("gcloud")
+                            .args(["config", "get-value", "project"])
+                            .output()
+                        {
+                            let project = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            if !project.is_empty() && out.status.success() {
+                                unsafe { std::env::set_var("VERTEX_PROJECT", &project) };
+                            }
+                        }
+                    }
+                }
                 ProviderAuth::ClaudeKeychain => {
                     match providers::load_claude_keychain_token() {
                         Ok(token) => {
@@ -311,6 +325,14 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
     Ok(())
 }
 
+/// Check if gcloud Application Default Credentials exist.
+fn check_gcloud_adc() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let adc_path = std::path::Path::new(&home)
+        .join(".config/gcloud/application_default_credentials.json");
+    adc_path.exists()
+}
+
 async fn run_setup() -> Result<()> {
     use baml_agent::providers::{self, ProviderAuth};
     use std::io::{self, BufRead, Write};
@@ -328,8 +350,13 @@ async fn run_setup() -> Result<()> {
     let options = [
         ProviderOption {
             name: "gemini",
-            desc: "Google Gemini (API key)",
+            desc: "Google Gemini via API key",
             auth_hint: "GEMINI_API_KEY",
+        },
+        ProviderOption {
+            name: "vertex",
+            desc: "Google Gemini via Vertex AI (Google Cloud)",
+            auth_hint: "GOOGLE_APPLICATION_CREDENTIALS",
         },
         ProviderOption {
             name: "claude",
@@ -373,6 +400,16 @@ async fn run_setup() -> Result<()> {
         let status = match opt.name {
             "gemini" => {
                 if std::env::var("GEMINI_API_KEY").is_ok() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "vertex" => {
+                if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
+                    || std::env::var("VERTEX_PROJECT").is_ok()
+                    || check_gcloud_adc()
+                {
                     "\x1b[32m✓\x1b[0m"
                 } else {
                     "\x1b[33m·\x1b[0m"
@@ -468,14 +505,26 @@ async fn run_setup() -> Result<()> {
     if let Some((_, auth)) = providers::resolve_provider(provider_name) {
         let ok = match &auth {
             ProviderAuth::EnvKey(var) => {
-                if std::env::var(var).is_ok() {
+                // Vertex AI also works with ADC (gcloud auth) or VERTEX_PROJECT
+                let found = std::env::var(var).is_ok()
+                    || (provider_name == "vertex"
+                        && (std::env::var("VERTEX_PROJECT").is_ok()
+                            || check_gcloud_adc()));
+                if found {
                     true
                 } else {
-                    eprintln!(
-                        "\n\x1b[33mWarning:\x1b[0m {} not set. Set it in your shell profile:",
-                        var
-                    );
-                    eprintln!("  export {}=\"your-api-key\"", var);
+                    if provider_name == "vertex" {
+                        eprintln!("\n\x1b[33mWarning:\x1b[0m No Google Cloud auth found.");
+                        eprintln!("  Option 1: gcloud auth application-default login");
+                        eprintln!("  Option 2: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json");
+                        eprintln!("  Option 3: export VERTEX_PROJECT=your-project-id");
+                    } else {
+                        eprintln!(
+                            "\n\x1b[33mWarning:\x1b[0m {} not set. Set it in your shell profile:",
+                            var
+                        );
+                        eprintln!("  export {}=\"your-api-key\"", var);
+                    }
                     false
                 }
             }
@@ -917,14 +966,90 @@ async fn run_doctor(fix: bool) -> Result<()> {
     let skills = tools::collect_installed_skills();
     println!("  \x1b[32m✓\x1b[0m skills — {} installed", skills.len());
 
-    // BAML / API key
-    let has_vertex = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
-        || std::env::var("VERTEX_PROJECT").is_ok();
+    // Provider config
+    let cfg = baml_agent::providers::load_config(".rust-code");
+    let provider_name = cfg.provider.as_deref().unwrap_or("(not set)");
+    println!("  \x1b[36mℹ\x1b[0m provider — {}", provider_name);
+
+    // LLM credentials — check based on configured provider
     let has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
-    if has_vertex || has_gemini {
-        println!("  \x1b[32m✓\x1b[0m LLM credentials — configured");
-    } else {
-        println!("  \x1b[33m-\x1b[0m LLM credentials — no VERTEX_PROJECT or GEMINI_API_KEY found");
+    let has_vertex = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
+        || std::env::var("VERTEX_PROJECT").is_ok()
+        || check_gcloud_adc();
+    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let has_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let has_claude_keychain = baml_agent::providers::load_claude_keychain_token().is_ok();
+
+    match cfg.provider.as_deref() {
+        Some("gemini") => {
+            if has_gemini {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — GEMINI_API_KEY set");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — GEMINI_API_KEY not set");
+            }
+        }
+        Some("vertex" | "vertex-ai") => {
+            if has_vertex {
+                let method = if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok() {
+                    "service account key"
+                } else if std::env::var("VERTEX_PROJECT").is_ok() {
+                    "VERTEX_PROJECT"
+                } else {
+                    "gcloud ADC"
+                };
+                println!("  \x1b[32m✓\x1b[0m LLM auth — Vertex AI via {}", method);
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — no Google Cloud credentials");
+                println!("    fix: gcloud auth application-default login");
+            }
+        }
+        Some("claude") => {
+            if has_claude_keychain {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — Claude Keychain token found");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — no Claude Keychain token");
+                println!("    fix: run `claude` to authenticate");
+            }
+        }
+        Some("anthropic") => {
+            if has_anthropic {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — ANTHROPIC_API_KEY set");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — ANTHROPIC_API_KEY not set");
+            }
+        }
+        Some("openai") => {
+            if has_openai {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — OPENAI_API_KEY set");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — OPENAI_API_KEY not set");
+            }
+        }
+        Some("codex" | "chatgpt") => {
+            let auth_path = std::path::Path::new(&home).join(".codex/auth.json");
+            if auth_path.exists() {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — Codex auth.json found");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — run `codex login` first");
+            }
+        }
+        Some("ollama" | "local") => {
+            if Cmd::new("ollama").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — ollama installed (no auth needed)");
+            } else {
+                println!("  \x1b[31m✗\x1b[0m LLM auth — ollama not installed");
+            }
+        }
+        None => {
+            if has_gemini || has_vertex {
+                println!("  \x1b[32m✓\x1b[0m LLM auth — credentials found (run `rust-code setup` to set provider)");
+            } else {
+                println!("  \x1b[33m-\x1b[0m LLM auth — no provider configured, run `rust-code setup`");
+            }
+        }
+        Some(other) => {
+            println!("  \x1b[33m-\x1b[0m LLM auth — unknown provider '{}', can't verify", other);
+        }
     }
 
     // Summary
