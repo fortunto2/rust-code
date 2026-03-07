@@ -74,11 +74,11 @@ impl Default for LoopConfig {
 /// concurrent action execution in the future.
 pub trait SgrAgent {
     /// The action union type (BAML-generated, project-specific).
-    type Action;
+    type Action: Send + Sync;
     /// The message type (implements AgentMessage).
-    type Msg: AgentMessage;
+    type Msg: AgentMessage + Send + Sync;
     /// Error type.
-    type Error: fmt::Display;
+    type Error: fmt::Display + Send;
 
     /// Call LLM to decide next actions.
     fn decide(
