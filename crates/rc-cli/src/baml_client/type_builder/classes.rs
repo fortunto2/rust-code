@@ -574,6 +574,13 @@ impl MemoryToolClassBuilder {
     }
 
 
+    /// Access the `category` field builder.
+    pub fn property_category(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("category")
+            .expect("MemoryTool.category is statically defined in .baml and should always be present")
+    }
+
+
     /// Access the `section` field builder.
     pub fn property_section(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("section")
@@ -585,6 +592,20 @@ impl MemoryToolClassBuilder {
     pub fn property_content(&self) -> baml::ClassPropertyBuilder {
         self.inner.get_property("content")
             .expect("MemoryTool.content is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `context` field builder.
+    pub fn property_context(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("context")
+            .expect("MemoryTool.context is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `confidence` field builder.
+    pub fn property_confidence(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("confidence")
+            .expect("MemoryTool.confidence is statically defined in .baml and should always be present")
     }
 
 }

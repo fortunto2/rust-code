@@ -80,12 +80,7 @@ class McpToolCall {
   arguments string? @description("Tool arguments as JSON string, e.g. '{\"query\": \"search term\", \"limit\": 10}'. Pass null if no arguments needed.")
 }
 
-class MemoryTool {
-  tool_name "memory" @description("Use this tool to save important learnings to persistent memory (MEMORY.md). Survives across sessions. Use for: confirmed patterns, key decisions, user preferences, debugging insights. Do NOT save: temporary task state, speculative conclusions, things already in RULES.md.")
-  operation "append" | "replace" @description("append = add new entry, replace = rewrite a section by heading")
-  section string @description("Section heading, e.g. 'Model Findings', 'User Preferences', 'Key Patterns'")
-  content string @description("Markdown content to save under the section")
-}
+// MemoryTool defined in memory.baml
 
 class NextStep {
   situation string @description("SITUATION: What is the current state? What phase are we in, what's done, what's blocking? Scan history — never re-ask what's already known.")

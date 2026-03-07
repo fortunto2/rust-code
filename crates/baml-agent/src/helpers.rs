@@ -148,7 +148,7 @@ impl AgentContext {
             ("IDENTITY.md", "Identity"),
             ("MANIFESTO.md", "Manifesto"),
             ("RULES.md", "Rules"),
-            ("MEMORY.md", "Memory"),
+            ("MEMORY.md", "Memory (user notes)"),
         ];
 
         for (filename, label) in KNOWN_FILES {
@@ -158,6 +158,12 @@ impl AgentContext {
                     ctx.parts.push((label.to_string(), content));
                 }
             }
+        }
+
+        // Typed memory from MEMORY.jsonl (agent-written, structured)
+        let jsonl_path = dir.join("MEMORY.jsonl");
+        if let Some(formatted) = format_memory_jsonl(&jsonl_path) {
+            ctx.parts.push(("Memory (learned)".to_string(), formatted));
         }
 
         // Extra context files from context/ subdir
@@ -236,6 +242,42 @@ impl AgentContext {
             .collect();
         Some(sections.join("\n\n"))
     }
+}
+
+/// Format MEMORY.jsonl into a readable system message.
+///
+/// Groups entries by section, shows category and confidence.
+/// Limits to last 50 entries to keep context manageable.
+fn format_memory_jsonl(path: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let entries: Vec<serde_json::Value> = content.lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    if entries.is_empty() { return None; }
+
+    // Group by section, keep last 50 entries
+    let entries = if entries.len() > 50 { &entries[entries.len()-50..] } else { &entries };
+    let mut sections: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for entry in entries {
+        let section = entry["section"].as_str().unwrap_or("General").to_string();
+        let category = entry["category"].as_str().unwrap_or("note");
+        let confidence = entry["confidence"].as_str().unwrap_or("tentative");
+        let content = entry["content"].as_str().unwrap_or("");
+        let marker = if confidence == "confirmed" { "✓" } else { "?" };
+        sections.entry(section).or_default()
+            .push(format!("- [{}|{}] {}", marker, category, content));
+    }
+
+    let mut out = String::new();
+    for (section, items) in &sections {
+        out.push_str(&format!("### {}\n", section));
+        for item in items {
+            out.push_str(item);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    Some(out)
 }
 
 /// Load all `*.md` files from a directory, sorted alphabetically.
@@ -459,6 +501,43 @@ mod tests {
         let ctx = AgentContext::load_project(&dir);
         assert_eq!(ctx.parts.len(), 1);
         assert!(ctx.parts[0].1.contains("Agents rule")); // .agents/ wins
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_jsonl_loaded_into_context() {
+        let dir = std::env::temp_dir().join("baml_test_memory_jsonl");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
+        std::fs::write(dir.join("MEMORY.jsonl"), concat!(
+            r#"{"category":"decision","section":"Build System","content":"Use cargo, not make","context":"tested both","confidence":"confirmed","created":1772700000}"#, "\n",
+            r#"{"category":"pattern","section":"Build System","content":"Always run check before test","context":null,"confidence":"tentative","created":1772700100}"#, "\n",
+            r#"{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":1772700200}"#, "\n",
+        )).unwrap();
+
+        let ctx = AgentContext::load(dir.to_str().unwrap());
+        // SOUL + Memory (learned)
+        assert!(ctx.parts.iter().any(|(l, _)| l == "Memory (learned)"));
+        let mem = ctx.parts.iter().find(|(l, _)| l == "Memory (learned)").unwrap();
+        assert!(mem.1.contains("Use cargo, not make"));
+        assert!(mem.1.contains("[✓|decision]")); // confirmed
+        assert!(mem.1.contains("[?|pattern]"));   // tentative
+        assert!(mem.1.contains("### Style"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_jsonl_missing_is_ok() {
+        let dir = std::env::temp_dir().join("baml_test_no_jsonl");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
+
+        let ctx = AgentContext::load(dir.to_str().unwrap());
+        assert!(!ctx.parts.iter().any(|(l, _)| l.contains("learned")));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

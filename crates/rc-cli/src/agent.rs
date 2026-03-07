@@ -292,59 +292,60 @@ impl Agent {
                 })
             }
             MemoryTool(cmd) => {
-                let memory_path = Path::new(AGENT_HOME).join("MEMORY.md");
+                let memory_path = Path::new(AGENT_HOME).join("MEMORY.jsonl");
                 let op = baml_agent::norm(&format!("{:?}", cmd.operation));
-                let result = match op.as_str() {
-                    "append" => {
-                        let mut existing = std::fs::read_to_string(&memory_path).unwrap_or_default();
-                        let section_header = format!("## {}", cmd.section);
-                        if existing.contains(&section_header) {
-                            // Append under existing section (before next ## or EOF)
-                            if let Some(pos) = existing.find(&section_header) {
-                                let after_header = pos + section_header.len();
-                                let next_section = existing[after_header..].find("\n## ").map(|p| after_header + p);
-                                let insert_at = next_section.unwrap_or(existing.len());
-                                existing.insert_str(insert_at, &format!("\n{}\n", cmd.content));
-                            }
-                        } else {
-                            // New section
-                            if !existing.is_empty() && !existing.ends_with('\n') {
-                                existing.push('\n');
-                            }
-                            existing.push_str(&format!("\n{}\n{}\n", section_header, cmd.content));
-                        }
-                        std::fs::write(&memory_path, &existing)
-                    }
-                    "replace" => {
-                        let mut existing = std::fs::read_to_string(&memory_path).unwrap_or_default();
-                        let section_header = format!("## {}", cmd.section);
-                        if let Some(pos) = existing.find(&section_header) {
-                            let after_header = pos + section_header.len();
-                            let next_section = existing[after_header..].find("\n## ").map(|p| after_header + p + 1);
-                            let end = next_section.unwrap_or(existing.len());
-                            existing.replace_range(pos..end, &format!("{}\n{}\n", section_header, cmd.content));
-                        } else {
-                            if !existing.is_empty() && !existing.ends_with('\n') {
-                                existing.push('\n');
-                            }
-                            existing.push_str(&format!("\n{}\n{}\n", section_header, cmd.content));
-                        }
-                        std::fs::write(&memory_path, &existing)
-                    }
-                    _ => {
-                        return Ok(ActionResult {
-                            output: format!("Unknown memory operation: {}", op),
-                            done: false,
+                let category = baml_agent::norm(&format!("{:?}", cmd.category));
+                let confidence = baml_agent::norm(&format!("{:?}", cmd.confidence));
+
+                match op.as_str() {
+                    "save" => {
+                        let entry = serde_json::json!({
+                            "category": category,
+                            "section": cmd.section,
+                            "content": cmd.content,
+                            "context": cmd.context,
+                            "confidence": confidence,
+                            "created": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default().as_secs(),
                         });
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true).append(true).open(&memory_path)
+                            .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
+                        use std::io::Write;
+                        writeln!(file, "{}", entry)
+                            .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
+                        Ok(ActionResult {
+                            output: format!("Memory saved: [{}] {} ({})", category, cmd.section, confidence),
+                            done: false,
+                        })
                     }
-                };
-                match result {
-                    Ok(_) => Ok(ActionResult {
-                        output: format!("Memory updated: [{}] {}", op, cmd.section),
-                        done: false,
-                    }),
-                    Err(e) => Ok(ActionResult {
-                        output: format!("Memory write error: {}", e),
+                    "forget" => {
+                        if memory_path.exists() {
+                            let content = std::fs::read_to_string(&memory_path).unwrap_or_default();
+                            let filtered: Vec<&str> = content.lines()
+                                .filter(|line| {
+                                    serde_json::from_str::<serde_json::Value>(line)
+                                        .map(|v| v["section"].as_str() != Some(&cmd.section))
+                                        .unwrap_or(true)
+                                })
+                                .collect();
+                            let removed = content.lines().count() - filtered.len();
+                            std::fs::write(&memory_path, filtered.join("\n") + "\n")
+                                .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
+                            Ok(ActionResult {
+                                output: format!("Memory: forgot {} entries from '{}'", removed, cmd.section),
+                                done: false,
+                            })
+                        } else {
+                            Ok(ActionResult {
+                                output: "Memory: nothing to forget (no entries)".into(),
+                                done: false,
+                            })
+                        }
+                    }
+                    _ => Ok(ActionResult {
+                        output: format!("Unknown memory operation: {}", op),
                         done: false,
                     }),
                 }

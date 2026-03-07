@@ -311,7 +311,11 @@ pub struct MemoryTool {
 
 
 
-    pub operation: Option<types::Union2KappendOrKreplace>,
+    pub operation: Option<types::Union2KforgetOrKsave>,
+
+
+
+    pub category: Option<types::Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference>,
 
 
 
@@ -320,6 +324,14 @@ pub struct MemoryTool {
 
 
     pub content: Option<String>,
+
+
+
+    pub context: Option<String>,
+
+
+
+    pub confidence: Option<types::Union2KconfirmedOrKtentative>,
 
 
 }

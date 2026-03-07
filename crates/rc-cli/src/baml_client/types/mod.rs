@@ -62,7 +62,11 @@ pub enum Types {
 
     Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
-    Union2KappendOrKreplace(Union2KappendOrKreplace),
+    Union2KconfirmedOrKtentative(Union2KconfirmedOrKtentative),
+
+    Union2KforgetOrKsave(Union2KforgetOrKsave),
+
+    Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference(Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference),
 
 }
 
@@ -112,7 +116,11 @@ impl baml::KnownTypes for Types {
 
             Types::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
-            Types::Union2KappendOrKreplace(_) => "Union2KappendOrKreplace",
+            Types::Union2KconfirmedOrKtentative(_) => "Union2KconfirmedOrKtentative",
+
+            Types::Union2KforgetOrKsave(_) => "Union2KforgetOrKsave",
+
+            Types::Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference(_) => "Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference",
 
 
         }

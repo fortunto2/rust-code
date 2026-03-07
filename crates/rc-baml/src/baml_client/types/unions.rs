@@ -78,30 +78,97 @@ impl Default for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOr
 }
 
 
-/// Generated from: ("append" | "replace")
+/// Generated from: ("confirmed" | "tentative")
 #[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
 #[baml(union)]
-pub enum Union2KappendOrKreplace {
+pub enum Union2KconfirmedOrKtentative {
 
-    #[baml(name = "string_append", literal_string = "append")]
-    Kappend,
+    #[baml(name = "string_confirmed", literal_string = "confirmed")]
+    Kconfirmed,
     
-    #[baml(name = "string_replace", literal_string = "replace")]
-    Kreplace,
+    #[baml(name = "string_tentative", literal_string = "tentative")]
+    Ktentative,
     
 }
 
-impl AsRef<Union2KappendOrKreplace> for Union2KappendOrKreplace {
-    fn as_ref(&self) -> &Union2KappendOrKreplace {
+impl AsRef<Union2KconfirmedOrKtentative> for Union2KconfirmedOrKtentative {
+    fn as_ref(&self) -> &Union2KconfirmedOrKtentative {
         self
     }
 }
 
-impl Default for Union2KappendOrKreplace {
+impl Default for Union2KconfirmedOrKtentative {
     fn default() -> Self {
         
            
-            Self::Kappend
+            Self::Kconfirmed
+        
+    }
+}
+
+
+/// Generated from: ("save" | "forget")
+#[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
+#[baml(union)]
+pub enum Union2KforgetOrKsave {
+
+    #[baml(name = "string_save", literal_string = "save")]
+    Ksave,
+    
+    #[baml(name = "string_forget", literal_string = "forget")]
+    Kforget,
+    
+}
+
+impl AsRef<Union2KforgetOrKsave> for Union2KforgetOrKsave {
+    fn as_ref(&self) -> &Union2KforgetOrKsave {
+        self
+    }
+}
+
+impl Default for Union2KforgetOrKsave {
+    fn default() -> Self {
+        
+           
+            Self::Ksave
+        
+    }
+}
+
+
+/// Generated from: ("decision" | "pattern" | "preference" | "insight" | "debug")
+#[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
+#[baml(union)]
+pub enum Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
+
+    #[baml(name = "string_decision", literal_string = "decision")]
+    Kdecision,
+    
+    #[baml(name = "string_pattern", literal_string = "pattern")]
+    Kpattern,
+    
+    #[baml(name = "string_preference", literal_string = "preference")]
+    Kpreference,
+    
+    #[baml(name = "string_insight", literal_string = "insight")]
+    Kinsight,
+    
+    #[baml(name = "string_debug", literal_string = "debug")]
+    Kdebug,
+    
+}
+
+impl AsRef<Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference> for Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
+    fn as_ref(&self) -> &Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
+        self
+    }
+}
+
+impl Default for Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
+    fn default() -> Self {
+        
+           
+            Self::Kdecision
         
     }
 }

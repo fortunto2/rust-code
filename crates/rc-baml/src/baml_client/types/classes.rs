@@ -306,7 +306,11 @@ pub struct MemoryTool {
 
 
 
-    pub operation: Union2KappendOrKreplace,
+    pub operation: Union2KforgetOrKsave,
+
+
+
+    pub category: Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference,
 
 
 
@@ -315,6 +319,14 @@ pub struct MemoryTool {
 
 
     pub content: String,
+
+
+
+    pub context: Option<String>,
+
+
+
+    pub confidence: Union2KconfirmedOrKtentative,
 
 
 }
