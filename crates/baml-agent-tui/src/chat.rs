@@ -212,7 +212,7 @@ impl Default for ChatState {
     }
 }
 
-/// Simple word-wrap: split into lines that fit within `max_width`.
+/// Simple word-wrap: split into lines that fit within `max_width` (in chars, not bytes).
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
@@ -220,15 +220,20 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 
     let mut lines = Vec::new();
     for input_line in text.lines() {
-        if input_line.len() <= max_width {
+        if input_line.chars().count() <= max_width {
             lines.push(input_line.to_string());
         } else {
             let mut remaining = input_line;
-            while remaining.len() > max_width {
-                // Try to break at a space.
-                let break_at = remaining[..max_width]
+            while remaining.chars().count() > max_width {
+                // Find byte offset of the max_width-th char.
+                let byte_limit = remaining
+                    .char_indices()
+                    .nth(max_width)
+                    .map_or(remaining.len(), |(i, _)| i);
+                // Try to break at a space within that range.
+                let break_at = remaining[..byte_limit]
                     .rfind(' ')
-                    .map_or(max_width, |pos| pos + 1);
+                    .map_or(byte_limit, |pos| pos + 1);
                 lines.push(remaining[..break_at].trim_end().to_string());
                 remaining = &remaining[break_at..];
             }
@@ -260,6 +265,17 @@ mod tests {
         assert!(result.len() > 1);
         for line in &result {
             assert!(line.len() <= 20);
+        }
+    }
+
+    #[test]
+    fn wrap_utf8_cyrillic() {
+        // Must not panic on multibyte chars.
+        let cyrillic = "найди файл джобса в фикстурах и сделай клип под музыку из лучших моментов";
+        let result = wrap_text(cyrillic, 40);
+        assert!(result.len() >= 2);
+        for line in &result {
+            assert!(line.chars().count() <= 40);
         }
     }
 
