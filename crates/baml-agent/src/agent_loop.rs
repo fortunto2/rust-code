@@ -22,6 +22,21 @@ pub struct StepDecision<A> {
     pub completed: bool,
     /// A — Action: tools to execute.
     pub actions: Vec<A>,
+    /// Soft hints injected as system messages before execution.
+    /// Used for intent-mismatch nudges, guardrails, etc.
+    pub hints: Vec<String>,
+}
+
+impl<A> Default for StepDecision<A> {
+    fn default() -> Self {
+        Self {
+            situation: String::new(),
+            task: vec![],
+            completed: false,
+            actions: vec![],
+            hints: vec![],
+        }
+    }
 }
 
 /// Events emitted by the agent loop (print, TUI, log).
@@ -251,6 +266,14 @@ where
         LoopStatus::Ok => {}
     }
 
+    // --- Inject hints as system messages ---
+    for hint in &decision.hints {
+        session.push(
+            <<A::Msg as AgentMessage>::Role>::system(),
+            format!("HINT: {}", hint),
+        );
+    }
+
     // --- Execute actions ---
     for action in &decision.actions {
         let action_sig = A::action_signature(action);
@@ -465,16 +488,15 @@ mod tests {
             if remaining <= 1 {
                 Ok(StepDecision {
                     situation: "done".into(),
-                    task: vec![],
                     completed: true,
-                    actions: vec![],
+                    ..Default::default()
                 })
             } else {
                 Ok(StepDecision {
                     situation: format!("{} steps left", remaining - 1),
                     task: vec!["do something".into()],
-                    completed: false,
                     actions: vec![format!("action_{}", remaining)],
+                    ..Default::default()
                 })
             }
         }
@@ -534,8 +556,8 @@ mod tests {
             Ok(StepDecision {
                 situation: "stuck".into(),
                 task: vec!["same thing again".into()],
-                completed: false,
                 actions: vec!["same_action".into()],
+                ..Default::default()
             })
         }
 
@@ -592,9 +614,8 @@ mod tests {
         async fn decide(&self, _messages: &[TestMsg]) -> Result<StepDecision<String>, String> {
             Ok(StepDecision {
                 situation: "done".into(),
-                task: vec![],
                 completed: true,
-                actions: vec![],
+                ..Default::default()
             })
         }
 
@@ -626,9 +647,8 @@ mod tests {
                 on_token("...");
                 Ok(StepDecision {
                     situation: "done".into(),
-                    task: vec![],
                     completed: true,
-                    actions: vec![],
+                    ..Default::default()
                 })
             }
         }
@@ -685,16 +705,14 @@ mod tests {
                 Ok(StepDecision {
                     situation: "thinking...".into(),
                     task: vec!["do something".into()],
-                    completed: false,
-                    actions: vec![],
+                    ..Default::default()
                 })
             } else {
                 // After nudge, model recovers
                 Ok(StepDecision {
                     situation: "done".into(),
-                    task: vec![],
                     completed: true,
-                    actions: vec![],
+                    ..Default::default()
                 })
             }
         }
@@ -778,8 +796,7 @@ mod tests {
                 Ok(StepDecision {
                     situation: "stuck".into(),
                     task: vec!["try again".into()],
-                    completed: false,
-                    actions: vec![],
+                    ..Default::default()
                 })
             }
             async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
