@@ -68,6 +68,49 @@ client<llm> Claude {
   }
 }
 
+// OpenAI GPT-4.1 (or Codex)
+client<llm> OpenAI {
+  provider openai
+  retry_policy Backoff
+  options {
+    model "gpt-4.1"
+    api_key env.OPENAI_API_KEY
+  }
+}
+
+// Codex Proxy: ChatGPT Plus/Pro subscription via local proxy
+// Proxy converts Chat Completions → Codex Responses API (chatgpt.com)
+client<llm> CodexProxy {
+  provider openai
+  retry_policy Backoff
+  options {
+    model "gpt-5.3-codex"
+    base_url env.CODEX_PROXY_URL
+    api_key "codex-proxy"
+  }
+}
+
+// OpenAI o3-mini (reasoning, cheaper)
+client<llm> OpenAIO3 {
+  provider openai
+  retry_policy Backoff
+  options {
+    model "o3-mini"
+    api_key env.OPENAI_API_KEY
+  }
+}
+
+// CLI Provider: any local CLI tool (claude, gemini, codex) via proxy
+client<llm> CliProxy {
+  provider openai
+  retry_policy Backoff
+  options {
+    model "cli"
+    base_url env.CLI_PROXY_URL
+    api_key "cli-proxy"
+  }
+}
+
 // === Local Models (Ollama) ===
 
 // Local: any Ollama model (default: qwen2.5-coder)

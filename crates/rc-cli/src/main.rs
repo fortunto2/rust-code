@@ -32,6 +32,10 @@ struct Args {
     #[arg(long)]
     model: Option<String>,
 
+    /// Use Codex (ChatGPT Plus/Pro) subscription token as OpenAI backend
+    #[arg(long)]
+    codex: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -53,6 +57,11 @@ enum Commands {
         /// Fuzzy search query (omit to list all)
         query: Option<String>,
     },
+    /// Set default provider (saved to ~/.rust-code/config.toml)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Check environment health and fix missing dependencies
     Doctor {
         /// Auto-install missing dependencies
@@ -67,6 +76,22 @@ enum McpAction {
     List,
     /// Show .mcp.json config
     Config,
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// Show current config
+    Show,
+    /// Set default provider: gemini, codex, openai, claude, ollama
+    Set {
+        /// Provider name
+        provider: String,
+        /// Optional model override
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Reset to default (Gemini)
+    Reset,
 }
 
 #[derive(Subcommand, Debug)]
@@ -109,6 +134,175 @@ enum SkillsAction {
         /// Search query to filter catalog
         query: Option<String>,
     },
+}
+
+
+/// Resolved provider ready to apply to agent.
+struct ProviderSetup {
+    client: Option<String>,
+    label: Option<String>,
+    /// Background proxy handle (kept alive for duration of session)
+    _proxy_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// Start Codex Responses API proxy and configure env vars for BAML.
+async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
+    match tools::codex_proxy::start_codex_proxy().await {
+        Ok((port, handle)) => {
+            let proxy_url = format!("http://127.0.0.1:{}/v1", port);
+            // SAFETY: called before spawning agent threads, single-threaded init
+            unsafe { std::env::set_var("CODEX_PROXY_URL", &proxy_url) };
+            let client = model_override.unwrap_or_else(|| "CodexProxy".into());
+            ProviderSetup {
+                label: Some(format!("Codex proxy (:{}, {})", port, client)),
+                client: Some(client),
+                _proxy_handle: Some(handle),
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to start Codex proxy: {}", e);
+            eprintln!("Check ~/.codex/auth.json or run `codex login` first");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Start a CLI tool proxy (claude, gemini, codex CLI subprocess).
+async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> ProviderSetup {
+    let provider = match tools::cli_provider::CliProvider::from_name(cli_name) {
+        Some(p) => p,
+        None => {
+            eprintln!("Unknown CLI provider: {}", cli_name);
+            std::process::exit(1);
+        }
+    };
+
+    match tools::cli_provider::start_cli_proxy(provider).await {
+        Ok((port, handle)) => {
+            let proxy_url = format!("http://127.0.0.1:{}/v1", port);
+            // SAFETY: called before spawning agent threads, single-threaded init
+            unsafe { std::env::set_var("CLI_PROXY_URL", &proxy_url) };
+            let client = model_override.unwrap_or_else(|| "CliProxy".into());
+            ProviderSetup {
+                label: Some(format!("{} proxy (:{}, {})", provider.display_name(), port, client)),
+                client: Some(client),
+                _proxy_handle: Some(handle),
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to start {} proxy: {}", provider.display_name(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Resolve provider from CLI flags (override) → config file (default).
+async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
+    use tools::config::{ProviderAuth, resolve_provider};
+
+    // CLI flags take priority
+    if args.codex {
+        return start_codex_provider(args.model.clone()).await;
+    }
+    if args.local {
+        let model = args.model.clone().unwrap_or_else(|| "OllamaDefault".into());
+        return ProviderSetup {
+            label: Some(format!("local ({})", model)),
+            client: Some(model),
+            _proxy_handle: None,
+        };
+    }
+    if let Some(ref model) = args.model {
+        return ProviderSetup {
+            label: Some(model.clone()),
+            client: Some(model.clone()),
+            _proxy_handle: None,
+        };
+    }
+
+    // Fall back to config file
+    let cfg = tools::load_config();
+    if let Some(ref provider) = cfg.provider {
+        if let Some((default_client, auth)) = resolve_provider(provider) {
+            let client = cfg.model.unwrap_or_else(|| default_client.to_string());
+            match auth {
+                ProviderAuth::CodexProxy => {
+                    return start_codex_provider(Some(client)).await;
+                }
+                ProviderAuth::CliProxy(cli_name) => {
+                    return start_cli_provider(cli_name, Some(client)).await;
+                }
+                ProviderAuth::ClaudeKeychain => {
+                    match tools::config::load_claude_keychain_token() {
+                        Ok(token) => {
+                            // SAFETY: called before spawning threads
+                            unsafe { std::env::set_var("ANTHROPIC_API_KEY", &token) };
+                        }
+                        Err(e) => {
+                            eprintln!("Claude auth failed: {}", e);
+                            eprintln!("Run `claude` first to authenticate, or use `config set anthropic` with ANTHROPIC_API_KEY");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return ProviderSetup {
+                label: Some(format!("{} ({})", provider, client)),
+                client: Some(client),
+                _proxy_handle: None,
+            };
+        }
+    }
+
+    // Default: no override (uses BAML default client)
+    ProviderSetup { client: None, label: None, _proxy_handle: None }
+}
+
+/// Apply resolved provider to agent.
+fn apply_provider(setup: &ProviderSetup, agent: &mut Agent) {
+    if let Some(ref client) = setup.client {
+        agent.set_client(client);
+    }
+    if let Some(ref label) = setup.label {
+        println!("Provider: {}", label);
+    }
+}
+
+fn run_config_command(action: ConfigAction) -> Result<()> {
+    use tools::config::{resolve_provider};
+
+    match action {
+        ConfigAction::Show => {
+            let cfg = tools::load_config();
+            let provider = cfg.provider.as_deref().unwrap_or("gemini (default)");
+            let model = cfg.model.as_deref().unwrap_or("(auto)");
+            println!("Provider: {}", provider);
+            println!("Model:    {}", model);
+            println!("\nConfig: ~/.rust-code/config.toml");
+            println!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
+        }
+        ConfigAction::Set { provider, model } => {
+            if resolve_provider(&provider).is_none() {
+                eprintln!("Unknown provider: {}", provider);
+                eprintln!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
+                std::process::exit(1);
+            }
+            let cfg = tools::UserConfig {
+                provider: Some(provider.clone()),
+                model,
+            };
+            tools::save_config(&cfg)?;
+            println!("Default provider set to: {}", provider);
+            println!("Saved to ~/.rust-code/config.toml");
+        }
+        ConfigAction::Reset => {
+            let cfg = tools::UserConfig::default();
+            tools::save_config(&cfg)?;
+            println!("Config reset to defaults (Gemini)");
+        }
+    }
+    Ok(())
 }
 
 fn init_logging() -> impl Drop {
@@ -599,6 +793,7 @@ async fn main() -> Result<()> {
             Commands::Skills { action } => run_skills_command(action).await,
             Commands::Mcp { action } => run_mcp_command(action).await,
             Commands::Sessions { query } => run_sessions_command(query),
+            Commands::Config { action } => run_config_command(action),
             Commands::Doctor { fix } => run_doctor(fix).await,
         };
     }
@@ -606,19 +801,14 @@ async fn main() -> Result<()> {
     // Initialize BAML runtime
     baml_client::init();
 
+    // Resolve provider: CLI flags override config file
+    let provider_setup = resolve_provider_setup(&args).await;
+
     if let Some(prompt) = args.prompt {
         // Single prompt headless mode — fresh session by default
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
-        // Set model override
-        if args.local {
-            let model = args.model.as_deref().unwrap_or("OllamaDefault");
-            println!("Using local model: {}", model);
-            agent.set_client(model);
-        } else if let Some(ref model) = args.model {
-            println!("Using model: {}", model);
-            agent.set_client(model);
-        }
+        apply_provider(&provider_setup, &mut agent);
         // Initialize MCP servers
         if let Err(e) = agent.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
@@ -716,6 +906,11 @@ async fn main() -> Result<()> {
         // Interactive TUI mode
         let mut terminal = tui::init()?;
         let mut app = app::App::new();
+
+        // Apply provider from config/flags
+        if let Some(ref client) = provider_setup.client {
+            app.set_client_override(client);
+        }
 
         let result = app
             .run(

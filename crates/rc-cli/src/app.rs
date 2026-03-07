@@ -689,6 +689,7 @@ pub struct App<'a> {
     pub skills_search_seq: u64,
     pub context_map: ContextMap,
     pub tick_count: u32,
+    pub client_override: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -849,7 +850,13 @@ impl<'a> App<'a> {
             skills_search_seq: 0,
             context_map: ContextMap::new(),
             tick_count: 0,
+            client_override: None,
         }
+    }
+
+    /// Set BAML client override (propagated to agent on run).
+    pub fn set_client_override(&mut self, client: &str) {
+        self.client_override = Some(client.to_string());
     }
 
     pub async fn run(
@@ -862,6 +869,10 @@ impl<'a> App<'a> {
 
         // Share the agent so the background worker can use it
         let mut agent_instance = Agent::new();
+        // Apply model override if set via CLI flags
+        if let Some(ref client) = self.client_override {
+            agent_instance.set_client(client);
+        }
         // Initialize MCP servers from .mcp.json
         if let Err(e) = agent_instance.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);

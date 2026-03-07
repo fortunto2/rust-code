@@ -1,5 +1,8 @@
 pub mod bash;
 pub mod checkpoint;
+pub mod cli_provider;
+pub mod codex_proxy;
+pub mod config;
 pub mod cost;
 pub mod editor;
 pub mod fs;
@@ -10,6 +13,7 @@ pub mod skills;
 
 pub use bash::*;
 pub use checkpoint::*;
+pub use config::*;
 pub use cost::*;
 pub use editor::*;
 pub use fs::*;

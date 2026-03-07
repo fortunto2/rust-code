@@ -35,3 +35,6 @@ rmcp.workspace = true
 baml-agent = { version = "0.3.0", path = "../baml-agent", features = ["logging", "search"] }
 baml-agent-tui = { version = "0.3.0", path = "../baml-agent-tui" }
 solograph = { version = "0.1.0", path = "../solograph" }
+toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
