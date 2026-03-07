@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "baml-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "nucleo-matcher",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "baml-agent-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "baml-agent",
@@ -1530,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "rc-baml"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "baml",
@@ -1650,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "rust-code"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "baml",
