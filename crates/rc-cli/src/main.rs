@@ -325,14 +325,6 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
     Ok(())
 }
 
-/// Check if gcloud Application Default Credentials exist.
-fn check_gcloud_adc() -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let adc_path = std::path::Path::new(&home)
-        .join(".config/gcloud/application_default_credentials.json");
-    adc_path.exists()
-}
-
 async fn run_setup() -> Result<()> {
     use baml_agent::providers::{self, ProviderAuth};
     use std::io::{self, BufRead, Write};
@@ -408,7 +400,7 @@ async fn run_setup() -> Result<()> {
             "vertex" => {
                 if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
                     || std::env::var("VERTEX_PROJECT").is_ok()
-                    || check_gcloud_adc()
+                    || baml_agent::check_gcloud_adc()
                 {
                     "\x1b[32m✓\x1b[0m"
                 } else {
@@ -509,7 +501,7 @@ async fn run_setup() -> Result<()> {
                 let found = std::env::var(var).is_ok()
                     || (provider_name == "vertex"
                         && (std::env::var("VERTEX_PROJECT").is_ok()
-                            || check_gcloud_adc()));
+                            || baml_agent::check_gcloud_adc()));
                 if found {
                     true
                 } else {
@@ -841,250 +833,46 @@ async fn run_mcp_command(action: McpAction) -> Result<()> {
 }
 
 async fn run_doctor(fix: bool) -> Result<()> {
-    use std::process::Command as Cmd;
+    use baml_agent::doctor;
 
-    struct Check {
-        name: &'static str,
-        cmd: &'static str,
-        args: &'static [&'static str],
-        install_brew: &'static str,
-        install_other: &'static str,
-        required: bool,
-    }
-
-    let checks = [
-        Check {
-            name: "tmux",
-            cmd: "tmux",
-            args: &["-V"],
-            install_brew: "brew install tmux",
-            install_other: "apt install tmux",
-            required: true,
-        },
-        Check {
-            name: "ripgrep (rg)",
-            cmd: "rg",
-            args: &["--version"],
-            install_brew: "brew install ripgrep",
-            install_other: "cargo install ripgrep",
-            required: true,
-        },
-        Check {
-            name: "git",
-            cmd: "git",
-            args: &["--version"],
-            install_brew: "brew install git",
-            install_other: "apt install git",
-            required: true,
-        },
-        Check {
-            name: "python3",
-            cmd: "python3",
-            args: &["--version"],
-            install_brew: "brew install python3",
-            install_other: "apt install python3",
-            required: false,
-        },
-        Check {
-            name: "node",
-            cmd: "node",
-            args: &["--version"],
-            install_brew: "brew install node",
-            install_other: "curl -fsSL https://fnm.vercel.app/install | bash",
-            required: false,
-        },
-        Check {
-            name: "cargo",
-            cmd: "cargo",
-            args: &["--version"],
-            install_brew: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-            install_other: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-            required: false,
-        },
-    ];
-
-    let is_mac = cfg!(target_os = "macos");
-    let mut missing: Vec<(&str, String)> = Vec::new();
-    let mut ok_count = 0;
-
-    println!("rust-code doctor\n");
-
-    // Tool checks
-    for check in &checks {
-        match Cmd::new(check.cmd).args(check.args).output() {
-            Ok(o) if o.status.success() => {
-                let ver = String::from_utf8_lossy(&o.stdout);
-                let ver_line = ver.lines().next().unwrap_or("ok");
-                let tag = if check.required {
-                    "required"
-                } else {
-                    "optional"
-                };
-                println!(
-                    "  \x1b[32m✓\x1b[0m {} — {} [{}]",
-                    check.name,
-                    ver_line.trim(),
-                    tag
-                );
-                ok_count += 1;
-            }
-            _ => {
-                let tag = if check.required {
-                    "\x1b[31m✗\x1b[0m"
-                } else {
-                    "\x1b[33m-\x1b[0m"
-                };
-                let install = if is_mac {
-                    check.install_brew
-                } else {
-                    check.install_other
-                };
-                println!("  {} {} — missing [fix: {}]", tag, check.name, install);
-                missing.push((check.name, install.to_string()));
-            }
-        }
-    }
-
-    // Config checks
-    println!();
+    // Agent-specific extra checks (MCP, skills)
     let home = std::env::var("HOME").unwrap_or_default();
+    let (mut results, mut pass, fail) = doctor::run_doctor(".rust-code", &[]);
 
-    // .mcp.json
+    // MCP check (rc-cli specific)
     let mcp_global = std::path::Path::new(&home).join(".mcp.json");
     let mcp_local = std::path::Path::new(".mcp.json");
     if mcp_global.exists() || mcp_local.exists() {
         let config = tools::mcp::McpManager::load_configs();
-        println!(
-            "  \x1b[32m✓\x1b[0m .mcp.json — {} server(s) configured",
-            config.mcp_servers.len()
-        );
+        results.push(doctor::CheckResult {
+            name: ".mcp.json".into(),
+            status: doctor::CheckStatus::Ok,
+            detail: format!("{} server(s) configured", config.mcp_servers.len()),
+            fix: None,
+        });
+        pass += 1;
     } else {
-        println!("  \x1b[33m-\x1b[0m .mcp.json — not found (optional, for MCP tools)");
+        results.push(doctor::CheckResult {
+            name: ".mcp.json".into(),
+            status: doctor::CheckStatus::Warning,
+            detail: "not found (optional, for MCP tools)".into(),
+            fix: None,
+        });
     }
 
-    // Skills
+    // Skills check (rc-cli specific)
     let skills = tools::collect_installed_skills();
-    println!("  \x1b[32m✓\x1b[0m skills — {} installed", skills.len());
+    results.push(doctor::CheckResult {
+        name: "skills".into(),
+        status: doctor::CheckStatus::Ok,
+        detail: format!("{} installed", skills.len()),
+        fix: None,
+    });
 
-    // Provider config
-    let cfg = baml_agent::providers::load_config(".rust-code");
-    let provider_name = cfg.provider.as_deref().unwrap_or("(not set)");
-    println!("  \x1b[36mℹ\x1b[0m provider — {}", provider_name);
-
-    // LLM credentials — check based on configured provider
-    let has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
-    let has_vertex = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
-        || std::env::var("VERTEX_PROJECT").is_ok()
-        || check_gcloud_adc();
-    let has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
-    let has_openai = std::env::var("OPENAI_API_KEY").is_ok();
-    let has_claude_keychain = baml_agent::providers::load_claude_keychain_token().is_ok();
-
-    match cfg.provider.as_deref() {
-        Some("gemini") => {
-            if has_gemini {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — GEMINI_API_KEY set");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — GEMINI_API_KEY not set");
-            }
-        }
-        Some("vertex" | "vertex-ai") => {
-            if has_vertex {
-                let method = if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok() {
-                    "service account key"
-                } else if std::env::var("VERTEX_PROJECT").is_ok() {
-                    "VERTEX_PROJECT"
-                } else {
-                    "gcloud ADC"
-                };
-                println!("  \x1b[32m✓\x1b[0m LLM auth — Vertex AI via {}", method);
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — no Google Cloud credentials");
-                println!("    fix: gcloud auth application-default login");
-            }
-        }
-        Some("claude") => {
-            if has_claude_keychain {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — Claude Keychain token found");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — no Claude Keychain token");
-                println!("    fix: run `claude` to authenticate");
-            }
-        }
-        Some("anthropic") => {
-            if has_anthropic {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — ANTHROPIC_API_KEY set");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — ANTHROPIC_API_KEY not set");
-            }
-        }
-        Some("openai") => {
-            if has_openai {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — OPENAI_API_KEY set");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — OPENAI_API_KEY not set");
-            }
-        }
-        Some("codex" | "chatgpt") => {
-            let auth_path = std::path::Path::new(&home).join(".codex/auth.json");
-            if auth_path.exists() {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — Codex auth.json found");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — run `codex login` first");
-            }
-        }
-        Some("ollama" | "local") => {
-            if Cmd::new("ollama").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — ollama installed (no auth needed)");
-            } else {
-                println!("  \x1b[31m✗\x1b[0m LLM auth — ollama not installed");
-            }
-        }
-        None => {
-            if has_gemini || has_vertex {
-                println!("  \x1b[32m✓\x1b[0m LLM auth — credentials found (run `rust-code setup` to set provider)");
-            } else {
-                println!("  \x1b[33m-\x1b[0m LLM auth — no provider configured, run `rust-code setup`");
-            }
-        }
-        Some(other) => {
-            println!("  \x1b[33m-\x1b[0m LLM auth — unknown provider '{}', can't verify", other);
-        }
-    }
-
-    // Summary
-    println!(
-        "\n{}/{} checks passed, {} missing\n",
-        ok_count,
-        checks.len(),
-        missing.len()
-    );
-
-    if missing.is_empty() {
-        println!("\x1b[32mAll good!\x1b[0m rust-code is ready.");
-        return Ok(());
-    }
+    doctor::print_doctor_report("rust-code", &results, pass, fail);
 
     if fix {
-        println!("Installing missing dependencies...\n");
-        for (name, cmd) in &missing {
-            println!("  → {} ...", name);
-            let status = Cmd::new("sh").arg("-c").arg(cmd).status();
-            match status {
-                Ok(s) if s.success() => println!("    \x1b[32m✓\x1b[0m installed"),
-                Ok(s) => println!(
-                    "    \x1b[31m✗\x1b[0m failed (exit {})",
-                    s.code().unwrap_or(-1)
-                ),
-                Err(e) => println!("    \x1b[31m✗\x1b[0m error: {}", e),
-            }
-        }
-        println!("\nRe-run `rust-code doctor` to verify.");
-    } else {
-        println!("Run \x1b[1mrust-code doctor --fix\x1b[0m to install missing dependencies.");
-        // Print one-liner
-        let cmds: Vec<&str> = missing.iter().map(|(_, c)| c.as_str()).collect();
-        println!("Or manually: {}", cmds.join(" && "));
+        doctor::fix_missing(&results);
     }
 
     Ok(())

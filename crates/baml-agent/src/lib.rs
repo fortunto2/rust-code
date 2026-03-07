@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod config;
+pub mod doctor;
 pub mod engine;
 pub mod helpers;
 pub mod hints;
@@ -19,6 +20,11 @@ pub use agent_loop::{
     SgrAgentStream, StepDecision,
 };
 pub use config::{AgentConfig, AgentConfigError, ProviderConfig};
+pub use doctor::{
+    check_gcloud_adc, check_provider_auth, default_tool_checks, fix_missing, format_check,
+    optional_tool_checks, print_doctor_report, run_doctor, run_tool_check, CheckResult,
+    CheckStatus, DoctorCheck,
+};
 pub use engine::{AgentEngine, BamlRegistry};
 pub use helpers::{
     action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
