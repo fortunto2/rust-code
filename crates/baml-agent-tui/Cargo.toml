@@ -12,6 +12,6 @@ categories = ["command-line-interface"]
 baml-agent = { version = "0.3.0", path = "../baml-agent" }
 ratatui = "0.29.0"
 crossterm = "0.27"
-tui-textarea = "0.4"
+nucleo-matcher = "0.3"
 tokio = { version = "1", features = ["sync", "macros", "rt"] }
 anyhow = "1"
