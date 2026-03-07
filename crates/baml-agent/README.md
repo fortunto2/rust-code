@@ -25,7 +25,8 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `session` | `Session<M>`, `AgentMessage`, `MessageRole` — JSONL persistence, history trimming |
 | `loop_detect` | `LoopDetector`, `LoopStatus` — detects repeated actions, warns then aborts |
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
-| `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — system prompt template |
+| `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
+| `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `load_manifesto` — reusable patterns |
 
 ## Quick Start
 
@@ -104,8 +105,8 @@ impl SgrAgent for MyAgent {
             .map_err(|e| e.to_string())?;
 
         Ok(StepDecision {
-            state: decision.current_state,
-            plan: decision.plan,
+            situation: decision.current_state,
+            task: decision.plan,
             completed: decision.task_completed,
             actions: decision.next_actions,
         })
@@ -155,9 +156,9 @@ async fn main() {
     let steps = run_loop(&agent, &mut session, &loop_config, |event| {
         match event {
             LoopEvent::StepStart(n) => println!("\n[Step {}]", n),
-            LoopEvent::Decision { state, plan } => {
-                println!("State: {}", state);
-                for (i, s) in plan.iter().enumerate() { println!("  {}. {}", i+1, s); }
+            LoopEvent::Decision { situation, task } => {
+                println!("Situation: {}", situation);
+                for (i, s) in task.iter().enumerate() { println!("  {}. {}", i+1, s); }
             }
             LoopEvent::Completed => println!("Done!"),
             LoopEvent::ActionStart(a) => println!("  > {:?}", a),
@@ -305,9 +306,142 @@ impl SgrAgent for MyAgent {
 }
 ```
 
+## STAR reasoning framework
+
+The agent loop uses STAR (Situation → Task → Action → Result) as the structured reasoning pattern. `StepDecision` maps directly:
+
+| STAR | Field | What the LLM fills |
+|------|-------|---------------------|
+| **S** — Situation | `situation` | Current state, what's done, what blocks progress |
+| **T** — Task | `task` | 1-5 remaining steps, first = execute now |
+| **A** — Action | `actions` | Tool calls to run (parallel if independent) |
+| **R** — Result | `completed` | `true` only when goal is fully achieved |
+
+### BAML field design rules (critical for union actions)
+
+**All optional fields in task classes MUST be `string | null`, not `string`.**
+
+LLMs (Gemini, GPT, Claude) struggle to generate union-typed arrays when task classes have many required fields. If a task has 6 required `string` fields but only 2 are relevant for the current operation, the model often **skips the entire `next_actions` array** rather than filling irrelevant fields with empty strings.
+
+```baml
+// BAD — model skips next_actions because it can't fill all required fields
+class ProjectTask {
+  task "project_operation" @stream.not_null
+  operation "create" | "open" | "add_files"
+  project_path string
+  input_path string        // required but unused for "create"
+  meta_key string          // required but unused for "create"
+  meta_value string        // required but unused for "create"
+}
+
+// GOOD — model can emit the action with only relevant fields
+class ProjectTask {
+  task "project_operation" @stream.not_null
+  operation "create" | "open" | "add_files"
+  project_path string @description("Path to .l2f project file")
+  input_path string | null @description("File path for add_files")
+  meta_key string | null @description("Key for set_meta/get_meta")
+  meta_value string | null @description("Value for set_meta")
+}
+```
+
+**Symptoms of this bug:** `current_state` and `plan` are populated correctly, but `next_actions` is always `[]`. The agent describes what it wants to do but never emits tool calls. Affects all models (Gemini Flash Lite, Flash, Pro, GPT-4o).
+
+**The empty-actions guard** in `process_step()` detects this and nudges the model with a system message: "You MUST emit at least one tool call." After `loop_abort_threshold` empty steps, the loop aborts.
+
+### Prompt tips for STAR
+
+Place this near `{{ ctx.output_format }}` in your BAML prompt:
+
+```
+CRITICAL: The `next_actions` array MUST contain at least one action.
+Never return an empty array. Pick the tool for the next phase.
+```
+
+Define a phase-based workflow (ORIENT → PROJECT → ANALYZE → ...) so the model always knows which tool to emit next. Add "NEVER go back to a completed phase" to prevent loops.
+
+## Helpers (`helpers` module)
+
+Reusable utilities extracted from real agent implementations. Import directly or via re-exports:
+
+```rust
+use baml_agent::{norm, norm_owned, action_result_json, action_result_from, action_result_done, truncate_json_array, load_manifesto};
+```
+
+### BAML enum normalization
+
+BAML generates Rust enum variants with a `K` prefix (`Ksystem`, `Kdefault`). `norm()` strips it:
+
+```rust
+use baml_agent::norm;
+
+let op = norm("Kdefault"); // → "default"
+let role = norm("Ksystem"); // → "system"
+let clean = norm("already_clean"); // → "already_clean"
+
+// norm_owned() takes owned String (convenience for format!("{:?}", variant))
+use baml_agent::norm_owned;
+let op = norm_owned(format!("{:?}", t.operation)); // → "create"
+```
+
+### ActionResult builders
+
+Every `execute()` arm follows the same pattern: call IO → wrap JSON → ActionResult. Helpers eliminate boilerplate:
+
+```rust
+use baml_agent::{action_result_from, action_result_json, action_result_done};
+
+// From Result<Value, E> — wraps error in {"error": "..."}
+async fn execute(&self, action: &Action) -> Result<ActionResult, String> {
+    match action {
+        Action::FsTask(t) => {
+            let io_task = FsTask { operation: norm_owned(format!("{:?}", t.op)), .. };
+            Ok(action_result_from(execute_fs_task(&io_task)))
+        }
+        // From a Value directly (non-terminal)
+        Action::AudioTask(t) => {
+            let mut res = execute_audio(&t)?;
+            truncate_json_array(&mut res, "beats", 10);
+            Ok(action_result_json(&res))
+        }
+        // Terminal action (signals loop completion)
+        Action::Finish(t) => Ok(action_result_done(&t.summary)),
+    }
+}
+```
+
+### JSON array truncation
+
+Keep context window manageable by truncating large arrays in tool results:
+
+```rust
+use baml_agent::truncate_json_array;
+
+let mut res = serde_json::json!({"segments": [/* 500 items */], "beats": [/* 200 items */]});
+truncate_json_array(&mut res, "segments", 10); // keeps 10 + "... showing 10 of 500 total"
+truncate_json_array(&mut res, "beats", 10);
+```
+
+### Agent manifesto loader
+
+Load project-level agent persona from standard paths (`agent.md`, `.director/agent.md`):
+
+```rust
+use baml_agent::{load_manifesto, load_manifesto_from};
+
+// From CWD
+let manifesto = load_manifesto();
+
+// From specific directory
+let manifesto = load_manifesto_from(std::path::Path::new("/path/to/project"));
+
+// Pass to BAML function
+let decision = B.DecideNextStep.call(&messages, &manifesto).await?;
+```
+
 ## Tests
 
 ```bash
 cargo test -p baml-agent
-# 14 tests: session CRUD, trimming, loop detection, agent loop, streaming
+# 25 tests: session CRUD, trimming, loop detection, agent loop, streaming, empty actions guard, helpers
 ```

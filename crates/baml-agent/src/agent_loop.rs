@@ -1,4 +1,4 @@
-use crate::loop_detect::{LoopDetector, LoopStatus};
+use crate::loop_detect::{LoopDetector, LoopStatus, normalize_signature};
 use crate::session::{AgentMessage, MessageRole, Session};
 use std::fmt;
 use std::future::Future;
@@ -94,8 +94,16 @@ pub trait SgrAgent {
         action: &Self::Action,
     ) -> impl Future<Output = Result<ActionResult, Self::Error>> + Send;
 
-    /// String signature for loop detection.
+    /// String signature for loop detection (exact match).
     fn action_signature(action: &Self::Action) -> String;
+
+    /// Coarse category for semantic loop detection.
+    ///
+    /// Default: normalize the signature (strips bash flags, quotes, fallbacks).
+    /// Override for project-specific normalization.
+    fn action_category(action: &Self::Action) -> String {
+        normalize_signature(&Self::action_signature(action))
+    }
 }
 
 /// Streaming extension for SGR agents.
@@ -159,7 +167,7 @@ where
         return Ok(Some(step_num));
     }
 
-    // Loop detection (includes empty actions as signature "")
+    // --- Signatures: exact + normalized category ---
     let sig = decision
         .actions
         .iter()
@@ -167,7 +175,14 @@ where
         .collect::<Vec<_>>()
         .join("|");
 
-    // Empty actions: nudge model before loop detector kicks in
+    let category = decision
+        .actions
+        .iter()
+        .map(A::action_category)
+        .collect::<Vec<_>>()
+        .join("|");
+
+    // --- Empty actions guard ---
     if decision.actions.is_empty() {
         match detector.check(&sig) {
             LoopStatus::Abort(n) => {
@@ -181,19 +196,26 @@ where
             _ => {
                 session.push(
                     <<A::Msg as AgentMessage>::Role>::system(),
-                    "SYSTEM: You returned empty next_actions. You MUST emit at least one tool call in next_actions array. Look at the TOOLS section and pick the right tool for your current phase.".into(),
+                    "SYSTEM: You returned empty next_actions. You MUST emit at least one tool call \
+                     in next_actions array. Look at the TOOLS section and pick the right tool for \
+                     your current phase.".into(),
                 );
                 return Ok(None);
             }
         }
     }
 
-    match detector.check(&sig) {
+    // --- Tier 1+2: exact + category loop detection ---
+    match detector.check_with_category(&sig, &category) {
         LoopStatus::Abort(n) => {
             on_event(LoopEvent::LoopAbort(n));
             session.push(
                 <<A::Msg as AgentMessage>::Role>::system(),
-                "SYSTEM: You have been repeating the same action. Session terminated.".into(),
+                format!(
+                    "SYSTEM: Detected {} repetitions of the same action (category: {}). \
+                     The result will not change. Session terminated.",
+                    n, category
+                ),
             );
             return Ok(Some(step_num));
         }
@@ -201,13 +223,18 @@ where
             on_event(LoopEvent::LoopWarning(n));
             session.push(
                 <<A::Msg as AgentMessage>::Role>::system(),
-                "SYSTEM: You are repeating the same action. Try a different approach or report completion.".into(),
+                format!(
+                    "SYSTEM: You have repeated the same action {} times (category: {}). \
+                     The result is DEFINITIVE. Do NOT retry — either proceed to the next \
+                     step or use FinishTaskTool to report completion.",
+                    n, category
+                ),
             );
         }
         LoopStatus::Ok => {}
     }
 
-    // Execute actions
+    // --- Execute actions ---
     for action in &decision.actions {
         on_event(LoopEvent::ActionStart(action));
 
@@ -217,8 +244,41 @@ where
                     <<A::Msg as AgentMessage>::Role>::tool(),
                     result.output.clone(),
                 );
+
                 let done = result.done;
                 on_event(LoopEvent::ActionDone(&result));
+
+                // --- Tier 3: output stagnation ---
+                match detector.record_output(&result.output) {
+                    LoopStatus::Abort(n) => {
+                        on_event(LoopEvent::LoopAbort(n));
+                        session.push(
+                            <<A::Msg as AgentMessage>::Role>::system(),
+                            format!(
+                                "SYSTEM: Tool returned identical output {} times. The result is \
+                                 DEFINITIVE and will not change. If searching found nothing, \
+                                 nothing exists. Accept the result and proceed to the next task \
+                                 step or use FinishTaskTool.",
+                                n
+                            ),
+                        );
+                        return Ok(Some(step_num));
+                    }
+                    LoopStatus::Warning(n) => {
+                        on_event(LoopEvent::LoopWarning(n));
+                        session.push(
+                            <<A::Msg as AgentMessage>::Role>::system(),
+                            format!(
+                                "SYSTEM: Same tool output {} times in a row. The result will \
+                                 not change — accept it and move forward. Do NOT retry the \
+                                 same operation.",
+                                n
+                            ),
+                        );
+                    }
+                    LoopStatus::Ok => {}
+                }
+
                 if done {
                     return Ok(Some(step_num));
                 }

@@ -1,20 +1,218 @@
+//! Loop detection for agent loops.
+//!
+//! Detects three types of repetitive behavior:
+//!
+//! 1. **Exact repetition** — identical action signatures (catches trivial loops)
+//! 2. **Semantic repetition** — normalized signatures via [`normalize_signature`]
+//!    (catches loops where the agent retries the same intent with different flags,
+//!    quotes, or fallback chains)
+//! 3. **Output stagnation** — identical tool outputs despite varied commands
+//!    (catches loops where the agent tries different approaches but gets the same result)
+//!
+//! Each signal tracks consecutive matches independently. The worst signal
+//! determines the returned [`LoopStatus`].
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+// ---------------------------------------------------------------------------
+// Signature normalization
+// ---------------------------------------------------------------------------
+
+/// Normalize an action signature to its semantic category.
+///
+/// Strips syntactic noise from bash commands to detect loops where the agent
+/// retries the same intent with minor variations (different flags, quotes,
+/// fallback chains).
+///
+/// # Rules
+///
+/// For `bash:...` signatures:
+/// 1. Strip fallback/chain operators (`||`, `&&`, `;`, `|` — with surrounding spaces)
+/// 2. Remove command flags (`-n`, `-i`, `--long-flag`)
+/// 3. Strip surrounding quotes (`'`, `"`) and trailing slashes from arguments
+/// 4. Search tools (`rg`, `grep`, `ag`, `ack`, `fgrep`, `egrep`) → `bash-search:args`
+/// 5. Other commands → `bash:cmd:args`
+///
+/// Non-bash signatures pass through unchanged.
+///
+/// # Examples
+///
+/// ```
+/// use baml_agent::loop_detect::normalize_signature;
+///
+/// // All these normalize to the same category:
+/// let a = normalize_signature("bash:rg -n 'TODO|FIXME' crates/src/");
+/// let b = normalize_signature("bash:rg -Hn \"TODO|FIXME\" crates/src/");
+/// let c = normalize_signature("bash:grep -rnE 'TODO|FIXME' crates/src/ || echo 'not found'");
+/// assert_eq!(a, b);
+/// assert_eq!(b, c);
+/// assert_eq!(a, "bash-search:TODO|FIXME crates/src");
+///
+/// // Non-bash unchanged
+/// assert_eq!(normalize_signature("read:src/main.rs"), "read:src/main.rs");
+/// ```
+pub fn normalize_signature(sig: &str) -> String {
+    if let Some(cmd) = sig.strip_prefix("bash:") {
+        normalize_bash(cmd)
+    } else {
+        sig.to_string()
+    }
+}
+
+/// Binaries recognized as "search" tools (normalized to `bash-search:` category).
+const SEARCH_BINS: &[&str] = &["rg", "grep", "ag", "ack", "fgrep", "egrep"];
+
+fn normalize_bash(cmd: &str) -> String {
+    // 1. Strip chain operators to isolate the primary command.
+    //    Use " || ", " && ", " ; ", " | " (with spaces) to avoid matching
+    //    inside quoted patterns like 'TODO|FIXME'.
+    let core = [" || ", " && ", " ; ", " | "]
+        .iter()
+        .fold(cmd, |acc, sep| acc.split(sep).next().unwrap_or(acc))
+        .trim();
+
+    // 2. Tokenize by whitespace.
+    let tokens: Vec<&str> = core.split_whitespace().collect();
+    if tokens.is_empty() {
+        return "bash:".into();
+    }
+
+    let bin = tokens[0];
+
+    // 3. Extract non-flag arguments, strip quotes and trailing slashes.
+    let args: Vec<String> = tokens[1..]
+        .iter()
+        .filter(|t| !t.starts_with('-'))
+        .map(|t| {
+            t.trim_matches(|c: char| c == '\'' || c == '"')
+                .trim_end_matches('/')
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // 4. Categorize.
+    if SEARCH_BINS.contains(&bin) {
+        format!("bash-search:{}", args.join(" "))
+    } else if args.is_empty() {
+        format!("bash:{}", bin)
+    } else {
+        format!("bash:{}:{}", bin, args.join(" "))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal trackers
+// ---------------------------------------------------------------------------
+
+/// Tracks consecutive occurrences of the same string value.
+struct ConsecutiveTracker {
+    last: Option<String>,
+    count: usize,
+}
+
+impl ConsecutiveTracker {
+    fn new() -> Self {
+        Self { last: None, count: 0 }
+    }
+
+    /// Record a value. Returns the current consecutive count (≥ 1).
+    fn record(&mut self, value: &str) -> usize {
+        if self.last.as_deref() == Some(value) {
+            self.count += 1;
+        } else {
+            self.last = Some(value.to_string());
+            self.count = 1;
+        }
+        self.count
+    }
+
+    fn reset(&mut self) {
+        self.last = None;
+        self.count = 0;
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+}
+
+/// Tracks consecutive occurrences by hash (for large strings like tool output).
+struct HashTracker {
+    last_hash: Option<u64>,
+    count: usize,
+}
+
+impl HashTracker {
+    fn new() -> Self {
+        Self { last_hash: None, count: 0 }
+    }
+
+    fn record(&mut self, value: &str) -> usize {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if self.last_hash == Some(hash) {
+            self.count += 1;
+        } else {
+            self.last_hash = Some(hash);
+            self.count = 1;
+        }
+        self.count
+    }
+
+    fn reset(&mut self) {
+        self.last_hash = None;
+        self.count = 0;
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LoopDetector
+// ---------------------------------------------------------------------------
+
 /// Detects repeated action patterns in agent loops.
+///
+/// Three independent signals, each tracking consecutive repetitions:
+///
+/// | Signal   | Tracks                          | Catches                                |
+/// |----------|---------------------------------|----------------------------------------|
+/// | Exact    | Identical signatures            | Trivial loops (same tool, same args)   |
+/// | Category | Normalized signatures           | Semantic loops (same intent, diff syntax)|
+/// | Output   | Identical tool output (by hash) | Stagnation (different tools, same result)|
 ///
 /// Usage:
 /// ```ignore
-/// let mut detector = LoopDetector::new(6); // abort after 6 repeats
-/// for action in actions {
-///     let sig = format!("tool:{}:{}", action.name, action.key_arg);
-///     match detector.check(&sig) {
-///         LoopStatus::Ok => { /* proceed */ }
-///         LoopStatus::Warning(n) => { /* inject warning into context */ }
-///         LoopStatus::Abort(n) => { /* stop the loop */ }
-///     }
+/// let mut detector = LoopDetector::new(6);
+///
+/// // Per step: check action signatures
+/// let sig = "bash:rg -n 'TODO' src/";
+/// let cat = normalize_signature(sig);
+/// match detector.check_with_category(sig, &cat) {
+///     LoopStatus::Abort(n) => { /* stop */ }
+///     LoopStatus::Warning(n) => { /* inject system message */ }
+///     LoopStatus::Ok => { /* proceed */ }
+/// }
+///
+/// // Per action execution: check tool output
+/// match detector.record_output("No matches found") {
+///     LoopStatus::Warning(n) => { /* nudge model */ }
+///     _ => {}
 /// }
 /// ```
 pub struct LoopDetector {
-    last_signature: Option<String>,
-    repeat_count: usize,
+    /// Tier 1: exact signature repetition.
+    exact: ConsecutiveTracker,
+    /// Tier 2: normalized category repetition.
+    category: ConsecutiveTracker,
+    /// Tier 3: tool output repetition (by hash).
+    output: HashTracker,
     abort_threshold: usize,
     warn_threshold: usize,
 }
@@ -23,67 +221,174 @@ pub struct LoopDetector {
 pub enum LoopStatus {
     /// No loop detected.
     Ok,
-    /// Repeat detected, but below abort threshold. Contains repeat count.
+    /// Repeat detected, below abort threshold. Contains repeat count.
     Warning(usize),
     /// Too many repeats, should abort. Contains repeat count.
     Abort(usize),
 }
 
 impl LoopDetector {
-    /// Create detector. Warns at `abort_threshold / 2`, aborts at `abort_threshold`.
+    /// Create detector. Warns at `⌈abort_threshold/2⌉`, aborts at `abort_threshold`.
     pub fn new(abort_threshold: usize) -> Self {
         Self {
-            last_signature: None,
-            repeat_count: 0,
+            exact: ConsecutiveTracker::new(),
+            category: ConsecutiveTracker::new(),
+            output: HashTracker::new(),
             abort_threshold,
-            warn_threshold: abort_threshold / 2,
+            warn_threshold: abort_threshold.div_ceil(2),
         }
     }
 
     /// Create detector with explicit warn threshold.
     pub fn with_thresholds(warn_threshold: usize, abort_threshold: usize) -> Self {
         Self {
-            last_signature: None,
-            repeat_count: 0,
+            exact: ConsecutiveTracker::new(),
+            category: ConsecutiveTracker::new(),
+            output: HashTracker::new(),
             abort_threshold,
             warn_threshold,
         }
     }
 
-    /// Check a combined signature for the current step's actions.
+    /// Check action signature only (backward-compatible).
     ///
-    /// `signature` should uniquely identify the action(s) being taken.
-    /// If multiple actions, join their signatures with `|`.
+    /// Uses `signature` as both exact match and category.
+    /// For semantic loop detection, use [`check_with_category`] instead.
     pub fn check(&mut self, signature: &str) -> LoopStatus {
-        if self.last_signature.as_deref() == Some(signature) {
-            self.repeat_count += 1;
-            if self.repeat_count >= self.abort_threshold {
-                return LoopStatus::Abort(self.repeat_count);
-            }
-            if self.repeat_count >= self.warn_threshold {
-                return LoopStatus::Warning(self.repeat_count);
-            }
+        self.check_with_category(signature, signature)
+    }
+
+    /// Check action with separate exact signature and normalized category.
+    ///
+    /// Returns the worst status across exact and category signals.
+    pub fn check_with_category(&mut self, signature: &str, category: &str) -> LoopStatus {
+        let exact_n = self.exact.record(signature);
+        let cat_n = self.category.record(category);
+        let max_n = exact_n.max(cat_n);
+
+        if max_n >= self.abort_threshold {
+            LoopStatus::Abort(max_n)
+        } else if max_n >= self.warn_threshold {
+            LoopStatus::Warning(max_n)
         } else {
-            self.repeat_count = 1;
-            self.last_signature = Some(signature.into());
+            LoopStatus::Ok
         }
-        LoopStatus::Ok
     }
 
-    /// Reset detector state.
+    /// Record a tool output and check for output stagnation.
+    ///
+    /// Call after each action execution. Returns [`LoopStatus::Warning`] or
+    /// [`LoopStatus::Abort`] if the same output has been seen too many
+    /// consecutive times — the model is retrying a command that keeps
+    /// giving the same result.
+    pub fn record_output(&mut self, output: &str) -> LoopStatus {
+        let n = self.output.record(output);
+        if n >= self.abort_threshold {
+            LoopStatus::Abort(n)
+        } else if n >= self.warn_threshold {
+            LoopStatus::Warning(n)
+        } else {
+            LoopStatus::Ok
+        }
+    }
+
+    /// Reset all detector state.
     pub fn reset(&mut self) {
-        self.last_signature = None;
-        self.repeat_count = 0;
+        self.exact.reset();
+        self.category.reset();
+        self.output.reset();
     }
 
+    /// Current repeat count (max across all signals).
     pub fn repeat_count(&self) -> usize {
-        self.repeat_count
+        self.exact.count()
+            .max(self.category.count())
+            .max(self.output.count())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- normalize_signature ---
+
+    #[test]
+    fn normalize_bash_search_strips_flags_and_quotes() {
+        assert_eq!(
+            normalize_signature("bash:rg -n 'TODO|FIXME' crates/src/"),
+            "bash-search:TODO|FIXME crates/src"
+        );
+    }
+
+    #[test]
+    fn normalize_bash_search_double_quotes() {
+        assert_eq!(
+            normalize_signature("bash:rg -Hn \"TODO|FIXME\" crates/src/"),
+            "bash-search:TODO|FIXME crates/src"
+        );
+    }
+
+    #[test]
+    fn normalize_bash_search_strips_fallback() {
+        assert_eq!(
+            normalize_signature("bash:rg 'TODO' dir/ || echo 'not found'"),
+            "bash-search:TODO dir"
+        );
+    }
+
+    #[test]
+    fn normalize_bash_grep_same_as_rg() {
+        assert_eq!(
+            normalize_signature("bash:grep -rnE 'TODO|FIXME' src/"),
+            "bash-search:TODO|FIXME src"
+        );
+    }
+
+    #[test]
+    fn normalize_bash_complex_fallback() {
+        assert_eq!(
+            normalize_signature("bash:rg 'TODO' dir/ || (echo 'fail' && ls -la dir/)"),
+            "bash-search:TODO dir"
+        );
+    }
+
+    #[test]
+    fn normalize_non_bash_unchanged() {
+        assert_eq!(normalize_signature("read:src/main.rs"), "read:src/main.rs");
+        assert_eq!(normalize_signature("write:config.toml"), "write:config.toml");
+        assert_eq!(normalize_signature("edit:src/lib.rs"), "edit:src/lib.rs");
+    }
+
+    #[test]
+    fn normalize_bash_non_search_command() {
+        assert_eq!(normalize_signature("bash:cargo test"), "bash:cargo:test");
+        assert_eq!(normalize_signature("bash:ls -la /tmp"), "bash:ls:/tmp");
+        assert_eq!(normalize_signature("bash:cat file.rs"), "bash:cat:file.rs");
+    }
+
+    #[test]
+    fn normalize_all_rg_variants_equal() {
+        let variants = [
+            "bash:rg -n 'TODO|FIXME' crates/baml-agent/src/",
+            "bash:rg 'TODO|FIXME' crates/baml-agent/src/",
+            "bash:rg -i 'TODO|FIXME' crates/baml-agent/src/",
+            "bash:rg -Hn \"TODO|FIXME\" crates/baml-agent/src/",
+            "bash:rg -n \"TODO|FIXME\" crates/baml-agent/src/ || echo 'No matches'",
+            "bash:rg 'TODO|FIXME' crates/baml-agent/src/ || (echo 'fail' && ls -la)",
+        ];
+        let normalized: Vec<String> = variants.iter().map(|v| normalize_signature(v)).collect();
+        let expected = "bash-search:TODO|FIXME crates/baml-agent/src";
+        for (i, n) in normalized.iter().enumerate() {
+            assert_eq!(n, expected, "variant {} failed: {}", i, variants[i]);
+        }
+    }
+
+    // --- Exact repetition (backward compat) ---
 
     #[test]
     fn no_loop_different_sigs() {
@@ -98,7 +403,7 @@ mod tests {
         let mut d = LoopDetector::new(6);
         assert_eq!(d.check("x"), LoopStatus::Ok);
         assert_eq!(d.check("x"), LoopStatus::Ok); // 2
-        assert_eq!(d.check("x"), LoopStatus::Warning(3)); // warn at 3
+        assert_eq!(d.check("x"), LoopStatus::Warning(3)); // warn at ceil(6/2)=3
         assert_eq!(d.check("x"), LoopStatus::Warning(4));
         assert_eq!(d.check("x"), LoopStatus::Warning(5));
         assert_eq!(d.check("x"), LoopStatus::Abort(6)); // abort at 6
@@ -122,5 +427,104 @@ mod tests {
         d.check("x"); // 3 = warning
         assert_eq!(d.check("y"), LoopStatus::Ok); // reset
         assert_eq!(d.repeat_count(), 1);
+    }
+
+    // --- Category (semantic) detection ---
+
+    #[test]
+    fn category_catches_semantic_loop() {
+        let mut d = LoopDetector::new(4); // warn at 2, abort at 4
+        // Different exact signatures, same normalized category
+        let sigs = [
+            "bash:rg -n 'TODO' src/",
+            "bash:rg 'TODO' src/",
+            "bash:rg -i 'TODO' src/",
+            "bash:grep -rn 'TODO' src/",
+        ];
+
+        let results: Vec<LoopStatus> = sigs
+            .iter()
+            .map(|sig| {
+                let cat = normalize_signature(sig);
+                d.check_with_category(sig, &cat)
+            })
+            .collect();
+
+        // All exact sigs differ → exact count stays at 1.
+        // All categories same → category count 1, 2, 3, 4.
+        // max(exact, category) determines result.
+        assert_eq!(results[0], LoopStatus::Ok);        // max(1,1) = 1 < 2
+        assert_eq!(results[1], LoopStatus::Warning(2)); // max(1,2) = 2
+        assert_eq!(results[2], LoopStatus::Warning(3)); // max(1,3) = 3
+        assert_eq!(results[3], LoopStatus::Abort(4));   // max(1,4) = 4
+    }
+
+    #[test]
+    fn different_categories_reset() {
+        let mut d = LoopDetector::new(4);
+        d.check_with_category("bash:rg 'A' src/", "bash-search:A src");
+        d.check_with_category("bash:rg 'A' src/", "bash-search:A src"); // cat=2
+        // Different category resets
+        d.check_with_category("bash:cargo test", "bash:cargo:test");
+        assert_eq!(d.category.count(), 1);
+    }
+
+    // --- Output stagnation ---
+
+    #[test]
+    fn output_stagnation_detected() {
+        let mut d = LoopDetector::new(4); // warn at 2
+        assert_eq!(d.record_output("No matches found"), LoopStatus::Ok);
+        assert_eq!(d.record_output("No matches found"), LoopStatus::Warning(2));
+        assert_eq!(d.record_output("No matches found"), LoopStatus::Warning(3));
+        assert_eq!(d.record_output("No matches found"), LoopStatus::Abort(4));
+    }
+
+    #[test]
+    fn output_different_resets() {
+        let mut d = LoopDetector::new(4);
+        d.record_output("result A");
+        d.record_output("result A"); // 2 = warning
+        assert_eq!(d.record_output("result B"), LoopStatus::Ok); // reset to 1
+    }
+
+    // --- Combined: real-world scenario ---
+
+    #[test]
+    fn semantic_loop_caught_within_threshold() {
+        // Simulates the actual TODO/FIXME loop from testing.
+        // 6 steps, each with different flags/quotes but same intent.
+        let mut d = LoopDetector::new(6); // warn at 3, abort at 6
+
+        let steps: Vec<(&str, &str)> = vec![
+            ("bash:rg \"TODO|FIXME\" crates/baml-agent/src/",                   ""),
+            ("bash:rg -n 'TODO|FIXME' crates/baml-agent/src/",                  ""),
+            ("bash:rg -n \"TODO|FIXME\" crates/baml-agent/src/ || echo 'No'",   "No TODO or FIXME found"),
+            ("bash:rg 'TODO|FIXME' crates/baml-agent/src/ || (echo && ls)",     "Search failed..."),
+            ("bash:rg 'TODO|FIXME' crates/baml-agent/src/",                     "No TODO or FIXME found"),
+            ("bash:rg -n 'TODO|FIXME' crates/baml-agent/src/ || echo 'No'",     "No TODO or FIXME found"),
+        ];
+
+        let mut first_warning = None;
+        let mut abort_at = None;
+
+        for (i, (sig, output)) in steps.iter().enumerate() {
+            let cat = normalize_signature(sig);
+            match d.check_with_category(sig, &cat) {
+                LoopStatus::Warning(n) => {
+                    if first_warning.is_none() { first_warning = Some(i + 1); }
+                    let _ = n;
+                }
+                LoopStatus::Abort(_) => {
+                    abort_at = Some(i + 1);
+                    break;
+                }
+                LoopStatus::Ok => {}
+            }
+            d.record_output(output);
+        }
+
+        assert_eq!(first_warning, Some(3), "should warn at step 3");
+        assert_eq!(abort_at, Some(6), "should abort at step 6");
     }
 }

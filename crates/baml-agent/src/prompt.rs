@@ -28,8 +28,10 @@ Verify before finishing. Report errors clearly.
 
 ## Rules
 - {domain_rules}
-- If stuck or repeating actions, try a different approach
-- Never silently retry the same failing action
+- If a tool returns "not found", "no matches", or empty output — that IS the answer. Accept it. Do NOT retry with different flags, quotes, or syntax.
+- Never run the same command more than once. If the result was empty, it will stay empty.
+- After each tool result, always ADVANCE to the next step. Never retry the same operation.
+- If stuck, try a fundamentally different approach or report to the user.
 
 ## Available Tools
 {tools_reference}
