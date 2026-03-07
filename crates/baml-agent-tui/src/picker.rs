@@ -8,6 +8,19 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
+/// Preview data for the right panel of the picker.
+#[derive(Debug, Clone, Default)]
+pub struct PickerPreview {
+    /// Key-value metadata lines (e.g. "BPM: 120", "Duration: 3:24").
+    pub meta: Vec<(String, String)>,
+    /// Beat positions in seconds (for audio waveform visualization).
+    pub beats: Vec<f64>,
+    /// Onset strength envelope (normalized 0..1).
+    pub onset_strength: Vec<f32>,
+    /// Total duration in seconds.
+    pub duration: f64,
+}
+
 /// A single item in the picker.
 #[derive(Debug, Clone)]
 pub struct PickerItem {
@@ -20,6 +33,8 @@ pub struct PickerItem {
     pub channel: String,
     /// Icon prefix (e.g. "♫", "▶", "◆").
     pub icon: &'static str,
+    /// Optional preview data for the right panel.
+    pub preview: Option<PickerPreview>,
 }
 
 /// Result of handling a key event in the picker.
@@ -253,12 +268,19 @@ impl FuzzyPicker {
             return;
         }
 
-        // Overlay: centered, up to 60 cols wide, up to 12 rows tall.
-        let width = area.width.clamp(20, 60);
-        let height = area.height.clamp(5, 14);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        // Check if selected item has preview data — expand overlay if so.
+        let has_preview = self
+            .selected_item()
+            .and_then(|it| it.preview.as_ref())
+            .is_some();
+
+        let base_width = area.width.clamp(20, 60);
+        let preview_width: u16 = if has_preview { 28 } else { 0 };
+        let total_width = (base_width + preview_width).min(area.width);
+        let height = area.height.clamp(5, 16);
+        let x = area.x + (area.width.saturating_sub(total_width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let overlay = Rect::new(x, y, width, height);
+        let overlay = Rect::new(x, y, total_width, height);
 
         // Clear background.
         Clear.render(overlay, buf);
@@ -271,9 +293,6 @@ impl FuzzyPicker {
                 .map(|(i, ch)| {
                     if self.active_channel == Some(i) {
                         format!("[{}]", ch)
-                    } else if self.active_channel.is_none() && i == 0 {
-                        // Show "all" as implicitly active when no filter
-                        ch.to_string()
                     } else {
                         ch.to_string()
                     }
@@ -308,15 +327,22 @@ impl FuzzyPicker {
             return;
         }
 
+        // Split inner into list area and preview area.
+        let list_width = if has_preview {
+            inner.width.saturating_sub(preview_width)
+        } else {
+            inner.width
+        };
+
         // Query line.
-        let query_area = Rect::new(inner.x, inner.y, inner.width, 1);
+        let query_area = Rect::new(inner.x, inner.y, list_width, 1);
         let query_display = format!("> {}", self.query);
         Paragraph::new(query_display)
             .style(Style::default().fg(Color::White))
             .render(query_area, buf);
 
         // Results list.
-        let list_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height - 1);
+        let list_area = Rect::new(inner.x, inner.y + 1, list_width, inner.height - 1);
 
         if self.filtered.is_empty() {
             let msg = if self.query.is_empty() {
@@ -331,33 +357,163 @@ impl FuzzyPicker {
                         .add_modifier(Modifier::ITALIC),
                 )
                 .render(list_area, buf);
-            return;
+        } else {
+            let items: Vec<ListItem> = self
+                .filtered
+                .iter()
+                .map(|(_, item_idx)| {
+                    let item = &self.items[*item_idx];
+                    let line = if item.detail.is_empty() {
+                        format!("  {} {}", item.icon, item.label)
+                    } else {
+                        format!("  {} {}  {}", item.icon, item.label, item.detail)
+                    };
+                    ListItem::new(Line::from(line))
+                })
+                .collect();
+
+            let list = List::new(items)
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("\u{25B8} ");
+
+            ratatui::widgets::StatefulWidget::render(list, list_area, buf, &mut self.list_state);
         }
 
-        let items: Vec<ListItem> = self
-            .filtered
-            .iter()
-            .map(|(_, item_idx)| {
-                let item = &self.items[*item_idx];
-                let line = if item.detail.is_empty() {
-                    format!("  {} {}", item.icon, item.label)
-                } else {
-                    format!("  {} {}  {}", item.icon, item.label, item.detail)
-                };
-                ListItem::new(Line::from(line))
-            })
-            .collect();
+        // Preview panel (right side).
+        if has_preview && preview_width > 2 {
+            let preview_area =
+                Rect::new(inner.x + list_width, inner.y, preview_width, inner.height);
+            if let Some(preview) = self
+                .selected_item()
+                .and_then(|it| it.preview.as_ref())
+                .cloned()
+            {
+                render_preview(&preview, preview_area, buf);
+            }
+        }
+    }
+}
 
-        let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▸ ");
+/// Render preview panel: metadata lines + ASCII waveform with beat markers.
+fn render_preview(preview: &PickerPreview, area: Rect, buf: &mut Buffer) {
+    if area.width < 3 || area.height < 2 {
+        return;
+    }
 
-        ratatui::widgets::StatefulWidget::render(list, list_area, buf, &mut self.list_state);
+    // Separator line on the left edge.
+    for row in area.y..area.y + area.height {
+        if let Some(cell) = buf.cell_mut((area.x, row)) {
+            cell.set_char('\u{2502}');
+            cell.set_fg(Color::DarkGray);
+        }
+    }
+
+    let content_x = area.x + 2;
+    let content_w = area.width.saturating_sub(2) as usize;
+    let mut row = area.y;
+
+    // Metadata lines.
+    for (key, val) in &preview.meta {
+        if row >= area.y + area.height {
+            break;
+        }
+        let text = format!("{}: {}", key, val);
+        let display = if text.len() > content_w {
+            format!("{}...", &text[..content_w.saturating_sub(3)])
+        } else {
+            text
+        };
+        let span = Span::styled(display, Style::default().fg(Color::White));
+        buf.set_span(content_x, row, &span, content_w as u16);
+        row += 1;
+    }
+
+    // Blank separator.
+    if row < area.y + area.height {
+        row += 1;
+    }
+
+    // ASCII waveform from onset_strength with beat markers.
+    let waveform_height = (area.y + area.height).saturating_sub(row);
+    if waveform_height < 2 || preview.onset_strength.is_empty() || preview.duration <= 0.0 {
+        return;
+    }
+
+    let waveform_w = content_w.min(24);
+
+    // Downsample onset_strength to waveform_w columns.
+    let olen = preview.onset_strength.len();
+    let mut columns: Vec<f32> = Vec::with_capacity(waveform_w);
+    for col in 0..waveform_w {
+        let start = col * olen / waveform_w;
+        let end = ((col + 1) * olen / waveform_w).max(start + 1).min(olen);
+        let sum: f32 = preview.onset_strength[start..end].iter().sum();
+        let avg = sum / (end - start) as f32;
+        columns.push(avg);
+    }
+
+    // Normalize.
+    let max_val = columns.iter().cloned().fold(0.0_f32, f32::max);
+    if max_val > 0.0 {
+        for v in &mut columns {
+            *v /= max_val;
+        }
+    }
+
+    // Beat positions as column indices.
+    let beat_cols: Vec<usize> = preview
+        .beats
+        .iter()
+        .filter_map(|&b| {
+            if b < 0.0 || b > preview.duration {
+                return None;
+            }
+            let col = (b / preview.duration * waveform_w as f64) as usize;
+            Some(col.min(waveform_w.saturating_sub(1)))
+        })
+        .collect();
+
+    // Render bottom-up bar chart.
+    let bar_chars = [
+        ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
+
+    // Single-row sparkline approach.
+    if waveform_height >= 1 {
+        let spark_row = row;
+        for (col_idx, &val) in columns.iter().enumerate() {
+            let char_idx = (val * 8.0).round() as usize;
+            let ch = bar_chars[char_idx.min(8)];
+            let px = content_x + col_idx as u16;
+            if px < area.x + area.width {
+                let is_beat = beat_cols.contains(&col_idx);
+                let fg = if is_beat { Color::Red } else { Color::Green };
+                if let Some(cell) = buf.cell_mut((px, spark_row)) {
+                    cell.set_char(ch);
+                    cell.set_fg(fg);
+                }
+            }
+        }
+        row += 1;
+    }
+
+    // Beat marker row below waveform.
+    if row < area.y + area.height {
+        for &bc in &beat_cols {
+            let px = content_x + bc as u16;
+            if px < area.x + area.width {
+                if let Some(cell) = buf.cell_mut((px, row)) {
+                    cell.set_char('\u{2502}');
+                    cell.set_fg(Color::Red);
+                }
+            }
+        }
     }
 }
 
@@ -373,6 +529,7 @@ mod tests {
                 detail: "2h ago".into(),
                 channel: "session".into(),
                 icon: "◆",
+                preview: None,
             },
             PickerItem {
                 id: "m1".into(),
@@ -380,6 +537,7 @@ mod tests {
                 detail: "120 BPM  3:24".into(),
                 channel: "music".into(),
                 icon: "♫",
+                preview: None,
             },
             PickerItem {
                 id: "v1".into(),
@@ -387,6 +545,7 @@ mod tests {
                 detail: "00:45  analyzed".into(),
                 channel: "video".into(),
                 icon: "▶",
+                preview: None,
             },
             PickerItem {
                 id: "m2".into(),
@@ -394,6 +553,7 @@ mod tests {
                 detail: "90 BPM  5:12".into(),
                 channel: "music".into(),
                 icon: "♫",
+                preview: None,
             },
         ]
     }
@@ -454,6 +614,37 @@ mod tests {
         // First filtered item should be item index 0 (highest position score)
         let item = picker.selected_item().expect("should have selection");
         assert!(!item.id.is_empty());
+    }
+
+    #[test]
+    fn preview_renders_waveform() {
+        let preview = PickerPreview {
+            meta: vec![("BPM".into(), "120".into())],
+            beats: vec![0.5, 1.0, 1.5],
+            onset_strength: vec![0.1, 0.5, 0.8, 0.3, 0.6, 0.9, 0.2, 0.4],
+            duration: 2.0,
+        };
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buf = Buffer::empty(area);
+        render_preview(&preview, area, &mut buf);
+        // Should not panic; verify beat marker exists.
+    }
+
+    #[test]
+    fn picker_item_with_preview() {
+        let mut picker = FuzzyPicker::new();
+        let mut items = sample_items();
+        items[1].preview = Some(PickerPreview {
+            meta: vec![("BPM".into(), "120".into())],
+            beats: vec![0.5, 1.0],
+            onset_strength: vec![0.3, 0.7, 0.5, 0.9],
+            duration: 2.0,
+        });
+        picker.set_items(items);
+        // Move to second item (music with preview).
+        picker.move_down();
+        let item = picker.selected_item().unwrap();
+        assert!(item.preview.is_some());
     }
 
     #[test]

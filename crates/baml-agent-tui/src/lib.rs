@@ -3,6 +3,7 @@ pub mod chat;
 pub mod context_bar;
 pub mod event;
 pub mod headless;
+pub mod help;
 pub mod picker;
 pub mod terminal;
 
@@ -13,7 +14,8 @@ pub use chat::ChatState;
 pub use context_bar::ProjectContext;
 pub use event::AppEvent;
 pub use headless::run_headless;
-pub use picker::{FuzzyPicker, PickerAction, PickerItem};
+pub use help::HelpOverlay;
+pub use picker::{FuzzyPicker, PickerAction, PickerItem, PickerPreview};
 pub use terminal::{init_terminal, restore_terminal, setup_panic_hook, Tui};
 
 // Re-export baml-agent essentials for convenience
