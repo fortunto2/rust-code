@@ -1,0 +1,27 @@
+[package]
+name = "solograph"
+version = "0.1.0"
+edition = "2021"
+description = "Code intelligence: tree-sitter scanning, project maps, dependency parsing"
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-code"
+keywords = ["tree-sitter", "code-graph", "project-map", "code-intelligence"]
+categories = ["development-tools"]
+readme = "README.md"
+
+[features]
+default = ["rust"]
+rust = ["dep:tree-sitter-rust"]
+python = ["dep:tree-sitter-python"]
+typescript = ["dep:tree-sitter-typescript"]
+
+[dependencies]
+tree-sitter = "0.26"
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

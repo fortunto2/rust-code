@@ -22,15 +22,15 @@ run: build
 
 ## Clippy lint (baml-agent clean, rc-cli has legacy warnings)
 lint:
-	$(CARGO) clippy -p baml-agent -p baml-agent-tui --all-targets -- -D warnings
+	$(CARGO) clippy -p baml-agent -p baml-agent-tui -p solograph --all-targets -- -D warnings
 
 ## Format check (skip rc-baml/rc-cli which contain generated baml_client)
 fmt-check:
-	$(CARGO) fmt -p baml-agent -p baml-agent-tui -- --check
+	$(CARGO) fmt -p baml-agent -p baml-agent-tui -p solograph -p solograph -- --check
 
 ## Format fix
 fmt:
-	$(CARGO) fmt -p baml-agent -p baml-agent-tui
+	$(CARGO) fmt -p baml-agent -p baml-agent-tui -p solograph
 
 ## Pre-commit check (test + lint + fmt)
 check: test lint fmt-check

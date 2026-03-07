@@ -6,9 +6,9 @@ echo "Running tests..."
 cargo test --workspace --quiet
 
 echo "Running clippy..."
-cargo clippy -p baml-agent -p baml-agent-tui --all-targets -- -D warnings
+cargo clippy -p baml-agent -p baml-agent-tui -p solograph --all-targets -- -D warnings
 
 echo "Checking format..."
-cargo fmt -p baml-agent -p baml-agent-tui -- --check
+cargo fmt -p baml-agent -p baml-agent-tui -p solograph -- --check
 
 echo "All checks passed."
