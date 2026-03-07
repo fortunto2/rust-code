@@ -656,6 +656,7 @@ impl SgrAgentStream for Agent {
         T: FnMut(&str) + Send,
     {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
+        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
         let client_override = self.client_override.clone();
         async move {
             let mut stream = if let Some(ref client) = client_override {
@@ -680,6 +681,12 @@ impl SgrAgentStream for Agent {
             }
 
             let step = stream.get_final_response().await?;
+
+            // Track cost
+            let output_chars = step.situation.len()
+                + step.task.iter().map(|t| t.len()).sum::<usize>()
+                + format!("{:?}", step.actions).len();
+            cost::record_step(input_chars, output_chars);
             let done = step
                 .actions
                 .iter()
