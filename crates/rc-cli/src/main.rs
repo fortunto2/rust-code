@@ -7,7 +7,7 @@ pub mod baml_client;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use crate::agent::{Agent, HeadlessAgent};
+use crate::agent::Agent;
 use baml_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
 
 #[derive(Parser, Debug)]
@@ -510,17 +510,16 @@ async fn main() -> Result<()> {
         }
         agent.add_user_message(&prompt);
 
-        let headless = HeadlessAgent::new(agent);
         let config = LoopConfig { max_steps: 50, loop_abort_threshold: 6 };
 
-        // Get session from the agent inside the Arc<Mutex>
-        let mut session = {
-            let mut locked = headless.agent.lock().await;
-            std::mem::replace(locked.session_mut(), baml_agent::Session::new(".rust-code-tmp", 60))
-        };
+        // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
+        let mut session = std::mem::replace(
+            agent.session_mut(),
+            baml_agent::Session::new(".rust-code-tmp", 60),
+        );
 
         use std::io::Write as _;
-        let result = run_loop_stream(&headless, &mut session, &config, |event| {
+        let result = run_loop_stream(&agent, &mut session, &config, |event| {
             match event {
                 LoopEvent::StepStart(n) => {
                     print!("\n[Step {}] Thinking...", n);
@@ -540,7 +539,7 @@ async fn main() -> Result<()> {
                     println!("\n[DONE] Task completed.");
                 }
                 LoopEvent::ActionStart(action) => {
-                    println!("\nAction: {}", HeadlessAgent::action_signature(action));
+                    println!("\nAction: {}", Agent::action_signature(action));
                 }
                 LoopEvent::ActionDone(result) => {
                     println!("\nTool Result:\n{}", result.output);
@@ -564,11 +563,8 @@ async fn main() -> Result<()> {
             }
         }).await;
 
-        // Put session back
-        {
-            let mut locked = headless.agent.lock().await;
-            *locked.session_mut() = session;
-        }
+        // Restore session
+        *agent.session_mut() = session;
 
         if let Err(e) = result {
             eprintln!("Agent error: {}", e);

@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tui_textarea::{Input, TextArea};
 
-use crate::agent::{Agent, AgentEvent, Action};
+use crate::agent::{Agent, Action};
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 use baml_agent::{SgrAgent, LoopDetector, LoopStatus};
@@ -4208,7 +4208,7 @@ impl<'a> App<'a> {
                                 Ok(step) => {
                                     // Loop detection via shared LoopDetector
                                     let sig = step.actions.iter()
-                                        .map(|a| crate::agent::HeadlessAgent::action_signature(a))
+                                        .map(|a| Agent::action_signature(a))
                                         .collect::<Vec<_>>()
                                         .join("|");
 
@@ -4260,7 +4260,12 @@ impl<'a> App<'a> {
                                         }
 
                                         match locked_agent.execute_action(action).await {
-                                            Ok(AgentEvent::Message(result)) => {
+                                            Ok(result) => {
+                                                if let Action::OpenEditorTool(cmd) = action {
+                                                    let _ = agent_tx
+                                                        .send(AppEvent::SuspendAndRun(cmd.path.clone(), cmd.line))
+                                                        .await;
+                                                }
                                                 if let Action::EditFileTool(cmd) = action {
                                                     let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                                 }
@@ -4270,22 +4275,13 @@ impl<'a> App<'a> {
 
                                                 locked_agent.add_user_message(format!(
                                                     "Tool result:\n{}",
-                                                    result
+                                                    result.output
                                                 ));
                                                 let _ = agent_tx
                                                     .send(AppEvent::AgentResponse(format!(
                                                         "[TOOL]\n{}",
-                                                        result
+                                                        result.output
                                                     )))
-                                                    .await;
-                                            }
-                                            Ok(AgentEvent::OpenEditor(path, line)) => {
-                                                locked_agent.add_user_message(format!(
-                                                    "Tool result:\nUser opened editor for {}",
-                                                    path
-                                                ));
-                                                let _ = agent_tx
-                                                    .send(AppEvent::SuspendAndRun(path, line))
                                                     .await;
                                             }
                                             Err(e) => {

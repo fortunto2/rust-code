@@ -11,11 +11,6 @@ use std::path::Path;
 /// Shorthand for the 14-variant BAML action union.
 pub use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
 
-pub enum AgentEvent {
-    Message(String),
-    OpenEditor(String, Option<i64>),
-}
-
 // Implement baml-agent traits for BAML's generated Message type
 
 #[derive(Clone, PartialEq)]
@@ -115,7 +110,7 @@ impl Agent {
         self.session.messages().iter().map(|m| &m.0).collect()
     }
 
-    /// Get mutable reference to session (for run_loop).
+    /// Get mutable reference to session (for run_loop / TUI).
     pub fn session_mut(&mut self) -> &mut Session<Msg> {
         &mut self.session
     }
@@ -133,13 +128,7 @@ impl Agent {
         self.session.push(Role::assistant(), content.into());
     }
 
-    pub async fn step(&mut self) -> Result<types::NextStep> {
-        self.session.trim();
-        let history = self.baml_history();
-        let response = baml_client::async_client::B.GetNextStep.call(&history).await?;
-        Ok(response)
-    }
-
+    /// TUI-only: get streaming BAML call (used by app.rs manual loop).
     pub fn step_stream(&mut self) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>> {
         self.session.trim();
         let history = self.baml_history();
@@ -147,28 +136,44 @@ impl Agent {
         Ok(stream)
     }
 
-    pub async fn execute_action(&mut self, action: &Action) -> Result<AgentEvent> {
+    /// Execute a single action. Returns tool output + done flag.
+    pub async fn execute_action(&self, action: &Action) -> Result<ActionResult> {
         use Action::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
-                Ok(AgentEvent::Message(format!("File contents of {}:\n{}", cmd.path, content)))
+                Ok(ActionResult {
+                    output: format!("File contents of {}:\n{}", cmd.path, content),
+                    done: false,
+                })
             }
             WriteFileTool(cmd) => {
                 write_file(&cmd.path, &cmd.content).await?;
-                Ok(AgentEvent::Message(format!("Successfully wrote to {}", cmd.path)))
+                Ok(ActionResult {
+                    output: format!("Successfully wrote to {}", cmd.path),
+                    done: false,
+                })
             }
             EditFileTool(cmd) => {
                 crate::tools::fs::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
-                Ok(AgentEvent::Message(format!("Successfully edited {}", cmd.path)))
+                Ok(ActionResult {
+                    output: format!("Successfully edited {}", cmd.path),
+                    done: false,
+                })
             }
             BashCommandTool(cmd) => {
                 let output = run_command(&cmd.command).await?;
-                Ok(AgentEvent::Message(format!("Command output:\n{}", output)))
+                Ok(ActionResult {
+                    output: format!("Command output:\n{}", output),
+                    done: false,
+                })
             }
             BashBgTool(cmd) => {
                 let output = crate::tools::run_command_bg(&cmd.name, &cmd.command).await?;
-                Ok(AgentEvent::Message(format!("[BG] {}", output)))
+                Ok(ActionResult {
+                    output: format!("[BG] {}", output),
+                    done: false,
+                })
             }
             SearchCodeTool(cmd) => {
                 let mut result = String::new();
@@ -209,7 +214,7 @@ impl Agent {
                     }
                 }
 
-                Ok(AgentEvent::Message(result))
+                Ok(ActionResult { output: result, done: false })
             }
             GitStatusTool(_cmd) => {
                 match git_status()? {
@@ -233,39 +238,58 @@ impl Agent {
                                 result.push_str(&format!("  ? {}\n", f));
                             }
                         }
-                        Ok(AgentEvent::Message(result))
+                        Ok(ActionResult { output: result, done: false })
                     }
-                    None => Ok(AgentEvent::Message("Not in a git repository".to_string())),
+                    None => Ok(ActionResult { output: "Not in a git repository".into(), done: false }),
                 }
             }
             GitDiffTool(cmd) => {
                 let diff = git_diff(cmd.path.as_deref(), cmd.cached.unwrap_or(false))?;
-                if diff.is_empty() {
-                    Ok(AgentEvent::Message("No changes to show".to_string()))
+                let output = if diff.is_empty() {
+                    "No changes to show".into()
                 } else {
-                    Ok(AgentEvent::Message(format!("Git Diff:\n{}", diff)))
-                }
+                    format!("Git Diff:\n{}", diff)
+                };
+                Ok(ActionResult { output, done: false })
             }
             GitAddTool(cmd) => {
                 git_add(&cmd.paths)?;
-                Ok(AgentEvent::Message(format!("Added {} files to staging", cmd.paths.len())))
+                Ok(ActionResult {
+                    output: format!("Added {} files to staging", cmd.paths.len()),
+                    done: false,
+                })
             }
             GitCommitTool(cmd) => {
                 git_commit(&cmd.message)?;
-                Ok(AgentEvent::Message(format!("Committed: {}", cmd.message)))
+                Ok(ActionResult {
+                    output: format!("Committed: {}", cmd.message),
+                    done: false,
+                })
             }
             OpenEditorTool(cmd) => {
-                Ok(AgentEvent::OpenEditor(cmd.path.clone(), cmd.line))
+                Ok(ActionResult {
+                    output: format!("Opened {} in editor", cmd.path),
+                    done: false,
+                })
             }
             FinishTaskTool(cmd) => {
-                Ok(AgentEvent::Message(format!("Task finished: {}", cmd.summary)))
+                Ok(ActionResult {
+                    output: format!("Task finished: {}", cmd.summary),
+                    done: true,
+                })
             }
             AskUserTool(cmd) => {
-                Ok(AgentEvent::Message(format!("Question for user: {}", cmd.question)))
+                Ok(ActionResult {
+                    output: format!("Question for user: {}", cmd.question),
+                    done: true,
+                })
             }
             McpToolCall(cmd) => {
                 let Some(mcp) = &self.mcp else {
-                    return Ok(AgentEvent::Message("MCP not initialized. No .mcp.json found.".to_string()));
+                    return Ok(ActionResult {
+                        output: "MCP not initialized. No .mcp.json found.".into(),
+                        done: false,
+                    });
                 };
                 let args = cmd.arguments.as_ref().and_then(|json_str| {
                     serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str).ok()
@@ -273,10 +297,16 @@ impl Agent {
                 match mcp.call_tool(&cmd.server, &cmd.tool, args).await {
                     Ok(result) => {
                         let output = crate::tools::mcp::format_tool_result(&result);
-                        Ok(AgentEvent::Message(format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output)))
+                        Ok(ActionResult {
+                            output: format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output),
+                            done: false,
+                        })
                     }
                     Err(e) => {
-                        Ok(AgentEvent::Message(format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e)))
+                        Ok(ActionResult {
+                            output: format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e),
+                            done: false,
+                        })
                     }
                 }
             }
@@ -284,23 +314,11 @@ impl Agent {
     }
 }
 
-/// SgrAgent implementation for headless mode.
+/// SgrAgent implementation — used by run_loop_stream in headless mode.
 ///
-/// Wraps Agent behind Arc<Mutex> since SgrAgent takes &self but
-/// execute_action needs &mut self (for MCP).
-pub struct HeadlessAgent {
-    pub agent: std::sync::Arc<tokio::sync::Mutex<Agent>>,
-}
-
-impl HeadlessAgent {
-    pub fn new(agent: Agent) -> Self {
-        Self {
-            agent: std::sync::Arc::new(tokio::sync::Mutex::new(agent)),
-        }
-    }
-}
-
-impl SgrAgent for HeadlessAgent {
+/// `execute` delegates to `execute_action` which takes `&self` (no mutation).
+/// `decide`/`decide_stream` call BAML directly from the passed-in messages.
+impl SgrAgent for Agent {
     type Action = Action;
     type Msg = Msg;
     type Error = anyhow::Error;
@@ -322,19 +340,7 @@ impl SgrAgent for HeadlessAgent {
     }
 
     async fn execute(&self, action: &Action) -> Result<ActionResult> {
-        let mut agent = self.agent.lock().await;
-        match agent.execute_action(action).await? {
-            AgentEvent::Message(msg) => {
-                let done = matches!(action, Action::FinishTaskTool(_));
-                Ok(ActionResult { output: msg, done })
-            }
-            AgentEvent::OpenEditor(path, _) => {
-                Ok(ActionResult {
-                    output: format!("User opened editor for {}", path),
-                    done: false,
-                })
-            }
-        }
+        self.execute_action(action).await
     }
 
     fn action_signature(action: &Action) -> String {
@@ -358,7 +364,7 @@ impl SgrAgent for HeadlessAgent {
     }
 }
 
-impl SgrAgentStream for HeadlessAgent {
+impl SgrAgentStream for Agent {
     fn decide_stream<T>(
         &self,
         messages: &[Msg],
