@@ -23,7 +23,7 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `config` | `AgentConfig`, `ProviderConfig` — multi-provider LLM config (Vertex AI, Google AI, OpenAI-compatible) |
 | `engine` | `BamlRegistry` trait, `AgentEngine` — builds BAML ClientRegistry from config |
 | `session` | `Session<M>`, `AgentMessage`, `MessageRole` — JSONL persistence, history trimming |
-| `loop_detect` | `LoopDetector`, `LoopStatus` — detects repeated actions, warns then aborts |
+| `loop_detect` | `LoopDetector`, `LoopStatus`, `normalize_signature` — 3-tier loop detection (exact, semantic, output) |
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
 | `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `load_manifesto` — reusable patterns |
@@ -46,6 +46,7 @@ use baml_agent::{
     AgentConfig, AgentEngine, BamlRegistry,
     Session, AgentMessage, MessageRole,
     SgrAgent, StepDecision, ActionResult, LoopConfig, LoopEvent, run_loop,
+    action_result_from, action_result_done,  // helpers
 };
 use std::collections::HashMap;
 
@@ -113,14 +114,12 @@ impl SgrAgent for MyAgent {
     }
 
     async fn execute(&self, action: &MyActionUnion) -> Result<ActionResult, String> {
-        // Execute the action, return output text + done flag
         match action {
             MyActionUnion::SearchTask(t) => {
-                let result = do_search(&t.query);
-                Ok(ActionResult { output: result, done: false })
+                Ok(action_result_from(do_search(&t.query)))
             }
             MyActionUnion::FinishTask(t) => {
-                Ok(ActionResult { output: t.summary.clone(), done: true })
+                Ok(action_result_done(&t.summary))
             }
         }
     }
@@ -223,11 +222,13 @@ let steps = run_loop_stream(&agent, &mut session, &loop_config, |event| {
 SgrAgent                          SgrAgentStream : SgrAgent
   decide()                          decide_stream(on_token)
   execute()
-  action_signature()
+  action_signature()               (inherits all from SgrAgent)
+  action_category()  [default]
 
 run_loop(impl SgrAgent)           run_loop_stream(impl SgrAgentStream)
   calls decide()                    calls decide_stream()
   no StreamToken events             emits StreamToken events
+  3-tier loop detection             3-tier loop detection
 ```
 
 - **va-agent** — `SgrAgent` only, `run_loop()`. No streaming needed for autonomous CLI.
@@ -359,6 +360,75 @@ Never return an empty array. Pick the tool for the next phase.
 ```
 
 Define a phase-based workflow (ORIENT → PROJECT → ANALYZE → ...) so the model always knows which tool to emit next. Add "NEVER go back to a completed phase" to prevent loops.
+
+## Loop detection (3-tier)
+
+`LoopDetector` catches three types of agent loops, each tracked independently:
+
+| Tier | Signal | Catches | Example |
+|------|--------|---------|---------|
+| **1. Exact** | Identical `action_signature()` | Trivial loops (same tool, same args) | `inspect:/path` × 6 |
+| **2. Category** | Normalized `action_category()` | Semantic loops (same intent, different syntax) | `rg -n 'TODO' src/` vs `grep -rn "TODO" src/` |
+| **3. Output** | Identical tool output (hash) | Stagnation (different commands, same result) | "No matches found" × 4 |
+
+Thresholds: warns at `⌈abort/2⌉`, aborts at `abort_threshold`. Default: warn at 3, abort at 6.
+
+### How it works in the loop
+
+```
+decide() → action_signature() + action_category()
+         → check_with_category(sig, cat)  ← Tier 1+2
+         → if Warning: inject "try different approach" system message
+         → if Abort: terminate loop
+
+execute() → tool output
+          → record_output(output)          ← Tier 3
+          → if Warning: inject "result is definitive" system message
+          → if Abort: terminate loop
+```
+
+All three tiers are automatic — `process_step()` handles everything. No per-project wiring needed.
+
+### Signature normalization (`normalize_signature`)
+
+Tier 2 uses `normalize_signature()` to collapse bash command variations into a canonical form:
+
+```rust
+use baml_agent::normalize_signature;
+
+// All normalize to "bash-search:TODO|FIXME crates/src"
+normalize_signature("bash:rg -n 'TODO|FIXME' crates/src/");
+normalize_signature("bash:rg -Hn \"TODO|FIXME\" crates/src/");
+normalize_signature("bash:grep -rnE 'TODO|FIXME' crates/src/ || echo 'not found'");
+
+// Non-bash signatures pass through unchanged
+normalize_signature("inspect:/path/video.mp4"); // → "inspect:/path/video.mp4"
+```
+
+Rules for bash signatures:
+1. Strip fallback chains (`||`, `&&`, `;`, `|`)
+2. Remove flags (`-n`, `-i`, `--long-flag`)
+3. Strip quotes and trailing slashes from args
+4. Search tools (`rg`, `grep`, `ag`, `ack`) → `bash-search:args`
+5. Other commands → `bash:cmd:args`
+
+### Custom category (optional)
+
+Override `action_category()` on `SgrAgent` for project-specific normalization:
+
+```rust
+impl SgrAgent for MyAgent {
+    // Default: normalize_signature(&action_signature(action))
+    // Override for domain-specific collapsing:
+    fn action_category(action: &MyAction) -> String {
+        match action {
+            // Collapse all analysis variants to one category
+            MyAction::Analyze(t) => format!("analyze:{}", t.input_path),
+            _ => normalize_signature(&Self::action_signature(action)),
+        }
+    }
+}
+```
 
 ## Helpers (`helpers` module)
 
