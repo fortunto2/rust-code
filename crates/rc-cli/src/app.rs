@@ -13,6 +13,8 @@ use crate::agent::{Action, Agent};
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
+use baml_agent_tui::command_palette::CommandPalette;
+use baml_agent_tui::focus::FocusLayer;
 
 #[derive(PartialEq)]
 pub enum AppMode {
@@ -690,9 +692,8 @@ pub struct App<'a> {
     pub context_map: ContextMap,
     pub tick_count: u32,
     pub client_override: Option<String>,
-    /// Slash command autocomplete state
-    pub slash_suggestions: Vec<&'static str>,
-    pub slash_selected: usize,
+    /// Slash command autocomplete popup.
+    pub command_palette: CommandPalette,
 }
 
 #[derive(Clone, Copy)]
@@ -700,7 +701,6 @@ pub struct UiRegions {
     pub chat: Rect,
     pub input: Rect,
     pub channels: Rect,
-    pub slash_popup: Option<Rect>,
 }
 
 // Context map: tracks what fills the agent context window
@@ -855,8 +855,7 @@ impl<'a> App<'a> {
             context_map: ContextMap::new(),
             tick_count: 0,
             client_override: None,
-            slash_suggestions: Vec::new(),
-            slash_selected: 0,
+            command_palette: CommandPalette::new(&Self::SLASH_COMMANDS),
         }
     }
 
@@ -963,45 +962,12 @@ impl<'a> App<'a> {
                             .await;
                     }
                     AppEvent::Ui(Event::Mouse(mouse_event)) => {
-                        // Slash popup mouse handling (scroll & click)
-                        if let Some(Some(popup)) = self.ui_regions.map(|r| r.slash_popup) {
-                            if !self.slash_suggestions.is_empty() {
-                                let col = mouse_event.column;
-                                let row = mouse_event.row;
-                                let in_popup = col >= popup.x
-                                    && col < popup.x + popup.width
-                                    && row >= popup.y
-                                    && row < popup.y + popup.height;
-                                if in_popup {
-                                    match mouse_event.kind {
-                                        crossterm::event::MouseEventKind::ScrollDown => {
-                                            if self.slash_selected + 1 < self.slash_suggestions.len() {
-                                                self.slash_selected += 1;
-                                            }
-                                            continue;
-                                        }
-                                        crossterm::event::MouseEventKind::ScrollUp => {
-                                            self.slash_selected = self.slash_selected.saturating_sub(1);
-                                            continue;
-                                        }
-                                        crossterm::event::MouseEventKind::Down(
-                                            crossterm::event::MouseButton::Left,
-                                        ) => {
-                                            // Click on item (subtract border)
-                                            let inner_y = popup.y + 1;
-                                            if row >= inner_y {
-                                                let idx = (row - inner_y) as usize;
-                                                if idx < self.slash_suggestions.len() {
-                                                    self.slash_selected = idx;
-                                                    self.apply_slash_suggestion();
-                                                }
-                                            }
-                                            continue;
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                        // Command palette mouse handling (via FocusLayer)
+                        if self.command_palette.on_mouse(mouse_event).consumed() {
+                            if let Some(cmd) = self.command_palette.take_applied() {
+                                self.set_input_text(cmd);
                             }
+                            continue;
                         }
                         match mouse_event.kind {
                             crossterm::event::MouseEventKind::Down(
@@ -1379,54 +1345,8 @@ impl<'a> App<'a> {
         );
         frame.render_widget(self.textarea.widget(), left_chunks[1]);
 
-        // Slash command autocomplete popup
-        if !self.slash_suggestions.is_empty() {
-            let items: Vec<ratatui::widgets::ListItem> = self
-                .slash_suggestions
-                .iter()
-                .enumerate()
-                .map(|(i, cmd)| {
-                    let desc = Self::SLASH_COMMANDS
-                        .iter()
-                        .find(|(c, _)| c == cmd)
-                        .map(|(_, d)| *d)
-                        .unwrap_or("");
-                    let style = if i == self.slash_selected {
-                        ratatui::style::Style::default()
-                            .fg(ratatui::style::Color::Black)
-                            .bg(ratatui::style::Color::Cyan)
-                    } else {
-                        ratatui::style::Style::default()
-                            .fg(ratatui::style::Color::Cyan)
-                    };
-                    ratatui::widgets::ListItem::new(format!("{:<12} {}", cmd, desc)).style(style)
-                })
-                .collect();
-
-            let popup_height = (self.slash_suggestions.len() as u16 + 2).min(10);
-            let input_area = left_chunks[1];
-            // Position popup above the input area
-            let popup_area = ratatui::layout::Rect {
-                x: input_area.x + 1,
-                y: input_area.y.saturating_sub(popup_height),
-                width: input_area.width.min(40),
-                height: popup_height,
-            };
-
-            let popup = ratatui::widgets::List::new(items).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
-                    .title(" / commands (Tab to select) "),
-            );
-            frame.render_widget(ratatui::widgets::Clear, popup_area);
-            frame.render_widget(popup, popup_area);
-            if let Some(ref mut regions) = self.ui_regions {
-                regions.slash_popup = Some(popup_area);
-            }
-        } else if let Some(ref mut regions) = self.ui_regions {
-            regions.slash_popup = None;
-        }
+        // Slash command autocomplete popup (renders via CommandPalette)
+        self.command_palette.render(frame, left_chunks[1]);
 
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
@@ -1443,7 +1363,6 @@ impl<'a> App<'a> {
             chat: left_chunks[0],
             input: left_chunks[1],
             channels: sidebar_chunks[1],
-            slash_popup: None,
         });
 
         // Plan Panel
@@ -3940,30 +3859,12 @@ impl<'a> App<'a> {
             }
         }
 
-        // Slash command autocomplete intercept — before main match
-        if !self.slash_suggestions.is_empty() {
-            match key_event.code {
-                KeyCode::Tab | KeyCode::Enter => {
-                    self.apply_slash_suggestion();
-                    return;
-                }
-                KeyCode::Down => {
-                    if self.slash_selected + 1 < self.slash_suggestions.len() {
-                        self.slash_selected += 1;
-                    }
-                    return;
-                }
-                KeyCode::Up => {
-                    self.slash_selected = self.slash_selected.saturating_sub(1);
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.slash_suggestions.clear();
-                    self.slash_selected = 0;
-                    return;
-                }
-                _ => {} // Fall through to normal handling
+        // Focus layer intercept — command palette gets first shot at input
+        if self.command_palette.on_key(key_event).consumed() {
+            if let Some(cmd) = self.command_palette.take_applied() {
+                self.set_input_text(cmd);
             }
+            return;
         }
 
         match key_event.code {
@@ -4568,7 +4469,12 @@ impl<'a> App<'a> {
                 self.input_history_pos = None;
                 self.bash_history_pos = None;
                 self.textarea.input(Input::from(key_event));
-                self.update_slash_suggestions();
+                let text = self.textarea.lines().join("");
+                if self.interaction_mode == InteractionMode::Bash {
+                    self.command_palette.clear();
+                } else {
+                    self.command_palette.update(&text);
+                }
             }
         }
     }
@@ -4585,34 +4491,6 @@ impl<'a> App<'a> {
         ("/quit", "Exit rust-code"),
     ];
 
-    /// Update slash autocomplete suggestions based on current input.
-    fn update_slash_suggestions(&mut self) {
-        let text = self.textarea.lines().join("");
-        if text.starts_with('/') && !text.contains(' ') && self.interaction_mode != InteractionMode::Bash {
-            let query = text.to_lowercase();
-            self.slash_suggestions = Self::SLASH_COMMANDS
-                .iter()
-                .filter(|(cmd, _)| cmd.starts_with(&query))
-                .map(|(cmd, _)| *cmd)
-                .collect();
-            // Keep selection in bounds
-            if self.slash_selected >= self.slash_suggestions.len() {
-                self.slash_selected = 0;
-            }
-        } else {
-            self.slash_suggestions.clear();
-            self.slash_selected = 0;
-        }
-    }
-
-    /// Apply selected slash suggestion to input.
-    fn apply_slash_suggestion(&mut self) {
-        if let Some(&cmd) = self.slash_suggestions.get(self.slash_selected) {
-            self.set_input_text(cmd);
-            self.slash_suggestions.clear();
-            self.slash_selected = 0;
-        }
-    }
 
     fn input_title(&self) -> &'static str {
         if self.interaction_mode == InteractionMode::Bash {

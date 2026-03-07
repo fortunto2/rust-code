@@ -1,5 +1,6 @@
 pub mod agent_task;
 pub mod chat;
+pub mod command_palette;
 pub mod context_bar;
 pub mod event;
 pub mod focus;
@@ -12,6 +13,7 @@ pub use agent_task::{
     spawn_agent_loop, AgentEventHandler, AgentTaskEvent, ChannelHandler, TuiAgent,
 };
 pub use chat::ChatState;
+pub use command_palette::CommandPalette;
 pub use context_bar::ProjectContext;
 pub use event::AppEvent;
 pub use focus::{point_in_rect, route_key, route_mouse, FocusLayer, FocusResult};
