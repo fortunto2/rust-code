@@ -1,4 +1,4 @@
-//! Walk project directories, find source files, compute stats.
+//! Scan project files via `git ls-files` (or fallback walk).
 
 use std::path::{Path, PathBuf};
 
@@ -43,7 +43,69 @@ pub struct ProjectStats {
     pub languages: Vec<(String, usize)>, // (language, file_count)
 }
 
-/// Directories to always skip.
+/// Scan a project directory for source files.
+///
+/// Uses `git ls-files` as source of truth (respects .gitignore, excludes
+/// nested repos, untracked junk). Falls back to walk_dir if not in a git repo.
+pub fn scan_project(root: &Path) -> ProjectStats {
+    let mut stats = ProjectStats::default();
+    let mut lang_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    let files = git_ls_files(root).unwrap_or_else(|| walk_dir_collect(root));
+
+    for path in files {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let Some(language) = language_for_ext(ext) else {
+            continue;
+        };
+
+        let (lines, bytes) = count_lines(&path);
+        *lang_counts.entry(language.to_string()).or_default() += 1;
+
+        stats.files.push(FileInfo {
+            path,
+            language,
+            lines,
+            bytes,
+        });
+    }
+
+    for fi in &stats.files {
+        stats.total_lines += fi.lines;
+        stats.total_bytes += fi.bytes;
+    }
+
+    let mut langs: Vec<_> = lang_counts.into_iter().collect();
+    langs.sort_by(|a, b| b.1.cmp(&a.1));
+    stats.languages = langs;
+
+    stats
+}
+
+/// Get tracked files from git. Returns None if not a git repo.
+fn git_ls_files(root: &Path) -> Option<Vec<PathBuf>> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let files: Vec<PathBuf> = stdout
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| root.join(s))
+        .collect();
+
+    Some(files)
+}
+
+/// Fallback: walk directories manually (for non-git projects).
 const SKIP_DIRS: &[&str] = &[
     "target",
     "node_modules",
@@ -58,31 +120,13 @@ const SKIP_DIRS: &[&str] = &[
     "baml_client",
 ];
 
-/// Scan a project directory for source files.
-///
-/// Walks recursively, skips common build/vendor dirs, counts lines.
-pub fn scan_project(root: &Path) -> ProjectStats {
-    let mut stats = ProjectStats::default();
-    let mut lang_counts = std::collections::HashMap::new();
-    walk_dir(root, &mut stats.files, &mut lang_counts);
-
-    for fi in &stats.files {
-        stats.total_lines += fi.lines;
-        stats.total_bytes += fi.bytes;
-    }
-
-    let mut langs: Vec<_> = lang_counts.into_iter().collect();
-    langs.sort_by(|a, b| b.1.cmp(&a.1));
-    stats.languages = langs;
-
-    stats
+fn walk_dir_collect(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    walk_dir(root, &mut files);
+    files
 }
 
-fn walk_dir(
-    dir: &Path,
-    files: &mut Vec<FileInfo>,
-    lang_counts: &mut std::collections::HashMap<String, usize>,
-) {
+fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -95,28 +139,14 @@ fn walk_dir(
             if SKIP_DIRS.contains(&name) || name.starts_with('.') {
                 continue;
             }
-            // Skip nested git repos (they're separate projects)
             if path.join(".git").exists() {
                 continue;
             }
-            walk_dir(&path, files, lang_counts);
+            walk_dir(&path, files);
             continue;
         }
 
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let Some(language) = language_for_ext(ext) else {
-            continue;
-        };
-
-        let (lines, bytes) = count_lines(&path);
-        *lang_counts.entry(language.to_string()).or_default() += 1;
-
-        files.push(FileInfo {
-            path,
-            language,
-            lines,
-            bytes,
-        });
+        files.push(path);
     }
 }
 
@@ -133,15 +163,9 @@ fn count_lines(path: &Path) -> (usize, usize) {
 /// Build a compact directory tree from scanned files.
 ///
 /// Groups files by directory, shows file count and LOC per dir.
-/// Output like:
-/// ```text
-///   crates/rc-cli/src/ (12 files, 4200 lines)
-///   crates/baml-agent/src/ (8 files, 2100 lines)
-/// ```
 pub fn dir_tree(root: &Path, files: &[FileInfo]) -> String {
     use std::collections::BTreeMap;
 
-    // Aggregate per directory
     let mut dirs: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for fi in files {
         let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
@@ -180,9 +204,22 @@ mod tests {
 
     #[test]
     fn scan_own_project() {
-        let stats = scan_project(Path::new("src"));
+        let stats = scan_project(Path::new("."));
         assert!(!stats.files.is_empty());
         assert!(stats.total_lines > 0);
         assert!(stats.languages.iter().any(|(l, _)| l == "rust"));
+    }
+
+    #[test]
+    fn git_ls_files_works() {
+        // We're in a git repo, so this should return files
+        let files = git_ls_files(Path::new("."));
+        assert!(files.is_some());
+        let files = files.unwrap();
+        assert!(!files.is_empty());
+        // Should contain our own source files
+        assert!(files
+            .iter()
+            .any(|p| p.to_str().unwrap().contains("scanner.rs")));
     }
 }
