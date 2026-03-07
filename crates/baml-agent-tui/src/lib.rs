@@ -19,7 +19,7 @@ pub use command_palette::CommandPalette;
 pub use content_viewer::ContentViewer;
 pub use context_bar::ProjectContext;
 pub use event::AppEvent;
-pub use focus::{point_in_rect, route_key, route_mouse, FocusLayer, FocusResult};
+pub use focus::{point_in_rect, route_key, route_mouse, FocusLayer, FocusResult, FocusRing};
 pub use headless::run_headless;
 pub use help::HelpOverlay;
 pub use picker::{FuzzyPicker, PickerAction, PickerItem, PickerPreview};

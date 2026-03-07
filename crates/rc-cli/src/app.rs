@@ -14,7 +14,7 @@ use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
 use baml_agent_tui::command_palette::{CommandPalette, PaletteAction};
-use baml_agent_tui::focus::FocusLayer;
+use baml_agent_tui::focus::{FocusLayer, FocusRing};
 
 #[derive(PartialEq)]
 pub enum AppMode {
@@ -648,14 +648,6 @@ impl<'a> GitHistoryState<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FocusedPanel {
-    Input,
-    Chat,
-    Plan,
-    Channels,
-}
-
 pub struct App<'a> {
     pub exit: bool,
     pub mode: AppMode,
@@ -672,7 +664,7 @@ pub struct App<'a> {
     pub skills_state: SkillsState<'a>,
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState<'a>,
-    pub focused_panel: FocusedPanel,
+    pub focus_ring: FocusRing,
     pub channel_items: Vec<String>,
     pub channel_state: ListState,
     pub ui_regions: Option<UiRegions>,
@@ -829,7 +821,7 @@ impl<'a> App<'a> {
             skills_state: SkillsState::new(),
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
-            focused_panel: FocusedPanel::Input,
+            focus_ring: FocusRing::new(&["input", "chat", "plan", "channels"]),
             channel_items: vec![
                 "Git Diff".to_string(),
                 "Git History".to_string(),
@@ -986,13 +978,9 @@ impl<'a> App<'a> {
                                     let col = mouse_event.column;
                                     let row = mouse_event.row;
 
-                                    // Click on channels panel -> focus channels
-                                    if col >= regions.channels.x
-                                        && col < regions.channels.x + regions.channels.width
-                                        && row >= regions.channels.y
-                                        && row < regions.channels.y + regions.channels.height
-                                    {
-                                        self.focused_panel = FocusedPanel::Channels;
+                                    self.focus_ring.click(col, row);
+                                    // Extra: select channel item on click
+                                    if self.focus_ring.is_focused("channels") {
                                         let inner_y = regions.channels.y.saturating_add(1);
                                         if row >= inner_y {
                                             let idx = row.saturating_sub(inner_y) as usize;
@@ -1000,24 +988,6 @@ impl<'a> App<'a> {
                                                 self.channel_state.select(Some(idx));
                                             }
                                         }
-                                    } else if col >= regions.plan.x
-                                        && col < regions.plan.x + regions.plan.width
-                                        && row >= regions.plan.y
-                                        && row < regions.plan.y + regions.plan.height
-                                    {
-                                        self.focused_panel = FocusedPanel::Plan;
-                                    } else if col >= regions.input.x
-                                        && col < regions.input.x + regions.input.width
-                                        && row >= regions.input.y
-                                        && row < regions.input.y + regions.input.height
-                                    {
-                                        self.focused_panel = FocusedPanel::Input;
-                                    } else if col >= regions.chat.x
-                                        && col < regions.chat.x + regions.chat.width
-                                        && row >= regions.chat.y
-                                        && row < regions.chat.y + regions.chat.height
-                                    {
-                                        self.focused_panel = FocusedPanel::Chat;
                                     }
                                 }
                             }
@@ -1289,12 +1259,10 @@ impl<'a> App<'a> {
             .split(horizontal_chunks[0]);
 
         // Style constants inspired by IDEs (like OpenCode)
-        let border_style = Style::default().fg(Color::DarkGray);
-        let focus_border = Style::default().fg(Color::Yellow);
-        let chat_border = if self.focused_panel == FocusedPanel::Chat { focus_border } else { border_style };
-        let input_border = if self.focused_panel == FocusedPanel::Input { focus_border } else { border_style };
-        let plan_border = if self.focused_panel == FocusedPanel::Plan { focus_border } else { border_style };
-        let channels_border = if self.focused_panel == FocusedPanel::Channels { focus_border } else { border_style };
+        let chat_border = self.focus_ring.border_style("chat");
+        let input_border = self.focus_ring.border_style("input");
+        let plan_border = self.focus_ring.border_style("plan");
+        let channels_border = self.focus_ring.border_style("channels");
         let user_color = Color::Rgb(100, 200, 255); // Light Blue
         let ai_color = Color::Rgb(200, 200, 200); // Light Gray
         let _tool_color = Color::Rgb(100, 200, 100); // Green
@@ -1404,6 +1372,10 @@ impl<'a> App<'a> {
             plan: sidebar_chunks[0],
             channels: sidebar_chunks[1],
         });
+        self.focus_ring.set_rect("chat", left_chunks[0]);
+        self.focus_ring.set_rect("input", left_chunks[1]);
+        self.focus_ring.set_rect("plan", sidebar_chunks[0]);
+        self.focus_ring.set_rect("channels", sidebar_chunks[1]);
 
         // Plan Panel
         let mut plan_lines = vec![Line::from(Span::styled(
@@ -1429,7 +1401,7 @@ impl<'a> App<'a> {
         frame.render_widget(plan_widget, sidebar_chunks[0]);
 
         // Channels panel
-        let channels_title = if self.focused_panel == FocusedPanel::Channels {
+        let channels_title = if self.focus_ring.is_focused("channels") {
             " Channels [UP/DN, Enter open, Esc back] "
         } else {
             " Channels [F10 focus] "
@@ -1521,7 +1493,7 @@ impl<'a> App<'a> {
             Paragraph::new(ctx_lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(border_style)
+                    .border_style(Style::default().fg(Color::DarkGray))
                     .title(ctx_title),
             ),
             sidebar_chunks[2],
@@ -1539,12 +1511,7 @@ impl<'a> App<'a> {
             AppMode::BashHistorySearch => "MODE: BASH HISTORY",
             AppMode::SkillsSearch => "MODE: SKILLS",
         };
-        let focus_text = match self.focused_panel {
-            FocusedPanel::Input => "FOCUS: INPUT",
-            FocusedPanel::Chat => "FOCUS: CHAT",
-            FocusedPanel::Plan => "FOCUS: PLAN",
-            FocusedPanel::Channels => "FOCUS: CHANNELS",
-        };
+        let focus_text = format!("FOCUS: {}", self.focus_ring.focused().to_uppercase());
         let cost = crate::tools::cost::session_stats();
         let cost_text = if cost.steps > 0 {
             format!(" | {}", cost.status_line())
@@ -3750,10 +3717,10 @@ impl<'a> App<'a> {
         agent: Arc<Mutex<Agent>>,
     ) {
         // Handle sidebar-focused mode first
-        if self.focused_panel == FocusedPanel::Channels {
+        if self.focus_ring.is_focused("channels") {
             match key_event.code {
                 KeyCode::Esc => {
-                    self.focused_panel = FocusedPanel::Input;
+                    self.focus_ring.focus("input");
                     return;
                 }
                 KeyCode::Down => {
@@ -3889,7 +3856,7 @@ impl<'a> App<'a> {
                             _ => {}
                         }
                     }
-                    self.focused_panel = FocusedPanel::Input;
+                    self.focus_ring.focus("input");
                     return;
                 }
                 _ => return, // Ignore other keys in sidebar mode
@@ -4029,7 +3996,7 @@ impl<'a> App<'a> {
                 self.maybe_request_skill_preview(tx.clone());
             }
             KeyCode::F(10) => {
-                self.focused_panel = FocusedPanel::Channels;
+                self.focus_ring.focus("channels");
             }
             KeyCode::F(12) => {
                 self.exit = true;
