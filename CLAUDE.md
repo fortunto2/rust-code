@@ -14,6 +14,7 @@ AI-powered terminal coding agent written in Rust.
 - `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs)
 - `crates/rc-baml/` — BAML source files (.baml) and generated client
 - `crates/baml-agent/` — shared SGR agent library (session, loop detection, memory, helpers)
+- `crates/baml-agent/src/session/` — session module split: `traits.rs`, `format.rs`, `time.rs`, `store.rs`, `meta.rs`
 
 Agent loop: user message → BAML `GetNextStep()` → model returns `NextStep { situation, task, actions }` → execute actions → feed result back → repeat until `FinishTaskTool`.
 
@@ -85,6 +86,7 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/rc-baml/baml_src/memory.baml` | Typed MemoryTool schema |
 | `crates/rc-baml/baml_src/principles.baml` | AgentDiscipline, AntiLoop, Engineering, DecisionReplay |
 | `crates/rc-baml/baml_src/clients.baml` | LLM providers, fallback chain, retry policy |
+| `crates/baml-agent/src/session/` | Session module: traits, format, time, store, meta (UUID v7, typed entries) |
 | `crates/baml-agent/src/helpers.rs` | AgentContext, memory GC, token budget, @import |
 | `install.sh` | One-liner installer with doctor |
 | `.github/workflows/release.yml` | CI: Linux build, crates.io, Homebrew update |
@@ -94,7 +96,7 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 |----------|------|-----|
 | ~~P0~~ | ~~Streaming responses~~ | Done — BAML streaming in TUI + headless |
 | ~~P0~~ | ~~Context window management~~ | Done — 60-msg sliding window, system msgs preserved |
-| ~~P1~~ | ~~Tests (TDD)~~ | Done — 72 tests (58 baml-agent + 14 rc-cli) |
+| ~~P1~~ | ~~Tests (TDD)~~ | Done — 81+ tests (baml-agent + rc-cli) |
 | P1 | macOS CI (self-hosted runner) | Stop building manually |
 | ~~P2~~ | ~~Multi-tool per step~~ | Done — `actions[]` array, parallel tool execution |
 | P2 | Image/clipboard in chat | Paste screenshots for debugging |

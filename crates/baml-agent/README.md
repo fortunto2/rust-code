@@ -22,7 +22,7 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 |--------|------|
 | `config` | `AgentConfig`, `ProviderConfig` — multi-provider LLM config (Vertex AI, Google AI, OpenAI-compatible) |
 | `engine` | `BamlRegistry` trait, `AgentEngine` — builds BAML ClientRegistry from config |
-| `session` | `Session<M>`, `AgentMessage`, `MessageRole`, `SessionMeta`, `list_sessions`, `search_sessions` — JSONL persistence, history trimming, session browsing |
+| `session` | `Session<M>`, `AgentMessage`, `MessageRole`, `EntryType`, `MessageBody`, `MessageContent`, `ContentBlock`, `SessionMeta`, `list_sessions`, `search_sessions` — JSONL persistence with typed structs, UUID v7 IDs, Claude Code compatible format, history trimming, session browsing. Split into submodules: `traits` (message traits), `format` (serialization/deserialization), `time` (UUID v7 timestamp extraction, UTF-8 safe truncation), `store` (Session struct, persistence), `meta` (SessionMeta, listing, search) |
 | `loop_detect` | `LoopDetector`, `LoopStatus`, `normalize_signature` — 3-tier loop detection (exact, semantic, output) |
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
@@ -237,7 +237,7 @@ run_loop(impl SgrAgent)           run_loop_stream(impl SgrAgentStream)
 
 ## Session persistence
 
-`Session<M>` saves every message to a JSONL file. Supports resume:
+`Session<M>` saves every message to a JSONL file using UUID v7 session IDs (time-sortable). Messages use typed structs (`EntryType`, `MessageBody`, `MessageContent`, `ContentBlock`) with a Claude Code compatible format: user/system entries have plain string content, assistant/tool entries use content blocks arrays. Supports resume:
 
 ```rust
 // New session
@@ -274,7 +274,7 @@ let session = Session::<MyMsg>::resume(&picked.path, ".sessions", 60);
 
 `SessionMeta` fields:
 - `path` — JSONL file path
-- `created` — unix timestamp (from filename `session_{ts}.jsonl`)
+- `created` — unix timestamp (extracted from UUID v7 in filename)
 - `message_count` — number of messages (line count)
 - `topic` — first user message (truncated to 120 chars)
 - `size_bytes` — file size
@@ -620,7 +620,8 @@ let manifesto = load_manifesto(); // from CWD
 
 ```bash
 cargo test -p baml-agent
-# 58 unit + 4 doc tests: session, trimming, 3-tier loop detection,
-# agent loop, streaming, empty actions guard, helpers, AgentContext,
-# memory GC, token budget, @import, project loading
+# 81 tests: session (typed structs, UUID v7, format, store, meta),
+# trimming, 3-tier loop detection, agent loop, streaming,
+# empty actions guard, helpers, AgentContext, memory GC,
+# token budget, @import, project loading
 ```
