@@ -6,7 +6,7 @@
 //! Each CLI handles its own auth — no API keys needed.
 
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 
@@ -220,36 +220,6 @@ impl MessageContent {
 struct ChatMessage {
     role: String,
     content: MessageContent,
-}
-
-#[derive(Serialize)]
-struct ChatCompletionResponse {
-    id: String,
-    object: String,
-    created: u64,
-    model: String,
-    choices: Vec<ChatChoice>,
-    usage: ChatUsage,
-}
-
-#[derive(Serialize)]
-struct ChatChoice {
-    index: u32,
-    message: ChatResponseMessage,
-    finish_reason: String,
-}
-
-#[derive(Serialize)]
-struct ChatResponseMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Serialize)]
-struct ChatUsage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
-    total_tokens: u64,
 }
 
 /// Merge all messages into a single prompt for CLI.

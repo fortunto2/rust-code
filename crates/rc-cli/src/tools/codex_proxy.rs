@@ -152,10 +152,6 @@ struct ChatCompletionRequest {
     messages: Vec<ChatMessage>,
     #[serde(default)]
     temperature: Option<f64>,
-    #[serde(default)]
-    max_tokens: Option<u64>,
-    #[serde(default)]
-    stream: Option<bool>,
 }
 
 /// Content can be a string or array of parts (OpenAI multi-part format).
@@ -212,36 +208,6 @@ struct CodexInput {
 #[derive(Serialize)]
 struct CodexText {
     verbosity: String,
-}
-
-#[derive(Serialize)]
-struct ChatCompletionResponse {
-    id: String,
-    object: String,
-    created: u64,
-    model: String,
-    choices: Vec<ChatChoice>,
-    usage: ChatUsage,
-}
-
-#[derive(Serialize)]
-struct ChatChoice {
-    index: u32,
-    message: ChatResponseMessage,
-    finish_reason: String,
-}
-
-#[derive(Serialize)]
-struct ChatResponseMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Serialize)]
-struct ChatUsage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
-    total_tokens: u64,
 }
 
 // ============================================================================
