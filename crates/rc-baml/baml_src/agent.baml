@@ -149,8 +149,10 @@ function GetNextStep(history: Message[]) -> NextStep {
     - Never execute destructive commands without user confirmation.
     - Use EditFileTool for precise edits, not WriteFileTool for existing files.
     - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window.
-    - NEVER call the same tool with the same arguments twice in a row. If a tool returned empty or error, try a DIFFERENT approach.
-    - Always progress forward through phases. If stuck, try a different strategy or ask the user.
+    - NEVER call the same tool with the same arguments twice in a row.
+    - If a search/command returns "no matches", empty output, or error — that IS the answer. Do NOT retry with different flags, quotes, or syntax. Accept the result and move on.
+    - Never run the same command more than once. If you got a result (even empty), use it.
+    - Always progress forward through phases. If stuck, try a fundamentally different approach or ask the user.
 
     {# Loop through conversation history #}
     {% for msg in history %}
