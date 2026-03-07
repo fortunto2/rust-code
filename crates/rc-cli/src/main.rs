@@ -24,6 +24,14 @@ struct Args {
     #[arg(short, long)]
     session: Option<String>,
 
+    /// Use local Ollama model instead of cloud API
+    #[arg(long)]
+    local: bool,
+
+    /// Override model name (e.g. --model qwen2.5-coder:32b)
+    #[arg(long)]
+    model: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -602,6 +610,15 @@ async fn main() -> Result<()> {
         // Single prompt headless mode — fresh session by default
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
+        // Set model override
+        if args.local {
+            let model = args.model.as_deref().unwrap_or("OllamaDefault");
+            println!("Using local model: {}", model);
+            agent.set_client(model);
+        } else if let Some(ref model) = args.model {
+            println!("Using model: {}", model);
+            agent.set_client(model);
+        }
         // Initialize MCP servers
         if let Err(e) = agent.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
@@ -685,6 +702,12 @@ async fn main() -> Result<()> {
 
         // Restore session
         *agent.session_mut() = session;
+
+        // Show cost summary
+        let cost = crate::tools::cost::session_stats();
+        if cost.steps > 0 {
+            eprintln!("\n\x1b[2m{}\x1b[0m", cost.status_line());
+        }
 
         if let Err(e) = result {
             eprintln!("Agent error: {}", e);

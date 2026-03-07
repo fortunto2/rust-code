@@ -68,6 +68,36 @@ client<llm> Claude {
   }
 }
 
+// === Local Models (Ollama) ===
+
+// Local: any Ollama model (default: qwen2.5-coder)
+// Start with: ollama serve && ollama pull qwen2.5-coder:14b
+client<llm> OllamaDefault {
+  provider ollama
+  options {
+    model "qwen2.5-coder:14b"
+  }
+}
+
+// Local: smaller model for fast tasks
+client<llm> OllamaSmall {
+  provider ollama
+  options {
+    model "qwen2.5-coder:7b"
+  }
+}
+
+// Local-first fallback: Ollama → Cloud
+client<llm> LocalFirst {
+  provider fallback
+  options {
+    strategy [
+      OllamaDefault
+      Gemini31Pro
+    ]
+  }
+}
+
 retry_policy Backoff {
   max_retries 3
   strategy {

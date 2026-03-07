@@ -68,6 +68,8 @@ pub struct Agent {
     mcp: Option<McpManager>,
     step_count: usize,
     last_input_chars: usize,
+    /// Override BAML client name (e.g. "OllamaDefault" for --local)
+    client_override: Option<String>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -95,6 +97,7 @@ impl Agent {
             mcp: None,
             step_count: 0,
             last_input_chars: 0,
+            client_override: None,
         }
     }
 
@@ -224,7 +227,11 @@ impl Agent {
         let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
         self.last_input_chars = input_chars;
 
-        let stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
+        let stream = if let Some(ref client) = self.client_override {
+            baml_client::async_client::B.GetNextStep.with_client(client).stream(&history)?
+        } else {
+            baml_client::async_client::B.GetNextStep.stream(&history)?
+        };
         Ok(stream)
     }
 
@@ -237,6 +244,11 @@ impl Agent {
     pub fn reset_step_count(&mut self) {
         self.step_count = 0;
         cost::reset_cost();
+    }
+
+    /// Set BAML client override (e.g. "OllamaDefault" for local mode).
+    pub fn set_client(&mut self, client_name: impl Into<String>) {
+        self.client_override = Some(client_name.into());
     }
 
     /// Get current cost stats for display in TUI.
@@ -268,16 +280,29 @@ impl Agent {
                 })
             }
             WriteFileTool(cmd) => {
+                let is_new = !std::path::Path::new(&cmd.path).exists();
                 write_file(&cmd.path, &cmd.content).await?;
+                let label = if is_new { "Created" } else { "Wrote" };
+                let lines = cmd.content.lines().count();
                 Ok(ActionResult {
-                    output: format!("Successfully wrote to {}", cmd.path),
+                    output: format!("{} {} ({} lines)", label, cmd.path, lines),
                     done: false,
                 })
             }
             EditFileTool(cmd) => {
                 crate::tools::fs::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
+                // Show inline diff
+                let old_lines: Vec<&str> = cmd.old_string.lines().collect();
+                let new_lines: Vec<&str> = cmd.new_string.lines().collect();
+                let mut diff = format!("Edited {} ({}→{} lines)\n", cmd.path, old_lines.len(), new_lines.len());
+                for l in &old_lines {
+                    diff.push_str(&format!("- {}\n", l));
+                }
+                for l in &new_lines {
+                    diff.push_str(&format!("+ {}\n", l));
+                }
                 Ok(ActionResult {
-                    output: format!("Successfully edited {}", cmd.path),
+                    output: diff,
                     done: false,
                 })
             }
@@ -566,10 +591,19 @@ impl SgrAgent for Agent {
 
     async fn decide(&self, messages: &[Msg]) -> Result<StepDecision<Action>> {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
-        let step = baml_client::async_client::B
-            .GetNextStep
-            .call(&history)
-            .await?;
+        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
+
+        let step = if let Some(ref client) = self.client_override {
+            baml_client::async_client::B.GetNextStep.with_client(client).call(&history).await?
+        } else {
+            baml_client::async_client::B.GetNextStep.call(&history).await?
+        };
+
+        // Track cost: estimate output from response fields
+        let output_chars = step.situation.len()
+            + step.task.iter().map(|t| t.len()).sum::<usize>()
+            + format!("{:?}", step.actions).len();
+        cost::record_step(input_chars, output_chars);
 
         let done = step
             .actions
@@ -622,8 +656,13 @@ impl SgrAgentStream for Agent {
         T: FnMut(&str) + Send,
     {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
+        let client_override = self.client_override.clone();
         async move {
-            let mut stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
+            let mut stream = if let Some(ref client) = client_override {
+                baml_client::async_client::B.GetNextStep.with_client(client).stream(&history)?
+            } else {
+                baml_client::async_client::B.GetNextStep.stream(&history)?
+            };
             let mut last_analysis_len = 0;
 
             while let Some(partial) = stream.next().await {

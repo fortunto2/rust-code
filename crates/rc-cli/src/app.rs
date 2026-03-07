@@ -1482,22 +1482,20 @@ impl<'a> App<'a> {
         } else {
             "FOCUS: INPUT"
         };
+        let cost = crate::tools::cost::session_stats();
+        let cost_text = if cost.steps > 0 {
+            format!(" | {}", cost.status_line())
+        } else {
+            String::new()
+        };
         let status_line = format!(
-            " {} | {} | TASK: {} | Git: {} | Hist: {} | Sym: {} | BG: {} | Bash: {} | Skills: {}/{} ",
+            " {} | {} | TASK: {} | Git: {} | Sym: {}{} ",
             mode_text,
             focus_text,
             self.interaction_mode.label(),
             self.git_sidebar.files.len(),
-            self.git_history.filtered_items.len(),
             self.symbols_state.all_items.len(),
-            self.bg_tasks.filtered_items.len(),
-            self.bash_history_state.all_items.len(),
-            self.skills_state
-                .all_items
-                .iter()
-                .filter(|s| s.installed)
-                .count(),
-            self.skills_state.all_items.len()
+            cost_text
         );
         frame.render_widget(
             Paragraph::new(status_line).style(Style::default().fg(Color::Black).bg(Color::Gray)),
@@ -4323,10 +4321,12 @@ impl<'a> App<'a> {
                                         agent_tx.send(AppEvent::AgentResponse(situation_str)).await;
 
                                     // Record STAR state in history
-                                    locked_agent.add_assistant_message(format!(
+                                    let assistant_msg = format!(
                                         "Situation: {}\nTask: {:?}\nActions: {:?}",
                                         step.situation, step.task, step.actions
-                                    ));
+                                    );
+                                    locked_agent.record_step_cost(&assistant_msg);
+                                    locked_agent.add_assistant_message(assistant_msg);
 
                                     // Execute all actions sequentially
                                     let mut is_done = false;
