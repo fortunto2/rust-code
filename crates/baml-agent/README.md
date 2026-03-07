@@ -25,6 +25,7 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
 | `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `AgentContext` — reusable patterns + context loading |
+| `providers` | `UserConfig`, `ProviderAuth`, `resolve_provider()`, keychain/proxy auth — shared provider infrastructure (feature `providers`) |
 | `logging` | `init_logging()` — daily file logging via tracing-appender (feature `logging`) |
 | `telemetry` | `init_telemetry()`, `TelemetryGuard` — OTEL-aware JSONL with trace context (feature `telemetry`) |
 
@@ -434,6 +435,160 @@ config.add_provider("openai", ProviderConfig {
 config.default_provider = "openai".into();
 ```
 
+## Providers — shared API & subscription auth (feature `providers`)
+
+```toml
+baml-agent = { path = "../baml-agent", features = ["providers"] }
+```
+
+Shared infrastructure for connecting to LLM providers — config files, API key resolution, subscription-based auth (Claude Keychain, ChatGPT Codex), and CLI subprocess proxies. Any BAML agent can reuse this instead of reimplementing auth.
+
+### User config
+
+Each agent stores provider selection in `~/<agent_home>/config.toml`:
+
+```toml
+provider = "claude"
+model = "Claude"       # optional: override BAML client name
+```
+
+```rust
+use baml_agent::providers::{load_config, save_config, UserConfig};
+
+let cfg = load_config(".my-agent");     // ~/.my-agent/config.toml
+println!("Provider: {:?}", cfg.provider);
+
+save_config(".my-agent", &UserConfig {
+    provider: Some("gemini".into()),
+    model: None,
+})?;
+```
+
+### Provider registry
+
+9 providers with 5 auth methods:
+
+| Provider | Aliases | BAML client | Auth |
+|----------|---------|-------------|------|
+| `gemini` | — | `Gemini31Pro` | `GEMINI_API_KEY` env var |
+| `openai` | — | `OpenAI` | `OPENAI_API_KEY` env var |
+| `anthropic` | — | `Claude` | `ANTHROPIC_API_KEY` env var |
+| `claude` | — | `Claude` | macOS Keychain OAuth token |
+| `codex` | `chatgpt` | `CodexProxy` | ChatGPT subscription (Codex Responses API) |
+| `ollama` | `local` | `OllamaDefault` | None (local) |
+| `claude-cli` | — | `CliProxy` | CLI subprocess |
+| `gemini-cli` | — | `CliProxy` | CLI subprocess |
+| `codex-cli` | — | `CliProxy` | CLI subprocess |
+
+```rust
+use baml_agent::providers::{resolve_provider, ProviderAuth};
+
+if let Some((baml_client, auth)) = resolve_provider("claude") {
+    match auth {
+        ProviderAuth::EnvKey(var) => {
+            // Check env::var(var)
+        }
+        ProviderAuth::ClaudeKeychain => {
+            let token = load_claude_keychain_token()?;
+            std::env::set_var("ANTHROPIC_API_KEY", &token);
+        }
+        ProviderAuth::CodexProxy => {
+            let (port, _handle) = start_codex_proxy().await?;
+            std::env::set_var("CODEX_PROXY_URL", format!("http://127.0.0.1:{}/v1", port));
+        }
+        ProviderAuth::CliProxy(cli_name) => {
+            let provider = CliProvider::from_name(cli_name).unwrap();
+            let (port, _handle) = start_cli_proxy(provider).await?;
+            std::env::set_var("CLI_PROXY_URL", format!("http://127.0.0.1:{}/v1", port));
+        }
+        ProviderAuth::None => {} // Ollama, no auth
+    }
+}
+```
+
+### Auth methods
+
+#### 1. EnvKey — API key from environment
+
+Direct API access. Provider reads key from the specified env var.
+
+#### 2. ClaudeKeychain — Claude Code OAuth from macOS Keychain
+
+Uses the OAuth token stored by Claude Code CLI (`claude`) in macOS Keychain under "Claude Code-credentials". Also checks `CLAUDE_CODE_OAUTH_TOKEN` env var first.
+
+```rust
+use baml_agent::providers::load_claude_keychain_token;
+
+let token = load_claude_keychain_token()?;
+// Set as ANTHROPIC_API_KEY for BAML to use
+```
+
+Requires: user has authenticated with `claude` CLI at least once.
+
+#### 3. CodexProxy — ChatGPT subscription via Codex Responses API
+
+Starts a localhost proxy that translates OpenAI Chat Completions → Codex Responses API (`chatgpt.com/backend-api/codex/responses`). Uses refresh token from `~/.codex/auth.json` (created by `codex login`). Auto-refreshes tokens.
+
+```rust
+use baml_agent::providers::start_codex_proxy;
+
+let (port, handle) = start_codex_proxy().await?;
+// BAML connects to http://127.0.0.1:{port}/v1/chat/completions
+// handle must be kept alive for the proxy to serve requests
+```
+
+Supports SSE streaming. Returns usage tokens from Codex API.
+
+#### 4. CliProxy — CLI subprocess proxy
+
+Wraps `claude -p`, `gemini -p`, or `codex exec` as a localhost Chat Completions endpoint. Each CLI handles its own auth — no API keys needed.
+
+```rust
+use baml_agent::providers::{start_cli_proxy, CliProvider};
+
+let provider = CliProvider::from_name("claude").unwrap();
+let (port, handle) = start_cli_proxy(provider).await?;
+// BAML connects to http://127.0.0.1:{port}/v1/chat/completions
+```
+
+Features:
+- Merges multi-turn messages into a single prompt for CLI
+- Cleans CLI-specific noise (Codex banners, Gemini warnings)
+- Returns SSE streaming response with estimated token counts
+- Sets `CLAUDECODE=""` to prevent claude-inside-claude detection
+
+### Full provider resolution pattern
+
+```rust
+use baml_agent::providers::{self, ProviderAuth};
+
+async fn setup_provider(agent_home: &str) -> Option<String> {
+    let cfg = providers::load_config(agent_home);
+    let provider_name = cfg.provider.as_deref()?;
+    let (baml_client, auth) = providers::resolve_provider(provider_name)?;
+    let client = cfg.model.unwrap_or_else(|| baml_client.to_string());
+
+    match auth {
+        ProviderAuth::ClaudeKeychain => {
+            let token = providers::load_claude_keychain_token().ok()?;
+            unsafe { std::env::set_var("ANTHROPIC_API_KEY", &token) };
+        }
+        ProviderAuth::CodexProxy => {
+            let (port, _) = providers::start_codex_proxy().await.ok()?;
+            unsafe { std::env::set_var("CODEX_PROXY_URL", format!("http://127.0.0.1:{}/v1", port)) };
+        }
+        ProviderAuth::CliProxy(name) => {
+            let p = providers::CliProvider::from_name(name)?;
+            let (port, _) = providers::start_cli_proxy(p).await.ok()?;
+            unsafe { std::env::set_var("CLI_PROXY_URL", format!("http://127.0.0.1:{}/v1", port)) };
+        }
+        _ => {}
+    }
+
+    Some(client)
+}
+```
+
 ## Stateful executors
 
 If `execute()` needs mutable state (MCP connections, DB handles), use interior mutability:
@@ -736,8 +891,8 @@ let manifesto = load_manifesto(); // from CWD
 
 ```bash
 cargo test -p baml-agent
-# 81 tests: session (typed structs, UUID v7, format, store, meta),
+# 85 tests (with --features providers): session, UUID v7, format,
 # trimming, 3-tier loop detection, agent loop, streaming,
 # empty actions guard, helpers, AgentContext, memory GC,
-# token budget, @import, project loading
+# token budget, @import, project loading, providers (resolve, config)
 ```
