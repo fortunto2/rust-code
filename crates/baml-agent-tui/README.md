@@ -7,6 +7,7 @@ Shared TUI shell for BAML SGR agents — reusable widgets, event loop, and patte
 | Module | What |
 |--------|------|
 | `focus` | **FocusLayer trait** — input routing through a stack of UI layers |
+| `command_palette` | **CommandPalette** — `/`-triggered autocomplete popup with FocusLayer impl |
 | `chat` | Chat panel with streaming, scroll, expand/collapse |
 | `picker` | Fuzzy picker overlay (nucleo-matcher, channels, preview panel) |
 | `help` | Help overlay (keybindings display) |
@@ -14,7 +15,7 @@ Shared TUI shell for BAML SGR agents — reusable widgets, event loop, and patte
 | `event` | `AppEvent<T>` enum — terminal events, ticks, agent messages |
 | `agent_task` | `TuiAgent` trait + `spawn_agent_loop` — async agent integration |
 | `headless` | Non-interactive mode (pipe-friendly) |
-| `terminal` | Terminal init/restore, panic hook, telemetry |
+| `terminal` | Terminal init/restore, panic hook, OTEL telemetry |
 
 ## Focus Layer Pattern
 
@@ -100,21 +101,42 @@ if result.consumed() { return; }
 |-----------|--------|----------|--------|
 | `HelpOverlay` | Yes | All keys (Esc/q closes) | Nothing |
 | `FuzzyPicker` | Yes | All keys (delegates to `on_key`) | Nothing |
-| Slash popup* | No | Tab, Enter, Up, Down, Esc | Char input |
+| `CommandPalette` | No | Tab, Enter, Up, Down, Esc | Char input |
 
-*Slash popup is in `rc-cli` (app-specific), not yet using the trait.
+### `take_applied()` pattern
+
+`FocusLayer::on_key()` returns only `Consumed/Passed`. For components like `CommandPalette` where the caller needs to know *what* was selected, use `take_applied()`:
+
+```rust
+if self.command_palette.on_key(key_event).consumed() {
+    if let Some(cmd) = self.command_palette.take_applied() {
+        self.set_input_text(cmd); // apply selected command to input
+    }
+    return;
+}
+```
+
+Same for mouse events:
+```rust
+if self.command_palette.on_mouse(mouse_event).consumed() {
+    if let Some(cmd) = self.command_palette.take_applied() {
+        self.set_input_text(cmd);
+    }
+    continue;
+}
+```
 
 ## What's Missing / TODO
 
 ### Focus System
-- [ ] **SlashPopup as FocusLayer** — extract from app.rs into a reusable `CommandPalette` widget with `FocusLayer` impl
-- [ ] **Wire `route_key`/`route_mouse` in app.rs** — replace manual `if` chain with `route_key(&mut [...])`. Blocked by ownership: layers are fields of `App`, need to split borrows or use `RefCell`
-- [ ] **Focus stack struct** — `FocusStack` that owns layers as `Box<dyn FocusLayer>`, auto-routes events. Would solve the split-borrow problem
+- [x] ~~**SlashPopup as FocusLayer**~~ — done: `CommandPalette` widget with FocusLayer impl
+- [x] ~~**Wire in app.rs**~~ — done: `on_key()`/`on_mouse()` replace manual if-chains
+- [ ] **Focus stack struct** — `FocusStack` that owns layers as `Box<dyn FocusLayer>`, auto-routes events. Would solve split-borrow issues for `route_key(&mut [...])`
 - [ ] **`on_mouse` for HelpOverlay** — click outside closes, scroll inside does nothing
 - [ ] **`on_mouse` for FuzzyPicker** — click on item selects, scroll navigates list
 
 ### Widgets
-- [ ] **CommandPalette** — generic `/`-triggered autocomplete popup (extract from app.rs slash logic)
+- [x] ~~**CommandPalette**~~ — done: `/`-triggered autocomplete with keyboard + mouse + scroll
 - [ ] **DiffPreview** — inline diff viewer widget for file changes
 - [ ] **CostBar** — token count + cost display widget
 - [ ] **StatusLine** — bottom status bar with mode indicator, git branch, model name
@@ -131,6 +153,22 @@ if result.consumed() { return; }
 - [ ] **Keybinding config** — user-remappable keybindings loaded from TOML
 - [ ] **Accessibility** — screen reader hints via `ratatui` semantics
 
+## Telemetry
+
+TUI apps should use `init_tui_telemetry()` which redirects stderr to a file (prevents BAML's raw output from corrupting ratatui alternate screen):
+
+```rust
+use baml_agent_tui::init_tui_telemetry;
+
+// stderr → .my-agent/stderr.log
+// telemetry → .my-agent/tui-YYYY-MM-DD.jsonl
+let _guard = init_tui_telemetry(".my-agent", "tui");
+```
+
+For headless/CLI mode, use `baml_agent::init_telemetry()` directly (no stderr redirect needed).
+
+Both produce OTEL-aware structured JSONL with trace_id, span context, and timestamps. See `baml-agent/README.md` for details.
+
 ## Usage
 
 ```toml
@@ -140,10 +178,13 @@ baml-agent-tui = { version = "0.3", path = "../baml-agent-tui" }
 
 ```rust
 use baml_agent_tui::{
-    AppEvent, ChatState, FuzzyPicker, HelpOverlay,
-    FocusLayer, FocusResult, route_key,
+    AppEvent, ChatState, CommandPalette, FuzzyPicker, HelpOverlay,
+    FocusLayer, FocusResult, route_key, route_mouse,
     init_terminal, restore_terminal, setup_panic_hook,
 };
 ```
 
-See `rc-cli/src/app.rs` for a full implementation example.
+### Projects using this crate
+
+- **rust-code** (`rc-cli/src/app.rs`) — AI coding agent TUI
+- **souffleur** (`souffleur-tui/`) — Sales coaching agent TUI
