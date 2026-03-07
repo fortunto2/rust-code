@@ -1,6 +1,6 @@
 [package]
 name = "rust-code"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "AI-powered TUI coding agent written in Rust"
 license = "MIT"
@@ -34,5 +34,5 @@ nucleo.workspace = true
 nucleo-matcher.workspace = true
 baml.workspace = true
 rmcp.workspace = true
-baml-agent = { path = "../baml-agent" }
-baml-agent-tui = { path = "../baml-agent-tui" }
+baml-agent = { version = "0.1.0", path = "../baml-agent" }
+baml-agent-tui = { version = "0.1.0", path = "../baml-agent-tui" }
