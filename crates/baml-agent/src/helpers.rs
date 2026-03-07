@@ -188,7 +188,8 @@ impl AgentContext {
             let path = project_dir.join(filename);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if !content.trim().is_empty() {
-                    ctx.parts.push((label.to_string(), content));
+                    let expanded = expand_imports(&content, project_dir, 0);
+                    ctx.parts.push((label.to_string(), expanded));
                     break; // first found wins
                 }
             }
@@ -203,7 +204,8 @@ impl AgentContext {
             let path = project_dir.join(filename);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if !content.trim().is_empty() {
-                    ctx.parts.push((label.to_string(), content));
+                    let expanded = expand_imports(&content, project_dir, 0);
+                    ctx.parts.push((label.to_string(), expanded));
                     break;
                 }
             }
@@ -242,21 +244,97 @@ impl AgentContext {
             .collect();
         Some(sections.join("\n\n"))
     }
+
+    /// Combine parts with a token budget (chars/4 estimate).
+    ///
+    /// Priority order (lowest dropped first):
+    /// 1. Memory (learned) — tentative entries already GC'd
+    /// 2. context/* extras
+    /// 3. Manifesto
+    /// 4. Rules, Identity, Project/Local Instructions
+    /// 5. Soul, Memory (user notes) — never dropped
+    pub fn to_system_message_with_budget(&self, max_tokens: usize) -> Option<String> {
+        if self.parts.is_empty() { return None; }
+
+        // Priority: higher = keep longer. Soul and user memory are sacred.
+        fn priority(label: &str) -> u8 {
+            match label {
+                "Soul" => 10,
+                "Memory (user notes)" => 9,
+                "Identity" => 8,
+                "Rules" => 8,
+                "Project Instructions" | "Local Instructions" => 7,
+                "Memory (learned)" => 6,
+                "Manifesto" => 5,
+                _ => 3, // context/* extras, rules/*
+            }
+        }
+
+        let mut indexed: Vec<(u8, &str, &str)> = self.parts.iter()
+            .map(|(label, content)| (priority(label), label.as_str(), content.as_str()))
+            .collect();
+        // Sort by priority descending — we'll drop from the end
+        indexed.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let max_chars = max_tokens * 4;
+        let mut total_chars: usize = indexed.iter().map(|(_, l, c)| l.len() + c.len() + 10).sum();
+
+        // Drop lowest priority parts until we fit
+        while total_chars > max_chars && !indexed.is_empty() {
+            let last = indexed.last().unwrap();
+            if last.0 >= 9 { break; } // never drop Soul or user memory
+            total_chars -= last.1.len() + last.2.len() + 10;
+            indexed.pop();
+        }
+
+        if indexed.is_empty() { return None; }
+
+        // Restore original order for readability
+        indexed.sort_by(|a, b| b.0.cmp(&a.0));
+        let sections: Vec<String> = indexed.iter()
+            .map(|(_, label, content)| format!("## {}\n{}", label, content.trim()))
+            .collect();
+        Some(sections.join("\n\n"))
+    }
 }
 
 /// Format MEMORY.jsonl into a readable system message.
 ///
-/// Groups entries by section, shows category and confidence.
-/// Limits to last 50 entries to keep context manageable.
+/// - GC: tentative entries older than 7 days are auto-removed from file
+/// - Groups entries by section, shows category and confidence
+/// - Limits to last 50 entries to keep context manageable
 fn format_memory_jsonl(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
-    let entries: Vec<serde_json::Value> = content.lines()
+    let mut entries: Vec<serde_json::Value> = content.lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
     if entries.is_empty() { return None; }
 
-    // Group by section, keep last 50 entries
-    let entries = if entries.len() > 50 { &entries[entries.len()-50..] } else { &entries };
+    // GC: remove tentative entries older than 7 days
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    let seven_days = 7 * 24 * 3600;
+    let before_gc = entries.len();
+    entries.retain(|e| {
+        let confidence = e["confidence"].as_str().unwrap_or("tentative");
+        if confidence == "confirmed" { return true; }
+        let created = e["created"].as_u64().unwrap_or(now_secs);
+        now_secs.saturating_sub(created) < seven_days
+    });
+
+    // Write back if GC removed anything
+    if entries.len() < before_gc {
+        let lines: Vec<String> = entries.iter()
+            .filter_map(|e| serde_json::to_string(e).ok())
+            .collect();
+        let _ = std::fs::write(path, lines.join("\n") + "\n");
+    }
+
+    if entries.is_empty() { return None; }
+
+    // Keep last 50 entries
+    let entries = if entries.len() > 50 { &entries[entries.len()-50..] } else { &entries[..] };
     let mut sections: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for entry in entries {
         let section = entry["section"].as_str().unwrap_or("General").to_string();
@@ -278,6 +356,74 @@ fn format_memory_jsonl(path: &std::path::Path) -> Option<String> {
         out.push('\n');
     }
     Some(out)
+}
+
+/// Expand `@path/to/file` imports in content (Claude Code compatible).
+///
+/// Replaces `@relative/path` with the file contents inline.
+/// Max depth 5 to prevent cycles. Relative paths resolve from `base_dir`.
+fn expand_imports(content: &str, base_dir: &std::path::Path, depth: u8) -> String {
+    if depth > 5 { return content.to_string(); }
+
+    let mut result = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match standalone @path or @path in text: "See @README.md for details"
+        let expanded = expand_line_imports(trimmed, base_dir, depth);
+        result.push_str(&expanded);
+        result.push('\n');
+    }
+    result
+}
+
+/// Expand @references within a single line.
+fn expand_line_imports(line: &str, base_dir: &std::path::Path, depth: u8) -> String {
+    let mut result = String::new();
+    let mut rest = line;
+
+    while let Some(at_pos) = rest.find('@') {
+        result.push_str(&rest[..at_pos]);
+        let after_at = &rest[at_pos + 1..];
+
+        // Extract path: sequence of non-whitespace chars after @
+        let path_end = after_at.find(|c: char| c.is_whitespace() || c == ',' || c == ')' || c == ']')
+            .unwrap_or(after_at.len());
+        let ref_path = &after_at[..path_end];
+
+        if ref_path.is_empty() || ref_path.starts_with('{') {
+            // Not a file ref (e.g. @{variable})
+            result.push('@');
+            rest = after_at;
+            continue;
+        }
+
+        // Resolve path
+        let resolved = if ref_path.starts_with('~') {
+            let home = std::env::var("HOME").unwrap_or_default();
+            std::path::PathBuf::from(ref_path.replacen('~', &home, 1))
+        } else {
+            base_dir.join(ref_path)
+        };
+
+        if resolved.is_file() {
+            if let Ok(file_content) = std::fs::read_to_string(&resolved) {
+                let parent = resolved.parent().unwrap_or(base_dir);
+                let expanded = expand_imports(&file_content, parent, depth + 1);
+                result.push_str(&expanded.trim());
+            } else {
+                result.push('@');
+                result.push_str(ref_path);
+            }
+        } else {
+            // Not a file — keep as-is (could be @mention or similar)
+            result.push('@');
+            result.push_str(ref_path);
+        }
+
+        rest = &after_at[path_end..];
+    }
+    result.push_str(rest);
+    result
 }
 
 /// Load all `*.md` files from a directory, sorted alphabetically.
@@ -554,5 +700,94 @@ mod tests {
         assert_eq!(a.parts.len(), 2);
         assert_eq!(a.parts[0].0, "Soul");
         assert_eq!(a.parts[1].0, "Project");
+    }
+
+    #[test]
+    fn gc_removes_old_tentative_entries() {
+        let dir = std::env::temp_dir().join("baml_test_memory_gc");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let old = now - 8 * 24 * 3600; // 8 days ago
+
+        let entries = format!(
+            "{}\n{}\n{}\n",
+            serde_json::json!({"category":"decision","section":"A","content":"confirmed old","confidence":"confirmed","created":old}),
+            serde_json::json!({"category":"pattern","section":"B","content":"tentative old","confidence":"tentative","created":old}),
+            serde_json::json!({"category":"insight","section":"C","content":"tentative recent","confidence":"tentative","created":now}),
+        );
+        let path = dir.join("MEMORY.jsonl");
+        std::fs::write(&path, &entries).unwrap();
+
+        let formatted = format_memory_jsonl(&path).unwrap();
+        // Old tentative should be GC'd
+        assert!(!formatted.contains("tentative old"));
+        // Confirmed old stays
+        assert!(formatted.contains("confirmed old"));
+        // Recent tentative stays
+        assert!(formatted.contains("tentative recent"));
+
+        // File should be rewritten without old tentative
+        let remaining = std::fs::read_to_string(&path).unwrap();
+        assert!(!remaining.contains("tentative old"));
+        assert_eq!(remaining.lines().count(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_expands_file_refs() {
+        let dir = std::env::temp_dir().join("baml_test_import");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("README.md"), "# My Project\nThis is the readme.").unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "See @README.md for overview.\nDo stuff.").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        let msg = ctx.to_system_message().unwrap();
+        assert!(msg.contains("This is the readme")); // imported
+        assert!(msg.contains("Do stuff")); // original content preserved
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_nonexistent_file_kept_as_is() {
+        let dir = std::env::temp_dir().join("baml_test_import_missing");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "See @nonexistent.md for info.").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        let msg = ctx.to_system_message().unwrap();
+        assert!(msg.contains("@nonexistent.md")); // kept as-is
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn token_budget_drops_low_priority() {
+        let mut ctx = AgentContext::default();
+        ctx.parts.push(("Soul".into(), "Be direct.".into()));       // priority 10
+        ctx.parts.push(("Manifesto".into(), "x".repeat(10000).into())); // priority 5, big
+        ctx.parts.push(("Identity".into(), "Name: test".into()));   // priority 8
+
+        // Budget that fits Soul + Identity but not Manifesto
+        let msg = ctx.to_system_message_with_budget(100).unwrap(); // ~400 chars budget
+        assert!(msg.contains("Be direct")); // Soul kept
+        assert!(msg.contains("Name: test")); // Identity kept
+        assert!(!msg.contains("xxxxxxxxx")); // Manifesto dropped
+    }
+
+    #[test]
+    fn token_budget_never_drops_soul() {
+        let mut ctx = AgentContext::default();
+        ctx.parts.push(("Soul".into(), "x".repeat(5000).into()));
+
+        // Even tiny budget keeps Soul
+        let msg = ctx.to_system_message_with_budget(10).unwrap();
+        assert!(msg.contains("xxxxx"));
     }
 }

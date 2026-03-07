@@ -28,3 +28,13 @@ template_string EngineeringPrinciples() #"
 - Fail fast: check invariants early. Graceful degradation at system boundaries.
 - TDD cycle: Red → Green → Refactor. Skip for: UI layout, one-off scripts, early prototypes.
 "#
+
+template_string DecisionReplay() #"
+## Decision Memory
+Before making an architectural choice (library, pattern, approach):
+1. Check your Memory (system messages) for prior decisions in the same section.
+2. If a precedent exists — follow it unless the user explicitly overrides.
+3. After a new decision, save it with MemoryTool (category=decision, confidence=confirmed).
+4. Include context: what alternatives you considered and why you chose this one.
+This creates compound learning — each session makes the next one smarter.
+"#

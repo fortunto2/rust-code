@@ -156,9 +156,7 @@ function GetNextStep(history: Message[]) -> NextStep {
 
     {{ EngineeringPrinciples() }}
 
-    ## Memory
-    Use MemoryTool to save confirmed learnings that will help in future sessions.
-    Check existing memory (in system messages) before saving — don't duplicate.
+    {{ DecisionReplay() }}
 
     {# Loop through conversation history #}
     {% for msg in history %}
