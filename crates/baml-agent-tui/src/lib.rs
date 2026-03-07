@@ -11,7 +11,8 @@ pub mod picker;
 pub mod terminal;
 
 pub use agent_task::{
-    spawn_agent_loop, AgentEventHandler, AgentTaskEvent, ChannelHandler, TuiAgent,
+    extract_viewable_json, spawn_agent_loop, AgentEventHandler, AgentTaskEvent, ChannelHandler,
+    TuiAgent, ViewableContent,
 };
 pub use chat::ChatState;
 pub use command_palette::CommandPalette;

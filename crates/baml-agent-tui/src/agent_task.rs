@@ -5,6 +5,17 @@ use baml_agent::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Viewable content extracted from tool output — for Ctrl+O viewer.
+#[derive(Debug, Clone)]
+pub struct ViewableContent {
+    /// Short title (e.g. filename).
+    pub title: String,
+    /// Chat preview (1-3 lines).
+    pub preview: String,
+    /// Full content for the viewer overlay.
+    pub full_content: String,
+}
+
 /// Events emitted by the agent task back to the TUI.
 pub enum AgentTaskEvent {
     /// Step started (1-based).
@@ -18,8 +29,10 @@ pub enum AgentTaskEvent {
     },
     /// About to execute an action (human-readable label).
     ActionStart(String),
-    /// Action executed, result output.
+    /// Action executed, short result (truncated for chat).
     ActionDone(String),
+    /// Action produced viewable content (file contents, etc.) — preview in chat, full via Ctrl+O.
+    ActionViewable(ViewableContent),
     /// A file was modified by a tool action.
     FileModified(String),
     /// Context trimmed.
@@ -81,6 +94,49 @@ pub trait TuiAgent: SgrAgentStream {
     /// If an action modifies a file, return the path (for TUI refresh / git status).
     fn file_modified(_action: &Self::Action) -> Option<String> {
         None
+    }
+
+    /// Extract viewable content from tool output for the Ctrl+O viewer.
+    ///
+    /// Override to detect project-specific JSON patterns (read_file, etc.).
+    /// Default: tries common JSON patterns (`{"operation":"read_file","content":"..."}`).
+    fn viewable_content(output: &str) -> Option<ViewableContent> {
+        extract_viewable_json(output)
+    }
+}
+
+/// Default viewable content extractor for common JSON tool output patterns.
+///
+/// Recognized patterns:
+/// - `{"operation": "read_file", "path": "...", "content": "..."}`
+pub fn extract_viewable_json(output: &str) -> Option<ViewableContent> {
+    let json: serde_json::Value = serde_json::from_str(output).ok()?;
+    let op = json.get("operation")?.as_str()?;
+    match op {
+        "read_file" => {
+            let content = json.get("content")?.as_str()?;
+            let path = json.get("path").and_then(|v| v.as_str()).unwrap_or("file");
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            let line_count = content.lines().count();
+            let preview_lines: String = content.lines().take(3).collect::<Vec<_>>().join(" | ");
+            let preview = if line_count > 3 {
+                format!(
+                    "  = {}... [{} lines \u{2014} Ctrl+O view]",
+                    preview_lines, line_count
+                )
+            } else {
+                format!("  = {}", content)
+            };
+            Some(ViewableContent {
+                title: filename,
+                preview,
+                full_content: content.to_string(),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -200,7 +256,11 @@ where
                     handler.on_event(AgentTaskEvent::ActionStart(A::action_label(action)));
                 }
                 LoopEvent::ActionDone(result) => {
-                    handler.on_event(AgentTaskEvent::ActionDone(result.output.clone()));
+                    if let Some(viewable) = A::viewable_content(&result.output) {
+                        handler.on_event(AgentTaskEvent::ActionViewable(viewable));
+                    } else {
+                        handler.on_event(AgentTaskEvent::ActionDone(result.output.clone()));
+                    }
                 }
                 LoopEvent::LoopWarning(n) => {
                     handler.on_event(AgentTaskEvent::Warning(format!(
