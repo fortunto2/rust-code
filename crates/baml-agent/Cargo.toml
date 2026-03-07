@@ -20,6 +20,7 @@ telemetry = [
     "dep:chrono",
 ]
 search = ["dep:nucleo-matcher"]
+providers = ["dep:toml", "dep:tokio", "dep:reqwest", "dep:base64"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -34,6 +35,10 @@ opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
+toml = { version = "0.8", optional = true }
+tokio = { version = "1", optional = true, features = ["net", "process", "io-util", "rt"] }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls", "json"] }
+base64 = { version = "0.22", optional = true }
 uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]

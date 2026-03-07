@@ -146,14 +146,17 @@ dependencies = [
 name = "baml-agent"
 version = "0.3.0"
 dependencies = [
+ "base64",
  "chrono",
  "nucleo-matcher",
  "opentelemetry",
  "opentelemetry_sdk",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "tracing-appender",
  "tracing-log",
@@ -172,6 +175,7 @@ dependencies = [
  "libc",
  "nucleo-matcher",
  "ratatui",
+ "serde_json",
  "tokio",
 ]
 
@@ -1988,14 +1992,12 @@ dependencies = [
  "baml",
  "baml-agent",
  "baml-agent-tui",
- "base64",
  "clap",
  "crossterm 0.27.0",
  "ignore",
  "nucleo",
  "nucleo-matcher",
  "ratatui",
- "reqwest",
  "rmcp",
  "serde",
  "serde_json",
@@ -2005,7 +2007,6 @@ dependencies = [
  "textwrap",
  "tokio",
  "tokio-util",
- "toml",
  "tracing",
  "tui-textarea",
 ]

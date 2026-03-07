@@ -13,7 +13,7 @@ use crate::agent::{Action, Agent};
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
-use baml_agent_tui::command_palette::CommandPalette;
+use baml_agent_tui::command_palette::{CommandPalette, PaletteAction};
 use baml_agent_tui::focus::FocusLayer;
 
 #[derive(PartialEq)]
@@ -967,8 +967,11 @@ impl<'a> App<'a> {
                     AppEvent::Ui(Event::Mouse(mouse_event)) => {
                         // Command palette mouse handling (via FocusLayer)
                         if self.command_palette.on_mouse(mouse_event).consumed() {
-                            if let Some(cmd) = self.command_palette.take_applied() {
-                                self.set_input_text(cmd);
+                            if let Some(action) = self.command_palette.take_applied() {
+                                match action {
+                                    PaletteAction::Execute(cmd) => { self.handle_slash_command(cmd); }
+                                    PaletteAction::Insert(cmd) => self.set_input_text(cmd),
+                                }
                             }
                             continue;
                         }
@@ -3890,14 +3893,15 @@ impl<'a> App<'a> {
 
         // Focus layer intercept — command palette gets first shot at input
         if self.command_palette.on_key(key_event).consumed() {
-            if let Some(cmd) = self.command_palette.take_applied() {
-                if key_event.code == KeyCode::Enter {
-                    // Enter = select AND execute immediately
-                    self.handle_slash_command(cmd);
-                } else {
-                    // Tab = insert into input (user can edit before submitting)
-                    self.set_input_text(cmd);
+            if let Some(action) = self.command_palette.take_applied() {
+                match action {
+                    PaletteAction::Execute(cmd) => { self.handle_slash_command(cmd); }
+                    PaletteAction::Insert(cmd) => self.set_input_text(cmd),
                 }
+            }
+            // Live preview — update input as user navigates
+            if let Some(preview) = self.command_palette.take_preview() {
+                self.set_input_text(preview);
             }
             return;
         }

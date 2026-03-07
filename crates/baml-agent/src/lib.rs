@@ -6,6 +6,8 @@ pub mod helpers;
 pub mod logging;
 pub mod loop_detect;
 pub mod prompt;
+#[cfg(feature = "providers")]
+pub mod providers;
 pub mod session;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;

@@ -5,7 +5,6 @@
 //!
 //! Each CLI handles its own auth — no API keys needed.
 
-use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
@@ -61,14 +60,8 @@ impl CliProvider {
                     "Bash,Edit,Write,Read".into(),
                 ],
             ),
-            Self::Gemini => (
-                "gemini".into(),
-                vec!["-p".into(), prompt.into()],
-            ),
-            Self::Codex => (
-                "codex".into(),
-                vec!["exec".into(), prompt.into()],
-            ),
+            Self::Gemini => ("gemini".into(), vec!["-p".into(), prompt.into()]),
+            Self::Codex => ("codex".into(), vec!["exec".into(), prompt.into()]),
         }
     }
 
@@ -83,7 +76,7 @@ impl CliProvider {
 }
 
 /// Run CLI with prompt and return output text.
-async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String> {
+async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String, String> {
     let (cmd, args) = provider.build_command(prompt);
 
     let mut command = tokio::process::Command::new(&cmd);
@@ -97,10 +90,9 @@ async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String> {
     }
 
     let mut child = command.spawn().map_err(|e| {
-        anyhow!(
+        format!(
             "{} not found or failed to start: {}. Is it installed?",
-            cmd,
-            e
+            cmd, e
         )
     })?;
 
@@ -109,17 +101,21 @@ async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String> {
 
     let mut output = String::new();
     if let Some(mut out) = stdout {
-        out.read_to_string(&mut output).await?;
+        out.read_to_string(&mut output)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     let mut err_output = String::new();
     if let Some(mut err) = stderr {
-        err.read_to_string(&mut err_output).await?;
+        err.read_to_string(&mut err_output)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
-    let status = child.wait().await?;
+    let status = child.wait().await.map_err(|e| e.to_string())?;
     if !status.success() && output.trim().is_empty() {
-        return Err(anyhow!(
+        return Err(format!(
             "{} exited with {}: {}",
             cmd,
             status,
@@ -127,7 +123,6 @@ async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String> {
         ));
     }
 
-    // Clean up known noise from CLI output
     let cleaned = clean_output(provider, &output);
     Ok(cleaned)
 }
@@ -136,8 +131,6 @@ async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String> {
 fn clean_output(provider: CliProvider, raw: &str) -> String {
     match provider {
         CliProvider::Codex => {
-            // Codex prints header like "OpenAI Codex v0.111.0 ..." before output
-            // Skip lines until we see "--------" separator, take everything after
             let mut found_separator = false;
             let mut lines = Vec::new();
             for line in raw.lines() {
@@ -147,21 +140,21 @@ fn clean_output(provider: CliProvider, raw: &str) -> String {
                     }
                     continue;
                 }
-                // Skip metadata lines after separator (workdir, model, provider)
-                if line.starts_with("workdir:") || line.starts_with("model:") || line.starts_with("provider:") {
+                if line.starts_with("workdir:")
+                    || line.starts_with("model:")
+                    || line.starts_with("provider:")
+                {
                     continue;
                 }
                 lines.push(line);
             }
             if lines.is_empty() {
-                // No separator found — return as-is
                 raw.trim().to_string()
             } else {
                 lines.join("\n").trim().to_string()
             }
         }
         CliProvider::Gemini => {
-            // Gemini may print "Both GOOGLE_API_KEY and GEMINI_API_KEY are set." warnings
             let lines: Vec<&str> = raw
                 .lines()
                 .filter(|l| {
@@ -171,10 +164,7 @@ fn clean_output(provider: CliProvider, raw: &str) -> String {
                 .collect();
             lines.join("\n").trim().to_string()
         }
-        CliProvider::Claude => {
-            // Claude -p output is clean text
-            raw.trim().to_string()
-        }
+        CliProvider::Claude => raw.trim().to_string(),
     }
 }
 
@@ -204,7 +194,7 @@ struct ContentPart {
 }
 
 impl MessageContent {
-    fn to_string(&self) -> String {
+    fn to_text(&self) -> String {
         match self {
             Self::Text(s) => s.clone(),
             Self::Parts(parts) => parts
@@ -223,11 +213,10 @@ struct ChatMessage {
 }
 
 /// Merge all messages into a single prompt for CLI.
-/// System messages become instructions prefix, then user/assistant turns.
 fn messages_to_prompt(messages: &[ChatMessage]) -> String {
     let mut parts = Vec::new();
     for msg in messages {
-        let text = msg.content.to_string();
+        let text = msg.content.to_text();
         match msg.role.as_str() {
             "system" => parts.push(format!("[System Instructions]\n{}", text)),
             "user" => parts.push(format!("[User]\n{}", text)),
@@ -244,7 +233,9 @@ fn messages_to_prompt(messages: &[ChatMessage]) -> String {
 
 /// Start a CLI provider proxy on a random localhost port.
 /// Returns (port, join_handle).
-pub async fn start_cli_proxy(provider: CliProvider) -> Result<(u16, tokio::task::JoinHandle<()>)> {
+pub async fn start_cli_proxy(
+    provider: CliProvider,
+) -> Result<(u16, tokio::task::JoinHandle<()>), String> {
     // Verify CLI exists
     let (cmd, _) = provider.build_command("test");
     let check = tokio::process::Command::new("which")
@@ -252,14 +243,16 @@ pub async fn start_cli_proxy(provider: CliProvider) -> Result<(u16, tokio::task:
         .output()
         .await;
     if check.is_err() || !check.unwrap().status.success() {
-        return Err(anyhow!(
+        return Err(format!(
             "{} CLI not found. Install it first.",
             provider.display_name()
         ));
     }
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let port = listener.local_addr()?.port();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let handle = tokio::spawn(async move {
         loop {
@@ -277,7 +270,6 @@ pub async fn start_cli_proxy(provider: CliProvider) -> Result<(u16, tokio::task:
 async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvider) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt};
 
-    // Read full HTTP request with Content-Length support
     let mut buf = Vec::with_capacity(131072);
     let mut tmp = vec![0u8; 65536];
     loop {
@@ -355,7 +347,6 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
         }
     };
 
-    // Convert to single prompt
     let prompt = messages_to_prompt(&chat_req.messages);
 
     // Run CLI
@@ -364,7 +355,7 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
         Err(e) => {
             let err = format!(
                 "{{\"error\":{{\"message\":\"CLI error: {}\"}}}}",
-                e.to_string().replace('"', "'")
+                e.replace('"', "'")
             );
             let response = format!(
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -389,7 +380,6 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")
         .await;
 
-    // Send content as a single SSE chunk
     let chunk = serde_json::json!({
         "id": format!("chatcmpl-cli-{}", now),
         "object": "chat.completion.chunk",
@@ -401,9 +391,10 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
             "finish_reason": null
         }]
     });
-    let _ = stream.write_all(format!("data: {}\n\n", chunk).as_bytes()).await;
+    let _ = stream
+        .write_all(format!("data: {}\n\n", chunk).as_bytes())
+        .await;
 
-    // Send finish chunk with usage
     let finish = serde_json::json!({
         "id": format!("chatcmpl-cli-{}", now),
         "object": "chat.completion.chunk",
@@ -420,6 +411,8 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
             "total_tokens": in_tokens + out_tokens
         }
     });
-    let _ = stream.write_all(format!("data: {}\n\n", finish).as_bytes()).await;
+    let _ = stream
+        .write_all(format!("data: {}\n\n", finish).as_bytes())
+        .await;
     let _ = stream.write_all(b"data: [DONE]\n\n").await;
 }

@@ -147,7 +147,7 @@ struct ProviderSetup {
 
 /// Start Codex Responses API proxy and configure env vars for BAML.
 async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
-    match tools::codex_proxy::start_codex_proxy().await {
+    match tools::start_codex_proxy().await {
         Ok((port, handle)) => {
             let proxy_url = format!("http://127.0.0.1:{}/v1", port);
             // SAFETY: called before spawning agent threads, single-threaded init
@@ -169,7 +169,7 @@ async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
 
 /// Start a CLI tool proxy (claude, gemini, codex CLI subprocess).
 async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> ProviderSetup {
-    let provider = match tools::cli_provider::CliProvider::from_name(cli_name) {
+    let provider = match tools::CliProvider::from_name(cli_name) {
         Some(p) => p,
         None => {
             eprintln!("Unknown CLI provider: {}", cli_name);
@@ -177,7 +177,7 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
         }
     };
 
-    match tools::cli_provider::start_cli_proxy(provider).await {
+    match tools::start_cli_proxy(provider).await {
         Ok((port, handle)) => {
             let proxy_url = format!("http://127.0.0.1:{}/v1", port);
             // SAFETY: called before spawning agent threads, single-threaded init
@@ -198,7 +198,7 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
 
 /// Resolve provider from CLI flags (override) → config file (default).
 async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
-    use tools::config::{ProviderAuth, resolve_provider};
+    use baml_agent::providers::{self, ProviderAuth};
 
     // CLI flags take priority
     if args.codex {
@@ -221,9 +221,9 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     }
 
     // Fall back to config file
-    let cfg = tools::load_config();
+    let cfg = providers::load_config(".rust-code");
     if let Some(ref provider) = cfg.provider {
-        if let Some((default_client, auth)) = resolve_provider(provider) {
+        if let Some((default_client, auth)) = providers::resolve_provider(provider) {
             let client = cfg.model.unwrap_or_else(|| default_client.to_string());
             match auth {
                 ProviderAuth::CodexProxy => {
@@ -233,7 +233,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                     return start_cli_provider(cli_name, Some(client)).await;
                 }
                 ProviderAuth::ClaudeKeychain => {
-                    match tools::config::load_claude_keychain_token() {
+                    match providers::load_claude_keychain_token() {
                         Ok(token) => {
                             // SAFETY: called before spawning threads
                             unsafe { std::env::set_var("ANTHROPIC_API_KEY", &token) };
@@ -270,11 +270,11 @@ fn apply_provider(setup: &ProviderSetup, agent: &mut Agent) {
 }
 
 fn run_config_command(action: ConfigAction) -> Result<()> {
-    use tools::config::{resolve_provider};
+    use baml_agent::providers;
 
     match action {
         ConfigAction::Show => {
-            let cfg = tools::load_config();
+            let cfg = providers::load_config(".rust-code");
             let provider = cfg.provider.as_deref().unwrap_or("gemini (default)");
             let model = cfg.model.as_deref().unwrap_or("(auto)");
             println!("Provider: {}", provider);
@@ -283,22 +283,22 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
             println!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
         }
         ConfigAction::Set { provider, model } => {
-            if resolve_provider(&provider).is_none() {
+            if providers::resolve_provider(&provider).is_none() {
                 eprintln!("Unknown provider: {}", provider);
                 eprintln!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
                 std::process::exit(1);
             }
-            let cfg = tools::UserConfig {
+            let cfg = providers::UserConfig {
                 provider: Some(provider.clone()),
                 model,
             };
-            tools::save_config(&cfg)?;
+            providers::save_config(".rust-code", &cfg).map_err(|e| anyhow::anyhow!(e))?;
             println!("Default provider set to: {}", provider);
             println!("Saved to ~/.rust-code/config.toml");
         }
         ConfigAction::Reset => {
-            let cfg = tools::UserConfig::default();
-            tools::save_config(&cfg)?;
+            let cfg = providers::UserConfig::default();
+            providers::save_config(".rust-code", &cfg).map_err(|e| anyhow::anyhow!(e))?;
             println!("Config reset to defaults (Gemini)");
         }
     }
