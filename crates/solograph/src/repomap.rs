@@ -169,6 +169,10 @@ pub fn generate_context_map(root: &Path, changed_files: &[String]) -> String {
             .join(", ")
     ));
 
+    // --- Directory structure ---
+    out.push_str("\n# Structure:\n");
+    out.push_str(&crate::scanner::dir_tree(root, &stats.files));
+
     // --- Top files (names only, no symbols) ---
     out.push_str("\n# Key files (by symbol density):\n");
     for rf in ranked.iter().take(10) {
@@ -303,6 +307,9 @@ mod tests {
         assert!(map.contains("# Project:"));
         // Should have key files list
         assert!(map.contains("# Key files"));
+        // Should have directory structure
+        assert!(map.contains("# Structure:"));
+        assert!(map.contains("files,"));
         // Should NOT have full symbols (no changed files)
         assert!(!map.contains("# Changed files"));
         // Should be much shorter than full repomap

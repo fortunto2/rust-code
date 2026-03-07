@@ -130,6 +130,42 @@ fn count_lines(path: &Path) -> (usize, usize) {
     }
 }
 
+/// Build a compact directory tree from scanned files.
+///
+/// Groups files by directory, shows file count and LOC per dir.
+/// Output like:
+/// ```text
+///   crates/rc-cli/src/ (12 files, 4200 lines)
+///   crates/baml-agent/src/ (8 files, 2100 lines)
+/// ```
+pub fn dir_tree(root: &Path, files: &[FileInfo]) -> String {
+    use std::collections::BTreeMap;
+
+    // Aggregate per directory
+    let mut dirs: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for fi in files {
+        let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
+        let dir = rel
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(".")
+            .to_string();
+        let entry = dirs.entry(dir).or_default();
+        entry.0 += 1;
+        entry.1 += fi.lines;
+    }
+
+    let mut out = String::new();
+    for (dir, (count, lines)) in &dirs {
+        let display = if dir.is_empty() { "." } else { dir.as_str() };
+        out.push_str(&format!(
+            "  {}/ ({} files, {} lines)\n",
+            display, count, lines
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,5 +10,5 @@ pub mod symbols;
 
 pub use deps::{parse_deps, Dependency, DependencyKind};
 pub use repomap::{generate_context_map, generate_repomap};
-pub use scanner::{scan_project, FileInfo, ProjectStats};
+pub use scanner::{dir_tree, scan_project, FileInfo, ProjectStats};
 pub use symbols::{extract_symbols, Symbol, SymbolKind};
