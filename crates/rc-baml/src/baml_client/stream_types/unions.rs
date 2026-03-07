@@ -3,70 +3,79 @@
 //
 // Learn more at https://docs.boundaryml.com
 
+
 //! Generated streaming union types.
 
-use super::*;
-use crate::baml_client::types;
 use baml::BamlDecode;
+use crate::baml_client::types;
+use super::*;
 
-/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.BashBgTool | Streaming.SearchCodeTool | Streaming.GitStatusTool | Streaming.GitDiffTool | Streaming.GitAddTool | Streaming.GitCommitTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | Streaming.McpToolCall | Streaming.MemoryTool)
+
+/// Generated from: (Streaming.ReadFileTool | Streaming.WriteFileTool | Streaming.EditFileTool | Streaming.BashCommandTool | Streaming.BashBgTool | Streaming.SearchCodeTool | Streaming.GitStatusTool | Streaming.GitDiffTool | Streaming.GitAddTool | Streaming.GitCommitTool | Streaming.OpenEditorTool | Streaming.AskUserTool | Streaming.FinishTaskTool | Streaming.McpToolCall | Streaming.MemoryTool | Streaming.ProjectMapTool | Streaming.DependenciesTool)
 #[derive(Debug, Clone, BamlDecode)]
 #[baml(union)]
-pub enum Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool
-{
-    #[baml(name = "ReadFileTool")]
+pub enum Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+
+    #[baml(name = "ReadFileTool",)]
     ReadFileTool(ReadFileTool),
-
-    #[baml(name = "WriteFileTool")]
+    
+    #[baml(name = "WriteFileTool",)]
     WriteFileTool(WriteFileTool),
-
-    #[baml(name = "EditFileTool")]
+    
+    #[baml(name = "EditFileTool",)]
     EditFileTool(EditFileTool),
-
-    #[baml(name = "BashCommandTool")]
+    
+    #[baml(name = "BashCommandTool",)]
     BashCommandTool(BashCommandTool),
-
-    #[baml(name = "BashBgTool")]
+    
+    #[baml(name = "BashBgTool",)]
     BashBgTool(BashBgTool),
-
-    #[baml(name = "SearchCodeTool")]
+    
+    #[baml(name = "SearchCodeTool",)]
     SearchCodeTool(SearchCodeTool),
-
-    #[baml(name = "GitStatusTool")]
+    
+    #[baml(name = "GitStatusTool",)]
     GitStatusTool(GitStatusTool),
-
-    #[baml(name = "GitDiffTool")]
+    
+    #[baml(name = "GitDiffTool",)]
     GitDiffTool(GitDiffTool),
-
-    #[baml(name = "GitAddTool")]
+    
+    #[baml(name = "GitAddTool",)]
     GitAddTool(GitAddTool),
-
-    #[baml(name = "GitCommitTool")]
+    
+    #[baml(name = "GitCommitTool",)]
     GitCommitTool(GitCommitTool),
-
-    #[baml(name = "OpenEditorTool")]
+    
+    #[baml(name = "OpenEditorTool",)]
     OpenEditorTool(OpenEditorTool),
-
-    #[baml(name = "AskUserTool")]
+    
+    #[baml(name = "AskUserTool",)]
     AskUserTool(AskUserTool),
-
-    #[baml(name = "FinishTaskTool")]
+    
+    #[baml(name = "FinishTaskTool",)]
     FinishTaskTool(FinishTaskTool),
-
-    #[baml(name = "McpToolCall")]
+    
+    #[baml(name = "McpToolCall",)]
     McpToolCall(McpToolCall),
-
-    #[baml(name = "MemoryTool")]
+    
+    #[baml(name = "MemoryTool",)]
     MemoryTool(MemoryTool),
+    
+    #[baml(name = "ProjectMapTool",)]
+    ProjectMapTool(ProjectMapTool),
+    
+    #[baml(name = "DependenciesTool",)]
+    DependenciesTool(DependenciesTool),
+    
 }
 
-impl AsRef<Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
-    fn as_ref(&self) -> &Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl AsRef<Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+    fn as_ref(&self) -> &Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
         self
     }
 }
 
-impl Default for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl Default for Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
     fn default() -> Self {
         
            
@@ -74,3 +83,4 @@ impl Default for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOr
         
     }
 }
+

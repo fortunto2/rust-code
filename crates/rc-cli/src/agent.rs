@@ -11,7 +11,7 @@ use baml_agent::{
 use std::path::Path;
 
 /// Shorthand for the 15-variant BAML action union.
-pub use types::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
+pub use types::Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
 
 // Implement baml-agent traits for BAML's generated Message type
 
@@ -428,6 +428,54 @@ impl Agent {
                     }),
                 }
             }
+            ProjectMapTool(cmd) => {
+                let dir = cmd.path.as_deref().unwrap_or(".");
+                let map = solograph::generate_repomap(Path::new(dir));
+                Ok(ActionResult {
+                    output: map,
+                    done: false,
+                })
+            }
+            DependenciesTool(cmd) => {
+                let path = if let Some(p) = &cmd.path {
+                    std::path::PathBuf::from(p)
+                } else {
+                    // Auto-detect manifest in current dir
+                    ["Cargo.toml", "package.json", "pyproject.toml"]
+                        .iter()
+                        .map(std::path::PathBuf::from)
+                        .find(|p| p.exists())
+                        .unwrap_or_else(|| std::path::PathBuf::from("Cargo.toml"))
+                };
+                let deps = solograph::parse_deps(&path);
+                if deps.is_empty() {
+                    Ok(ActionResult {
+                        output: format!("No dependencies found in {}", path.display()),
+                        done: false,
+                    })
+                } else {
+                    let output = deps
+                        .iter()
+                        .map(|d| {
+                            let kind = match d.kind {
+                                solograph::DependencyKind::Dev => " [dev]",
+                                solograph::DependencyKind::Build => " [build]",
+                                solograph::DependencyKind::Normal => "",
+                            };
+                            format!("  {} = {}{}", d.name, d.version, kind)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(ActionResult {
+                        output: format!(
+                            "Dependencies from {}:\n{}",
+                            path.display(),
+                            output
+                        ),
+                        done: false,
+                    })
+                }
+            }
         }
     }
 }
@@ -483,6 +531,8 @@ impl SgrAgent for Agent {
             FinishTaskTool(c) => format!("finish:{}", c.summary),
             MemoryTool(c) => format!("memory:{:?}:{}", c.operation, c.section),
             McpToolCall(c) => format!("mcp:{}:{}", c.server, c.tool),
+            ProjectMapTool(c) => format!("project_map:{:?}", c.path),
+            DependenciesTool(c) => format!("deps:{:?}", c.path),
         }
     }
 }

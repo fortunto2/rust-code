@@ -122,7 +122,7 @@ impl FunctionOptions {
                 args = args.with_env(key, value);
             }
         }
-
+        
         if let Some(tags) = &self.tags {
             for (key, value) in tags {
                 args = args.with_tag(key, value);
@@ -139,10 +139,7 @@ impl FunctionOptions {
         // Resolve client option to client_registry (client takes precedence)
         let effective_registry = if let Some(client_name) = &self.client {
             // Create or clone registry and set primary
-            let mut registry = self
-                .client_registry
-                .clone()
-                .unwrap_or_else(baml::ClientRegistry::new);
+            let mut registry = self.client_registry.clone().unwrap_or_else(baml::ClientRegistry::new);
             registry.set_primary_client(client_name);
             Some(registry)
         } else {
@@ -152,6 +149,7 @@ impl FunctionOptions {
         if let Some(registry) = &effective_registry {
             args = args.with_client_registry(registry);
         }
+
 
         if let Some(cancellation_token) = &self.cancellation_token {
             args = args.with_cancellation_token(Some(cancellation_token.clone()));

@@ -8,21 +8,24 @@
 //! Full implementation coming in Phase 6.
 
 mod classes;
-mod type_aliases;
 mod unions;
+mod type_aliases;
 
 pub use classes::*;
-pub use type_aliases::*;
 pub use unions::*;
+pub use type_aliases::*;
 
 /// Streaming variants of types (all fields Optional).
 #[derive(Debug, Clone)]
 pub enum StreamTypes {
+
     AskUserTool(AskUserTool),
 
     BashBgTool(BashBgTool),
 
     BashCommandTool(BashCommandTool),
+
+    DependenciesTool(DependenciesTool),
 
     EditFileTool(EditFileTool),
 
@@ -46,6 +49,8 @@ pub enum StreamTypes {
 
     OpenEditorTool(OpenEditorTool),
 
+    ProjectMapTool(ProjectMapTool),
+
     ReadFileTool(ReadFileTool),
 
     SearchCodeTool(SearchCodeTool),
@@ -53,7 +58,7 @@ pub enum StreamTypes {
     WriteFileTool(WriteFileTool),
 
 
-    Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
 }
 
@@ -70,6 +75,8 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::BashBgTool(_) => "BashBgTool",
 
             StreamTypes::BashCommandTool(_) => "BashCommandTool",
+
+            StreamTypes::DependenciesTool(_) => "DependenciesTool",
 
             StreamTypes::EditFileTool(_) => "EditFileTool",
 
@@ -93,6 +100,8 @@ impl baml::KnownTypes for StreamTypes {
 
             StreamTypes::OpenEditorTool(_) => "OpenEditorTool",
 
+            StreamTypes::ProjectMapTool(_) => "ProjectMapTool",
+
             StreamTypes::ReadFileTool(_) => "ReadFileTool",
 
             StreamTypes::SearchCodeTool(_) => "SearchCodeTool",
@@ -100,7 +109,7 @@ impl baml::KnownTypes for StreamTypes {
             StreamTypes::WriteFileTool(_) => "WriteFileTool",
 
 
-            StreamTypes::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            StreamTypes::Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
 
         }

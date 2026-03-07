@@ -7,13 +7,13 @@
 
 mod classes;
 mod enums;
-mod type_aliases;
 mod unions;
+mod type_aliases;
 
 pub use classes::*;
 pub use enums::*;
-pub use type_aliases::*;
 pub use unions::*;
+pub use type_aliases::*;
 
 // Re-export types from baml runtime
 pub use baml::{Audio, Image, Pdf, Video};
@@ -23,11 +23,14 @@ pub use baml::{Checked, StreamState};
 /// Serves as the compile-time type registry for BamlValue.
 #[derive(Debug, Clone)]
 pub enum Types {
+
     AskUserTool(AskUserTool),
 
     BashBgTool(BashBgTool),
 
     BashCommandTool(BashCommandTool),
+
+    DependenciesTool(DependenciesTool),
 
     EditFileTool(EditFileTool),
 
@@ -51,6 +54,8 @@ pub enum Types {
 
     OpenEditorTool(OpenEditorTool),
 
+    ProjectMapTool(ProjectMapTool),
+
     ReadFileTool(ReadFileTool),
 
     SearchCodeTool(SearchCodeTool),
@@ -59,7 +64,7 @@ pub enum Types {
 
 
 
-    Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
 
     Union2KconfirmedOrKtentative(Union2KconfirmedOrKtentative),
 
@@ -83,6 +88,8 @@ impl baml::KnownTypes for Types {
 
             Types::BashCommandTool(_) => "BashCommandTool",
 
+            Types::DependenciesTool(_) => "DependenciesTool",
+
             Types::EditFileTool(_) => "EditFileTool",
 
             Types::FinishTaskTool(_) => "FinishTaskTool",
@@ -105,6 +112,8 @@ impl baml::KnownTypes for Types {
 
             Types::OpenEditorTool(_) => "OpenEditorTool",
 
+            Types::ProjectMapTool(_) => "ProjectMapTool",
+
             Types::ReadFileTool(_) => "ReadFileTool",
 
             Types::SearchCodeTool(_) => "SearchCodeTool",
@@ -113,7 +122,7 @@ impl baml::KnownTypes for Types {
 
 
 
-            Types::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            Types::Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
 
             Types::Union2KconfirmedOrKtentative(_) => "Union2KconfirmedOrKtentative",
 

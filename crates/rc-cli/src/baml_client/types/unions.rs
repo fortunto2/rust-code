@@ -3,69 +3,78 @@
 //
 // Learn more at https://docs.boundaryml.com
 
+
 //! Generated union types.
 
+use baml::{BamlEncode, BamlDecode};
 use super::*;
-use baml::{BamlDecode, BamlEncode};
 
-/// Generated from: (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool)
+
+/// Generated from: (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool | ProjectMapTool | DependenciesTool)
 #[derive(Debug, Clone, BamlEncode, BamlDecode)]
 #[baml(union)]
-pub enum Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool
-{
+pub enum Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+
     #[baml(name = "ReadFileTool")]
-    ReadFileTool(ReadFileTool),
-
+        ReadFileTool(ReadFileTool),
+    
     #[baml(name = "WriteFileTool")]
-    WriteFileTool(WriteFileTool),
-
+        WriteFileTool(WriteFileTool),
+    
     #[baml(name = "EditFileTool")]
-    EditFileTool(EditFileTool),
-
+        EditFileTool(EditFileTool),
+    
     #[baml(name = "BashCommandTool")]
-    BashCommandTool(BashCommandTool),
-
+        BashCommandTool(BashCommandTool),
+    
     #[baml(name = "BashBgTool")]
-    BashBgTool(BashBgTool),
-
+        BashBgTool(BashBgTool),
+    
     #[baml(name = "SearchCodeTool")]
-    SearchCodeTool(SearchCodeTool),
-
+        SearchCodeTool(SearchCodeTool),
+    
     #[baml(name = "GitStatusTool")]
-    GitStatusTool(GitStatusTool),
-
+        GitStatusTool(GitStatusTool),
+    
     #[baml(name = "GitDiffTool")]
-    GitDiffTool(GitDiffTool),
-
+        GitDiffTool(GitDiffTool),
+    
     #[baml(name = "GitAddTool")]
-    GitAddTool(GitAddTool),
-
+        GitAddTool(GitAddTool),
+    
     #[baml(name = "GitCommitTool")]
-    GitCommitTool(GitCommitTool),
-
+        GitCommitTool(GitCommitTool),
+    
     #[baml(name = "OpenEditorTool")]
-    OpenEditorTool(OpenEditorTool),
-
+        OpenEditorTool(OpenEditorTool),
+    
     #[baml(name = "AskUserTool")]
-    AskUserTool(AskUserTool),
-
+        AskUserTool(AskUserTool),
+    
     #[baml(name = "FinishTaskTool")]
-    FinishTaskTool(FinishTaskTool),
-
+        FinishTaskTool(FinishTaskTool),
+    
     #[baml(name = "McpToolCall")]
-    McpToolCall(McpToolCall),
-
+        McpToolCall(McpToolCall),
+    
     #[baml(name = "MemoryTool")]
-    MemoryTool(MemoryTool),
+        MemoryTool(MemoryTool),
+    
+    #[baml(name = "ProjectMapTool")]
+        ProjectMapTool(ProjectMapTool),
+    
+    #[baml(name = "DependenciesTool")]
+        DependenciesTool(DependenciesTool),
+    
 }
 
-impl AsRef<Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
-    fn as_ref(&self) -> &Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl AsRef<Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool> for Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+    fn as_ref(&self) -> &Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
         self
     }
 }
 
-impl Default for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
+impl Default for Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool {
     fn default() -> Self {
         
            
@@ -74,15 +83,18 @@ impl Default for Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOr
     }
 }
 
+
 /// Generated from: ("confirmed" | "tentative")
 #[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
 #[baml(union)]
 pub enum Union2KconfirmedOrKtentative {
+
     #[baml(name = "string_confirmed", literal_string = "confirmed")]
     Kconfirmed,
-
+    
     #[baml(name = "string_tentative", literal_string = "tentative")]
     Ktentative,
+    
 }
 
 impl AsRef<Union2KconfirmedOrKtentative> for Union2KconfirmedOrKtentative {
@@ -93,19 +105,25 @@ impl AsRef<Union2KconfirmedOrKtentative> for Union2KconfirmedOrKtentative {
 
 impl Default for Union2KconfirmedOrKtentative {
     fn default() -> Self {
-        Self::Kconfirmed
+        
+           
+            Self::Kconfirmed
+        
     }
 }
+
 
 /// Generated from: ("save" | "forget")
 #[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
 #[baml(union)]
 pub enum Union2KforgetOrKsave {
+
     #[baml(name = "string_save", literal_string = "save")]
     Ksave,
-
+    
     #[baml(name = "string_forget", literal_string = "forget")]
     Kforget,
+    
 }
 
 impl AsRef<Union2KforgetOrKsave> for Union2KforgetOrKsave {
@@ -116,33 +134,37 @@ impl AsRef<Union2KforgetOrKsave> for Union2KforgetOrKsave {
 
 impl Default for Union2KforgetOrKsave {
     fn default() -> Self {
-        Self::Ksave
+        
+           
+            Self::Ksave
+        
     }
 }
+
 
 /// Generated from: ("decision" | "pattern" | "preference" | "insight" | "debug")
 #[derive(Debug, Clone, BamlEncode, BamlDecode, PartialEq, Eq, Hash)]
 #[baml(union)]
 pub enum Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
+
     #[baml(name = "string_decision", literal_string = "decision")]
     Kdecision,
-
+    
     #[baml(name = "string_pattern", literal_string = "pattern")]
     Kpattern,
-
+    
     #[baml(name = "string_preference", literal_string = "preference")]
     Kpreference,
-
+    
     #[baml(name = "string_insight", literal_string = "insight")]
     Kinsight,
-
+    
     #[baml(name = "string_debug", literal_string = "debug")]
     Kdebug,
+    
 }
 
-impl AsRef<Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference>
-    for Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference
-{
+impl AsRef<Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference> for Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
     fn as_ref(&self) -> &Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
         self
     }
@@ -150,6 +172,10 @@ impl AsRef<Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference>
 
 impl Default for Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
     fn default() -> Self {
-        Self::Kdecision
+        
+           
+            Self::Kdecision
+        
     }
 }
+

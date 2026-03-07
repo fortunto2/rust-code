@@ -80,12 +80,22 @@ class McpToolCall {
   arguments string? @description("Tool arguments as JSON string, e.g. '{\"query\": \"search term\", \"limit\": 10}'. Pass null if no arguments needed.")
 }
 
+class ProjectMapTool {
+  tool_name "project_map" @description("Use this tool to generate a project map — files, languages, LOC stats, and key public symbols extracted via tree-sitter. Fast, runs locally.")
+  path string? @description("Project directory to scan. Defaults to current directory if not provided.")
+}
+
+class DependenciesTool {
+  tool_name "dependencies" @description("Use this tool to parse project dependencies from Cargo.toml, package.json, or pyproject.toml.")
+  path string? @description("Path to manifest file. If not provided, auto-detects in current directory.")
+}
+
 // MemoryTool defined in memory.baml
 
 class NextStep {
   situation string @description("SITUATION: What is the current state? What phase are we in, what's done, what's blocking? Scan history — never re-ask what's already known.")
   task string[] @description("TASK: 1-5 remaining steps. First item = what we're doing RIGHT NOW. Must advance toward completion.")
-  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool)[] @stream.not_null @description("ACTION: Tools to execute the first task step. Use multiple for independent ops (e.g. read 3 files). Use single when steps depend on each other.")
+  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool | ProjectMapTool | DependenciesTool)[] @stream.not_null @description("ACTION: Tools to execute the first task step. Use multiple for independent ops (e.g. read 3 files). Use single when steps depend on each other.")
 }
 
 // History message format for the prompt
@@ -111,6 +121,10 @@ function GetNextStep(history: Message[]) -> NextStep {
     BashCommandTool (run shell command), BashBgTool (run in tmux background),
     SearchCodeTool (ripgrep search), GitStatusTool, GitDiffTool (show uncommitted changes),
     GitAddTool, GitCommitTool, OpenEditorTool, AskUserTool, FinishTaskTool.
+
+    ### Code Intelligence Tools (tree-sitter, local)
+    ProjectMapTool (scan project: files, languages, LOC, public symbols — fast, no network),
+    DependenciesTool (parse Cargo.toml / package.json / pyproject.toml).
 
     ### MCP Tools (via McpToolCall)
     MCP servers are connected and their tools listed in system messages above.

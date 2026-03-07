@@ -1665,6 +1665,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "solograph",
  "syntect",
  "syntect-tui",
  "textwrap",
