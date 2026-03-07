@@ -227,6 +227,9 @@ impl FocusLayer for CommandPalette {
     }
 
     fn on_key(&mut self, key: KeyEvent) -> FocusResult {
+        if self.suggestions.is_empty() {
+            return FocusResult::Passed;
+        }
         match key.code {
             KeyCode::Enter => {
                 // Execute immediately
@@ -446,6 +449,14 @@ mod tests {
     fn inactive_when_no_suggestions() {
         let cp = CommandPalette::new(TEST_COMMANDS);
         assert!(!cp.is_active());
+    }
+
+    #[test]
+    fn enter_passes_when_inactive() {
+        let mut cp = CommandPalette::new(TEST_COMMANDS);
+        // No suggestions — Enter must pass through
+        let result = cp.on_key(make_key(KeyCode::Enter));
+        assert_eq!(result, FocusResult::Passed);
     }
 
     #[test]

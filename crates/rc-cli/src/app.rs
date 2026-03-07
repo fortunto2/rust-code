@@ -3873,7 +3873,7 @@ impl<'a> App<'a> {
         self.command_output = None;
 
         // Focus layer intercept — command palette gets first shot at input
-        if self.command_palette.on_key(key_event).consumed() {
+        if self.command_palette.is_active() && self.command_palette.on_key(key_event).consumed() {
             if let Some(action) = self.command_palette.take_applied() {
                 match action {
                     PaletteAction::Execute(cmd) => { self.handle_slash_command(cmd); }
