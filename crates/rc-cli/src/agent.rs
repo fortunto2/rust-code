@@ -8,8 +8,8 @@ use crate::tools::{
 use baml_agent::{AgentMessage, MessageRole, Session, LoopDetector, SgrAgent, SgrAgentStream, StepDecision, ActionResult};
 use std::path::Path;
 
-/// Shorthand for the 14-variant BAML action union.
-pub use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
+/// Shorthand for the 15-variant BAML action union.
+pub use types::Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
 
 // Implement baml-agent traits for BAML's generated Message type
 
@@ -58,8 +58,9 @@ impl Agent {
     pub fn new() -> Self {
         let mut session = Session::new(AGENT_HOME, MAX_HISTORY);
 
-        // Inject agent context (SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md, context/*.md)
-        let ctx = baml_agent::AgentContext::load(AGENT_HOME);
+        // Load layered context: agent home (SOUL, IDENTITY, etc.) + project (AGENTS.md/CLAUDE.md + rules)
+        let mut ctx = baml_agent::AgentContext::load(AGENT_HOME);
+        ctx.merge(baml_agent::AgentContext::load_project(Path::new(".")));
         if let Some(msg) = ctx.to_system_message() {
             session.push(Role::system(), msg);
         }
@@ -290,6 +291,64 @@ impl Agent {
                     done: true,
                 })
             }
+            MemoryTool(cmd) => {
+                let memory_path = Path::new(AGENT_HOME).join("MEMORY.md");
+                let op = baml_agent::norm(&format!("{:?}", cmd.operation));
+                let result = match op.as_str() {
+                    "append" => {
+                        let mut existing = std::fs::read_to_string(&memory_path).unwrap_or_default();
+                        let section_header = format!("## {}", cmd.section);
+                        if existing.contains(&section_header) {
+                            // Append under existing section (before next ## or EOF)
+                            if let Some(pos) = existing.find(&section_header) {
+                                let after_header = pos + section_header.len();
+                                let next_section = existing[after_header..].find("\n## ").map(|p| after_header + p);
+                                let insert_at = next_section.unwrap_or(existing.len());
+                                existing.insert_str(insert_at, &format!("\n{}\n", cmd.content));
+                            }
+                        } else {
+                            // New section
+                            if !existing.is_empty() && !existing.ends_with('\n') {
+                                existing.push('\n');
+                            }
+                            existing.push_str(&format!("\n{}\n{}\n", section_header, cmd.content));
+                        }
+                        std::fs::write(&memory_path, &existing)
+                    }
+                    "replace" => {
+                        let mut existing = std::fs::read_to_string(&memory_path).unwrap_or_default();
+                        let section_header = format!("## {}", cmd.section);
+                        if let Some(pos) = existing.find(&section_header) {
+                            let after_header = pos + section_header.len();
+                            let next_section = existing[after_header..].find("\n## ").map(|p| after_header + p + 1);
+                            let end = next_section.unwrap_or(existing.len());
+                            existing.replace_range(pos..end, &format!("{}\n{}\n", section_header, cmd.content));
+                        } else {
+                            if !existing.is_empty() && !existing.ends_with('\n') {
+                                existing.push('\n');
+                            }
+                            existing.push_str(&format!("\n{}\n{}\n", section_header, cmd.content));
+                        }
+                        std::fs::write(&memory_path, &existing)
+                    }
+                    _ => {
+                        return Ok(ActionResult {
+                            output: format!("Unknown memory operation: {}", op),
+                            done: false,
+                        });
+                    }
+                };
+                match result {
+                    Ok(_) => Ok(ActionResult {
+                        output: format!("Memory updated: [{}] {}", op, cmd.section),
+                        done: false,
+                    }),
+                    Err(e) => Ok(ActionResult {
+                        output: format!("Memory write error: {}", e),
+                        done: false,
+                    }),
+                }
+            }
             McpToolCall(cmd) => {
                 let Some(mcp) = &self.mcp else {
                     return Ok(ActionResult {
@@ -365,6 +424,7 @@ impl SgrAgent for Agent {
             OpenEditorTool(c) => format!("open:{}", c.path),
             AskUserTool(c) => format!("ask:{}", c.question),
             FinishTaskTool(c) => format!("finish:{}", c.summary),
+            MemoryTool(c) => format!("memory:{:?}:{}", c.operation, c.section),
             McpToolCall(c) => format!("mcp:{}:{}", c.server, c.tool),
         }
     }

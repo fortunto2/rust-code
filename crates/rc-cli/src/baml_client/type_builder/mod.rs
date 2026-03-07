@@ -141,6 +141,15 @@ impl TypeBuilder {
     }
 
 
+    /// Access the `MemoryTool` class builder.
+    pub fn MemoryTool(&self) -> MemoryToolClassBuilder {
+        MemoryToolClassBuilder::new(
+            self.inner.get_class("MemoryTool")
+                .expect("class MemoryTool is defined in schema")
+        )
+    }
+
+
     /// Access the `Message` class builder.
     pub fn Message(&self) -> MessageClassBuilder {
         MessageClassBuilder::new(

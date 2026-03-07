@@ -101,24 +101,36 @@ pub fn load_manifesto_from(dir: &std::path::Path) -> String {
     String::new()
 }
 
-/// Agent context loaded from the agent's home directory.
+/// Agent context — layered memory system compatible with Claude Code.
 ///
-/// ## File convention
+/// ## Two loading modes
+///
+/// ### 1. Agent home dir (`load`)
 ///
 /// Each agent has a home dir (e.g. `.rust-code/`, `.va-sessions/`, `.epiphan/`).
-/// Inside it, markdown files provide layered context:
+/// Inside it, markdown files provide agent-specific context:
 ///
-/// | File | What | Always loaded |
-/// |------|------|---------------|
-/// | `SOUL.md` | Who the agent is: values, boundaries, tone | yes |
-/// | `MANIFESTO.md` | Dev principles: harness, SGR, TDD, anti-patterns | yes |
-/// | `IDENTITY.md` | Name, role, stack, domain | yes |
-/// | `RULES.md` | Coding rules, workflow, constraints | yes |
-/// | `MEMORY.md` | Cross-session learnings, preferences | yes |
-/// | `context/*.md` | User-extensible extras (any name) | yes |
+/// | File | Label | What |
+/// |------|-------|------|
+/// | `SOUL.md` | Soul | Who the agent is: values, boundaries, tone |
+/// | `IDENTITY.md` | Identity | Name, role, stack, domain |
+/// | `MANIFESTO.md` | Manifesto | Dev principles, harness engineering |
+/// | `RULES.md` | Rules | Coding rules, workflow, constraints |
+/// | `MEMORY.md` | Memory | Cross-session learnings, preferences |
+/// | `context/*.md` | (filename) | User-extensible extras |
+///
+/// ### 2. Project dir (`load_project`) — Claude Code compatible
+///
+/// Loads project-level instructions from standard locations.
+/// Prefers `AGENTS.md` (generic) with fallback to `CLAUDE.md` (Claude Code compat).
+///
+/// | Priority | File | Scope |
+/// |----------|------|-------|
+/// | 1 | `AGENTS.md` / `CLAUDE.md` / `.claude/CLAUDE.md` | Project instructions (git) |
+/// | 2 | `AGENTS.local.md` / `CLAUDE.local.md` | Local instructions (gitignored) |
+/// | 3 | `.agents/rules/*.md` / `.claude/rules/*.md` | Rules by topic |
 ///
 /// All files are optional. Missing files are silently skipped.
-/// Files are combined into system messages at agent init.
 #[derive(Debug, Default)]
 pub struct AgentContext {
     /// Combined context text for system message injection.
@@ -126,12 +138,11 @@ pub struct AgentContext {
 }
 
 impl AgentContext {
-    /// Load context from an agent home directory.
+    /// Load context from an agent home directory (SOUL, IDENTITY, MANIFESTO, etc.).
     pub fn load(home_dir: &str) -> Self {
         let dir = std::path::Path::new(home_dir);
         let mut ctx = Self::default();
 
-        // Known files in priority order
         const KNOWN_FILES: &[(&str, &str)] = &[
             ("SOUL.md", "Soul"),
             ("IDENTITY.md", "Identity"),
@@ -150,31 +161,66 @@ impl AgentContext {
         }
 
         // Extra context files from context/ subdir
-        let ctx_dir = dir.join("context");
-        if ctx_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&ctx_dir) {
-                let mut extras: Vec<_> = entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-                    .collect();
-                extras.sort_by_key(|e| e.file_name());
+        load_rules_dir(&dir.join("context"), &mut ctx);
 
-                for entry in extras {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if !content.trim().is_empty() {
-                            let label = entry.path()
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("context")
-                                .to_string();
-                            ctx.parts.push((label, content));
-                        }
-                    }
+        ctx
+    }
+
+    /// Load project-level context (AGENTS.md/CLAUDE.md + rules).
+    ///
+    /// Claude Code compatible: falls back to CLAUDE.md if AGENTS.md not found.
+    pub fn load_project(project_dir: &std::path::Path) -> Self {
+        let mut ctx = Self::default();
+
+        // 1. Project instructions: AGENTS.md > CLAUDE.md > .claude/CLAUDE.md
+        let project_files: &[(&str, &str)] = &[
+            ("AGENTS.md", "Project Instructions"),
+            ("CLAUDE.md", "Project Instructions"),
+            (".claude/CLAUDE.md", "Project Instructions"),
+        ];
+        for (filename, label) in project_files {
+            let path = project_dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if !content.trim().is_empty() {
+                    ctx.parts.push((label.to_string(), content));
+                    break; // first found wins
                 }
             }
         }
 
+        // 2. Local instructions: AGENTS.local.md > CLAUDE.local.md
+        let local_files: &[(&str, &str)] = &[
+            ("AGENTS.local.md", "Local Instructions"),
+            ("CLAUDE.local.md", "Local Instructions"),
+        ];
+        for (filename, label) in local_files {
+            let path = project_dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if !content.trim().is_empty() {
+                    ctx.parts.push((label.to_string(), content));
+                    break;
+                }
+            }
+        }
+
+        // 3. Rules: .agents/rules/*.md > .claude/rules/*.md
+        let rules_dirs = [
+            project_dir.join(".agents/rules"),
+            project_dir.join(".claude/rules"),
+        ];
+        for rules_dir in &rules_dirs {
+            if rules_dir.is_dir() {
+                load_rules_dir(rules_dir, &mut ctx);
+                break; // first found dir wins
+            }
+        }
+
         ctx
+    }
+
+    /// Merge another context into this one (appends parts).
+    pub fn merge(&mut self, other: Self) {
+        self.parts.extend(other.parts);
     }
 
     /// Whether any context was found.
@@ -189,6 +235,31 @@ impl AgentContext {
             .map(|(label, content)| format!("## {}\n{}", label, content.trim()))
             .collect();
         Some(sections.join("\n\n"))
+    }
+}
+
+/// Load all `*.md` files from a directory, sorted alphabetically.
+fn load_rules_dir(dir: &std::path::Path, ctx: &mut AgentContext) {
+    if !dir.is_dir() { return; }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            .collect();
+        files.sort_by_key(|e| e.file_name());
+
+        for entry in files {
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                if !content.trim().is_empty() {
+                    let label = entry.path()
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("rule")
+                        .to_string();
+                    ctx.parts.push((label, content));
+                }
+            }
+        }
     }
 }
 
@@ -322,5 +393,87 @@ mod tests {
         let ctx = AgentContext::load("/nonexistent/path");
         assert!(ctx.is_empty());
         assert!(ctx.to_system_message().is_none());
+    }
+
+    #[test]
+    fn load_project_prefers_agents_md() {
+        let dir = std::env::temp_dir().join("baml_test_project_agents");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "Use pnpm.").unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "Use npm.").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        assert_eq!(ctx.parts.len(), 1);
+        assert_eq!(ctx.parts[0].0, "Project Instructions");
+        assert!(ctx.parts[0].1.contains("pnpm")); // AGENTS.md wins
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_project_falls_back_to_claude_md() {
+        let dir = std::env::temp_dir().join("baml_test_project_claude");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "Build with cargo.").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        assert_eq!(ctx.parts.len(), 1);
+        assert!(ctx.parts[0].1.contains("cargo"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_project_loads_local_and_rules() {
+        let dir = std::env::temp_dir().join("baml_test_project_full");
+        let _ = std::fs::remove_dir_all(&dir);
+        let rules_dir = dir.join(".claude/rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "Project X").unwrap();
+        std::fs::write(dir.join("CLAUDE.local.md"), "My sandbox URL").unwrap();
+        std::fs::write(rules_dir.join("testing.md"), "Run pytest").unwrap();
+        std::fs::write(rules_dir.join("style.md"), "Use black").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        assert_eq!(ctx.parts.len(), 4); // CLAUDE + local + 2 rules
+        assert_eq!(ctx.parts[0].0, "Project Instructions");
+        assert_eq!(ctx.parts[1].0, "Local Instructions");
+        // Rules sorted alphabetically
+        assert_eq!(ctx.parts[2].0, "style");
+        assert_eq!(ctx.parts[3].0, "testing");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_project_agents_rules_over_claude_rules() {
+        let dir = std::env::temp_dir().join("baml_test_project_agents_rules");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".agents/rules")).unwrap();
+        std::fs::create_dir_all(dir.join(".claude/rules")).unwrap();
+        std::fs::write(dir.join(".agents/rules/main.md"), "Agents rule").unwrap();
+        std::fs::write(dir.join(".claude/rules/main.md"), "Claude rule").unwrap();
+
+        let ctx = AgentContext::load_project(&dir);
+        assert_eq!(ctx.parts.len(), 1);
+        assert!(ctx.parts[0].1.contains("Agents rule")); // .agents/ wins
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_combines_contexts() {
+        let mut a = AgentContext::default();
+        a.parts.push(("Soul".into(), "Be direct.".into()));
+
+        let mut b = AgentContext::default();
+        b.parts.push(("Project".into(), "Use Rust.".into()));
+
+        a.merge(b);
+        assert_eq!(a.parts.len(), 2);
+        assert_eq!(a.parts[0].0, "Soul");
+        assert_eq!(a.parts[1].0, "Project");
     }
 }

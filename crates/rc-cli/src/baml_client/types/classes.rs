@@ -298,6 +298,40 @@ impl AsRef<McpToolCall> for McpToolCall {
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
 
+pub struct MemoryTool {
+
+
+
+    pub tool_name: String,
+
+
+
+    pub operation: Union2KappendOrKreplace,
+
+
+
+    pub section: String,
+
+
+
+    pub content: String,
+
+
+}
+
+
+
+impl AsRef<MemoryTool> for MemoryTool {
+    fn as_ref(&self) -> &MemoryTool {
+        self
+    }
+}
+
+
+
+
+#[derive(Debug, Clone, Default, BamlEncode, BamlDecode)]
+
 pub struct Message {
 
 
@@ -336,7 +370,7 @@ pub struct NextStep {
 
 
 
-    pub actions: Vec<Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
+    pub actions: Vec<Union15AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
 
 
 }

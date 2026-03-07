@@ -528,6 +528,68 @@ impl McpToolCallClassBuilder {
 }
 
 
+/// Wrapper for the `MemoryTool` class builder.
+///
+/// Provides type-safe method access to fields defined in the schema.
+/// Access fields via methods: `builder.field_name()`
+
+pub struct MemoryToolClassBuilder {
+    inner: baml::ClassBuilder,
+}
+
+impl MemoryToolClassBuilder {
+    /// Create wrapper from runtime ClassBuilder.
+    pub(crate) fn new(inner: baml::ClassBuilder) -> Self {
+        Self { inner }
+    }
+
+    /// Get the underlying ClassBuilder.
+    pub fn inner(&self) -> &baml::ClassBuilder {
+        &self.inner
+    }
+
+    /// Get the class as a type definition.
+    pub fn r#type(&self) -> baml::TypeDef {
+        self.inner.as_type()
+            .expect("MemoryTool is statically defined in .baml and should always have a type")
+    }
+
+
+    // =========================================================================
+    // Field Accessors (1:1 with schema field names)
+    // =========================================================================
+
+
+    /// Access the `tool_name` field builder.
+    pub fn property_tool_name(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("tool_name")
+            .expect("MemoryTool.tool_name is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `operation` field builder.
+    pub fn property_operation(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("operation")
+            .expect("MemoryTool.operation is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `section` field builder.
+    pub fn property_section(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("section")
+            .expect("MemoryTool.section is statically defined in .baml and should always be present")
+    }
+
+
+    /// Access the `content` field builder.
+    pub fn property_content(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("content")
+            .expect("MemoryTool.content is statically defined in .baml and should always be present")
+    }
+
+}
+
+
 /// Wrapper for the `Message` class builder.
 ///
 /// Provides type-safe method access to fields defined in the schema.
