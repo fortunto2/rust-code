@@ -1,7 +1,7 @@
 use crate::baml_client::{self, types};
 use crate::tools::{
-    FuzzySearcher, build_skills_context, git_add, git_commit, git_diff, git_status,
-    mcp::McpManager, read_file, run_command, write_file,
+    FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
+    git_status, is_mutating_action, mcp::McpManager, read_file, run_command, write_file,
 };
 use anyhow::Result;
 use baml_agent::{
@@ -67,6 +67,7 @@ pub struct Agent {
     session: Session<Msg>,
     mcp: Option<McpManager>,
     step_count: usize,
+    last_input_chars: usize,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -93,6 +94,7 @@ impl Agent {
             session,
             mcp: None,
             step_count: 0,
+            last_input_chars: 0,
         }
     }
 
@@ -217,17 +219,40 @@ impl Agent {
     {
         self.session.trim();
         let history = self.baml_history();
+
+        // Record input size for cost tracking
+        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
+        self.last_input_chars = input_chars;
+
         let stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
         Ok(stream)
+    }
+
+    /// Record output size after LLM response (call from TUI/headless after getting response).
+    pub fn record_step_cost(&self, output_text: &str) {
+        cost::record_step(self.last_input_chars, output_text.len());
     }
 
     /// Reset step count (e.g. when loading a new session).
     pub fn reset_step_count(&mut self) {
         self.step_count = 0;
+        cost::reset_cost();
+    }
+
+    /// Get current cost stats for display in TUI.
+    pub fn cost_status(&self) -> String {
+        cost::session_stats().status_line()
     }
 
     /// Execute a single action. Returns tool output + done flag.
+    /// Auto-checkpoints before mutating actions (write, edit, bash).
     pub async fn execute_action(&self, action: &Action) -> Result<ActionResult> {
+        let sig = Self::action_signature(action);
+        if is_mutating_action(&sig) {
+            if let Some(label) = create_checkpoint(self.step_count, &sig) {
+                tracing::info!("Checkpoint: {}", label);
+            }
+        }
         use Action::*;
         match action {
             ReadFileTool(cmd) => {
