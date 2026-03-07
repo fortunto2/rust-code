@@ -1,31 +1,75 @@
 //! Generate a project map — concise summary of files and key symbols.
 //!
-//! Similar to `codegraph_repomap` from SoloGraph MCP but runs locally via tree-sitter.
+//! Matches SoloGraph MCP's `codegraph_repomap` approach:
+//! - Rank files by "importance" (symbol count as proxy for graph degree)
+//! - Show actual code signatures (not just names)
+//! - YAML-ish output format optimized for LLM context
 
 use std::path::Path;
 
-use crate::scanner::{scan_project, ProjectStats};
-use crate::symbols::extract_symbols;
+use crate::scanner::scan_project;
+use crate::symbols::{extract_symbols, Symbol, SymbolKind};
 
-/// Generate a text repomap for a project directory.
+/// Generate a YAML-style repomap for a project directory.
 ///
-/// Returns a structured text summary: files grouped by directory,
-/// with key public symbols listed under each file.
+/// Files are ranked by symbol count (proxy for graph connectivity).
+/// Top files show signatures extracted from source code.
 pub fn generate_repomap(root: &Path) -> String {
-    let stats = scan_project(root);
-    format_repomap(root, &stats)
+    generate_repomap_with_limit(root, 20)
 }
 
-fn format_repomap(root: &Path, stats: &ProjectStats) -> String {
-    let mut output = String::new();
-    output.push_str(&format!(
-        "# Project Map: {}\n",
-        root.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project")
-    ));
-    output.push_str(&format!(
-        "# {} files, {} lines, languages: {}\n\n",
+/// Generate repomap with custom file limit.
+pub fn generate_repomap_with_limit(root: &Path, max_files: usize) -> String {
+    let stats = scan_project(root);
+
+    // Collect files with their symbols
+    let mut ranked: Vec<RankedFile> = Vec::new();
+
+    for fi in &stats.files {
+        if !matches!(fi.language, "rust" | "python" | "typescript" | "javascript") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&fi.path) else {
+            continue;
+        };
+        let symbols = extract_symbols(&fi.path, &source);
+        if symbols.is_empty() {
+            continue;
+        }
+
+        let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
+        let path_str = rel.to_str().unwrap_or("?").to_string();
+
+        // Score: public symbols count + total symbols / 2
+        // Proxy for graph degree (hub files define more symbols)
+        let pub_count = symbols.iter().filter(|s| s.public).count();
+        let score = pub_count * 2 + symbols.len();
+
+        ranked.push(RankedFile {
+            path: path_str,
+            lines: fi.lines,
+            symbols,
+            source,
+            score,
+        });
+    }
+
+    // Sort by score descending
+    ranked.sort_by(|a, b| b.score.cmp(&a.score));
+    ranked.truncate(max_files);
+
+    // Format output
+    let mut out = String::new();
+
+    let project_name = root
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "project".into());
+
+    out.push_str(&format!(
+        "# Project: {}\n# {} files, {} lines, languages: {}\n\n",
+        project_name,
         stats.files.len(),
         stats.total_lines,
         stats
@@ -36,55 +80,93 @@ fn format_repomap(root: &Path, stats: &ProjectStats) -> String {
             .join(", ")
     ));
 
-    // Group files by parent directory
-    let mut dirs: std::collections::BTreeMap<String, Vec<&crate::scanner::FileInfo>> =
-        std::collections::BTreeMap::new();
+    for rf in &ranked {
+        out.push_str(&format!("{}:\n", rf.path));
 
-    for fi in &stats.files {
-        let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
-        let dir = rel
-            .parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or(".")
-            .to_string();
-        dirs.entry(dir).or_default().push(fi);
+        // Show public symbols with signatures
+        let public: Vec<&Symbol> = rf.symbols.iter().filter(|s| s.public).collect();
+        if public.is_empty() {
+            continue;
+        }
+
+        out.push_str("  symbols:\n");
+        for sym in public.iter().take(12) {
+            let sig = extract_signature(&rf.source, sym);
+            out.push_str(&format!("    - {}: {}", kind_str(&sym.kind), sym.name));
+            if let Some(sig) = sig {
+                out.push_str(&format!("  # {}", sig));
+            }
+            out.push_str(&format!(" (L{})\n", sym.line));
+        }
+        if public.len() > 12 {
+            out.push_str(&format!("    # ... +{} more\n", public.len() - 12));
+        }
     }
 
-    for (dir, files) in &dirs {
-        output.push_str(&format!("## {}/\n", dir));
+    out
+}
 
-        for fi in files {
-            let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
-            let filename = rel.to_str().unwrap_or("?");
-            output.push_str(&format!("  {} ({} lines)\n", filename, fi.lines));
+struct RankedFile {
+    path: String,
+    #[allow(dead_code)]
+    lines: usize,
+    symbols: Vec<Symbol>,
+    source: String,
+    score: usize,
+}
 
-            // Extract symbols for parseable files
-            if matches!(fi.language, "rust" | "python" | "typescript") {
-                if let Ok(source) = std::fs::read_to_string(&fi.path) {
-                    let symbols = extract_symbols(&fi.path, &source);
-                    let public_symbols: Vec<_> = symbols.iter().filter(|s| s.public).collect();
+/// Extract a cleaned-up signature from source at the symbol's line.
+fn extract_signature(source: &str, sym: &Symbol) -> Option<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let idx = sym.line.checked_sub(1)?;
+    let line = lines.get(idx)?;
+    let trimmed = line.trim();
 
-                    if !public_symbols.is_empty() {
-                        for sym in public_symbols.iter().take(15) {
-                            output.push_str(&format!(
-                                "    {:?} {} (L{})\n",
-                                sym.kind, sym.name, sym.line
-                            ));
-                        }
-                        if public_symbols.len() > 15 {
-                            output.push_str(&format!(
-                                "    ... +{} more\n",
-                                public_symbols.len() - 15
-                            ));
-                        }
-                    }
-                }
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // For decorators (Python @, Rust #[]), merge with next non-decorator line
+    let mut sig = trimmed.to_string();
+    if sig.starts_with('@') || sig.starts_with("#[") {
+        if let Some(next) = lines.get(idx + 1) {
+            let next_trimmed = next.trim();
+            if !next_trimmed.starts_with('@') && !next_trimmed.starts_with("#[") {
+                sig = format!("{} {}", sig, next_trimmed);
             }
         }
-        output.push('\n');
     }
 
-    output
+    // Truncate long signatures (e.g. generics, where clauses)
+    if sig.len() > 120 {
+        sig.truncate(117);
+        sig.push_str("...");
+    }
+
+    // Strip body starters
+    let sig = sig
+        .trim_end_matches('{')
+        .trim_end_matches(':')
+        .trim_end()
+        .to_string();
+
+    Some(sig)
+}
+
+fn kind_str(kind: &SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::Function => "fn",
+        SymbolKind::Struct => "struct",
+        SymbolKind::Enum => "enum",
+        SymbolKind::Trait => "trait",
+        SymbolKind::Impl => "impl",
+        SymbolKind::Const => "const",
+        SymbolKind::Static => "static",
+        SymbolKind::TypeAlias => "type",
+        SymbolKind::Mod => "mod",
+        SymbolKind::Class => "class",
+        SymbolKind::Method => "method",
+    }
 }
 
 #[cfg(test)]
@@ -94,9 +176,53 @@ mod tests {
     #[test]
     fn repomap_of_own_crate() {
         let map = generate_repomap(Path::new("."));
-        assert!(map.contains("# Project Map:"));
+        assert!(map.contains("# Project:"));
         assert!(map.contains("rust"));
-        // Should find our own public symbols
-        assert!(map.contains("generate_repomap") || map.contains("scan_project"));
+        // Should find our own public symbols with signatures
+        assert!(map.contains("generate_repomap"));
+        // Should be YAML-ish format
+        assert!(map.contains("symbols:"));
+    }
+
+    #[test]
+    fn repomap_has_signatures() {
+        let map = generate_repomap(Path::new("."));
+        // Should contain fn/struct/etc markers
+        assert!(
+            map.contains("fn:") || map.contains("struct:") || map.contains("enum:"),
+            "repomap should contain kind markers"
+        );
+        // Should contain line references
+        assert!(map.contains("(L"), "repomap should contain line references");
+    }
+
+    #[test]
+    fn signature_extraction() {
+        let source = "pub fn hello(name: &str) -> String {\n    format!(\"hi {}\", name)\n}\n";
+        let sym = Symbol {
+            name: "hello".into(),
+            kind: SymbolKind::Function,
+            line: 1,
+            public: true,
+        };
+        let sig = extract_signature(source, &sym);
+        assert_eq!(sig.unwrap(), "pub fn hello(name: &str) -> String");
+    }
+
+    #[test]
+    fn signature_truncates_long_lines() {
+        let long_fn = format!(
+            "pub fn very_long_function({}) -> Result<(), Error> {{",
+            "a: &str, ".repeat(20)
+        );
+        let sym = Symbol {
+            name: "very_long_function".into(),
+            kind: SymbolKind::Function,
+            line: 1,
+            public: true,
+        };
+        let sig = extract_signature(&long_fn, &sym).unwrap();
+        assert!(sig.len() <= 120);
+        assert!(sig.ends_with("..."));
     }
 }

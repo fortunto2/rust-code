@@ -88,6 +88,13 @@ impl Agent {
             session.push(Role::system(), skills_ctx);
         }
 
+        // Inject project map (files, languages, key symbols) for code intelligence
+        let repomap = solograph::generate_repomap(Path::new("."));
+        session.push(
+            Role::system(),
+            format!("## Project Map (auto-generated)\n\n```\n{}\n```", repomap),
+        );
+
         Self { session, mcp: None }
     }
 
