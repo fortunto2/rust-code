@@ -78,6 +78,7 @@ pub enum AppEvent {
     SkillPreviewLoaded(String, String),
     SessionsLoaded(Vec<SessionEntry>),
     SessionLoaded,
+    BashCwdChanged(std::path::PathBuf),
 }
 
 pub struct FuzzySearchState<'a> {
@@ -676,6 +677,7 @@ pub struct App<'a> {
     pub input_history_pos: Option<usize>,
     pub bash_history: Vec<String>,
     pub bash_history_pos: Option<usize>,
+    pub bash_cwd: std::path::PathBuf,
     pub installed_skills: Vec<SkillEntry>,
     pub skills_query_cache: std::collections::HashMap<String, Vec<SkillEntry>>,
     pub skill_preview_cache: std::collections::HashMap<String, String>,
@@ -842,6 +844,7 @@ impl<'a> App<'a> {
             input_history_pos: None,
             bash_history: Self::load_shell_history(),
             bash_history_pos: None,
+            bash_cwd: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
             installed_skills: Vec::new(),
             skills_query_cache: std::collections::HashMap::new(),
             skill_preview_cache: std::collections::HashMap::new(),
@@ -1086,6 +1089,9 @@ impl<'a> App<'a> {
                     AppEvent::AgentDone => {
                         self.is_thinking = false;
                         self.agent_task = None;
+                    }
+                    AppEvent::BashCwdChanged(new_cwd) => {
+                        self.bash_cwd = new_cwd;
                     }
                     AppEvent::FilesLoaded(files) => {
                         self.fuzzy_state.all_files = files;
@@ -4154,7 +4160,9 @@ impl<'a> App<'a> {
 
                     if self.interaction_mode == InteractionMode::Bash {
                         let command = prompt.trim().to_string();
-                        self.messages.push(format!("> $ {}", command));
+                        let cwd_display = self.bash_cwd.display().to_string();
+                        self.messages
+                            .push(format!("[{}] $ {}", cwd_display, command));
                         self.textarea = TextArea::default();
                         self.textarea.set_block(
                             Block::default()
@@ -4162,34 +4170,31 @@ impl<'a> App<'a> {
                                 .title(self.input_title()),
                         );
                         self.is_thinking = true;
-                        self.messages
-                            .push("[THINK] Running bash command...".to_string());
 
                         self.bash_history.push(command.clone());
                         self.bash_history_pos = None;
                         self.refresh_bash_history_channel();
 
                         let agent_tx = tx.clone();
+                        let cwd = self.bash_cwd.clone();
                         tokio::spawn(async move {
-                            let result = tools::run_command(&command).await;
-                            match result {
-                                Ok(output) => {
-                                    let msg = if output.trim().is_empty() {
-                                        "[BASH] (no output)".to_string()
-                                    } else {
-                                        format!("[BASH]\n{}", output)
-                                    };
-                                    let _ = agent_tx.send(AppEvent::AgentResponse(msg)).await;
-                                }
-                                Err(e) => {
-                                    let _ = agent_tx
-                                        .send(AppEvent::AgentResponse(format!(
-                                            "[ERR] Bash failed\n{}",
-                                            e
-                                        )))
-                                        .await;
-                                }
-                            }
+                            let result =
+                                tools::bash::run_interactive(&command, &cwd).await;
+                            let exit_suffix = if result.exit_code != 0 {
+                                format!(" [exit {}]", result.exit_code)
+                            } else {
+                                String::new()
+                            };
+                            let msg = if result.output.is_empty() {
+                                format!("(no output){exit_suffix}")
+                            } else {
+                                format!("{}{exit_suffix}", result.output)
+                            };
+                            let _ = agent_tx.send(AppEvent::AgentResponse(msg)).await;
+                            // Send CWD update
+                            let _ = agent_tx
+                                .send(AppEvent::BashCwdChanged(result.cwd))
+                                .await;
                             let _ = agent_tx.send(AppEvent::AgentDone).await;
                         });
                         return;
@@ -4506,11 +4511,12 @@ impl<'a> App<'a> {
     ];
 
 
-    fn input_title(&self) -> &'static str {
+    fn input_title(&self) -> String {
         if self.interaction_mode == InteractionMode::Bash {
-            " Bash $ (Enter run, Up/Down history, Ctrl+R search, Shift+Tab mode) "
+            let cwd = self.bash_cwd.display();
+            format!(" {cwd} $ (Enter run, ↑↓ history, Ctrl+R search, Shift+Tab mode) ")
         } else {
-            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "
+            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) ".to_string()
         }
     }
 

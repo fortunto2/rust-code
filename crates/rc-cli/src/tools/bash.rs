@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 fn truncate_output(output: String, max_len: usize) -> String {
@@ -29,6 +30,76 @@ pub async fn run_command(command: &str) -> Result<String> {
             truncate_output(stdout, 5000),
             truncate_output(stderr, 5000)
         )
+    }
+}
+
+/// Result of an interactive bash command (for TUI bash mode).
+/// Always returns output — never errors on non-zero exit.
+pub struct BashResult {
+    pub output: String,
+    pub exit_code: i32,
+    /// New CWD after command (tracks `cd`).
+    pub cwd: PathBuf,
+}
+
+/// Run a command in interactive bash mode with persistent CWD.
+/// Unlike `run_command`, this:
+/// - Tracks CWD across invocations
+/// - Shows both stdout and stderr
+/// - Never errors on non-zero exit code
+pub async fn run_interactive(command: &str, cwd: &Path) -> BashResult {
+    // Wrap command to capture CWD after execution
+    let wrapped = format!("{command}\n__rc_exit=$?\necho __RC_CWD_MARKER__\npwd\nexit $__rc_exit");
+    let result = Command::new("bash")
+        .arg("-c")
+        .arg(&wrapped)
+        .current_dir(cwd)
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("TERM", std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()))
+        .output()
+        .await;
+
+    match result {
+        Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Extract CWD from stdout marker
+            let (user_stdout, new_cwd) = if let Some(pos) = stdout.rfind("__RC_CWD_MARKER__\n") {
+                let user_part = &stdout[..pos];
+                let cwd_part = stdout[pos + "__RC_CWD_MARKER__\n".len()..].trim();
+                (user_part.to_string(), PathBuf::from(cwd_part))
+            } else {
+                (stdout.to_string(), cwd.to_path_buf())
+            };
+
+            // Combine stdout + stderr like a real terminal
+            let mut combined = String::new();
+            let trimmed_out = user_stdout.trim_end();
+            let trimmed_err = stderr.trim_end();
+            if !trimmed_out.is_empty() {
+                combined.push_str(trimmed_out);
+            }
+            if !trimmed_err.is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(trimmed_err);
+            }
+
+            BashResult {
+                output: truncate_output(combined, 15000),
+                exit_code,
+                cwd: new_cwd,
+            }
+        }
+        Err(e) => BashResult {
+            output: format!("Failed to spawn bash: {e}"),
+            exit_code: -1,
+            cwd: cwd.to_path_buf(),
+        },
     }
 }
 
@@ -169,4 +240,46 @@ pub async fn list_bg_windows() -> Result<Vec<(String, bool)>> {
             Some((name.to_string(), done))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn interactive_echo() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_interactive("echo hello", &cwd).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.output.trim(), "hello");
+        assert_eq!(r.cwd, cwd);
+    }
+
+    #[tokio::test]
+    async fn interactive_cd_changes_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_interactive("cd /tmp", &cwd).await;
+        assert_eq!(r.exit_code, 0);
+        // CWD should be /tmp (or /private/tmp on macOS)
+        assert!(
+            r.cwd.ends_with("tmp"),
+            "expected /tmp, got {:?}",
+            r.cwd
+        );
+    }
+
+    #[tokio::test]
+    async fn interactive_nonzero_exit() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_interactive("false", &cwd).await;
+        assert_eq!(r.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn interactive_stderr_shown() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_interactive("echo err >&2", &cwd).await;
+        assert_eq!(r.exit_code, 0);
+        assert!(r.output.contains("err"), "stderr not shown: {}", r.output);
+    }
 }
