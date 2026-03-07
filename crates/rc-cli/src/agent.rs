@@ -73,8 +73,8 @@ const MAX_HISTORY: usize = 60;
 
 impl Agent {
     pub fn new() -> Self {
-        let mut session = Session::new(AGENT_HOME, MAX_HISTORY)
-            .expect("failed to create session directory");
+        let mut session =
+            Session::new(AGENT_HOME, MAX_HISTORY).expect("failed to create session directory");
 
         // Load layered context: agent home (SOUL, IDENTITY, etc.) + project (AGENTS.md/CLAUDE.md + rules)
         let mut ctx = baml_agent::AgentContext::load(AGENT_HOME);
@@ -87,13 +87,6 @@ impl Agent {
         if let Some(skills_ctx) = build_skills_context() {
             session.push(Role::system(), skills_ctx);
         }
-
-        // Inject project map (files, languages, key symbols) for code intelligence
-        let repomap = solograph::generate_repomap(Path::new("."));
-        session.push(
-            Role::system(),
-            format!("## Project Map (auto-generated)\n\n```\n{}\n```", repomap),
-        );
 
         Self { session, mcp: None }
     }
@@ -152,12 +145,37 @@ impl Agent {
     }
 
     /// Get raw BAML messages for the LLM call.
+    ///
+    /// Injects a fresh project map after system messages (ephemeral, not stored in session).
     fn baml_history(&self) -> Vec<types::Message> {
-        self.session
+        let msgs: Vec<_> = self
+            .session
             .messages()
             .iter()
             .map(|m| m.0.clone())
-            .collect()
+            .collect();
+
+        // Find where system messages end to insert repomap there
+        let insert_at = msgs
+            .iter()
+            .rposition(|m| m.role == "system")
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let repomap = solograph::generate_repomap(Path::new("."));
+        let repomap_msg = types::Message {
+            role: "system".into(),
+            content: format!(
+                "## Project Map (auto-generated, current snapshot)\n```\n{}\n```",
+                repomap
+            ),
+        };
+
+        let mut result = Vec::with_capacity(msgs.len() + 1);
+        result.extend_from_slice(&msgs[..insert_at]);
+        result.push(repomap_msg);
+        result.extend_from_slice(&msgs[insert_at..]);
+        result
     }
 
     pub fn add_user_message(&mut self, content: impl Into<String>) {
@@ -474,11 +492,7 @@ impl Agent {
                         .collect::<Vec<_>>()
                         .join("\n");
                     Ok(ActionResult {
-                        output: format!(
-                            "Dependencies from {}:\n{}",
-                            path.display(),
-                            output
-                        ),
+                        output: format!("Dependencies from {}:\n{}", path.display(), output),
                         done: false,
                     })
                 }
