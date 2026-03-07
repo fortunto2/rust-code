@@ -25,6 +25,105 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
 | `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `AgentContext` — reusable patterns + context loading |
+| `logging` | `init_logging()` — daily file logging via tracing-appender (feature `logging`) |
+| `telemetry` | `init_telemetry()`, `TelemetryGuard` — OTEL-aware JSONL with trace context (feature `telemetry`) |
+
+## Logging & Telemetry
+
+Two optional features for structured logging:
+
+### Feature `logging` — simple file logs
+
+```toml
+baml-agent = { path = "../baml-agent", features = ["logging"] }
+```
+
+```rust
+use baml_agent::init_logging;
+
+// Appends to .agent/agent-2026-03-07.log (daily rotation)
+let _guard = init_logging(".agent", "agent");
+```
+
+Plain text output via `tracing-appender`. Good for simple CLI agents.
+
+### Feature `telemetry` — OTEL-aware structured JSONL
+
+```toml
+baml-agent = { path = "../baml-agent", features = ["telemetry"] }
+```
+
+```rust
+use baml_agent::{init_telemetry, TelemetryGuard};
+
+// Output: .agent/coach-2026-03-07.jsonl
+let _guard: TelemetryGuard = init_telemetry(".agent", "coach");
+
+// All tracing events go to the JSONL file with span context
+let span = tracing::info_span!("coaching_turn", turn = 3);
+let _enter = span.enter();
+tracing::info!(model = "gemini-flash", latency_ms = 420, "LLM response");
+```
+
+Each JSONL line includes:
+- `timestamp`, `level`, `target`, `message`, `fields`
+- `span` / `spans` — current span context (name + fields)
+- OTEL trace_id / span_id propagation (via `tracing-opentelemetry`)
+
+**What gets captured:**
+- All `tracing::info!()`, `tracing::warn!()`, `tracing::error!()` events
+- `#[tracing::instrument]` on functions → automatic span context
+- BAML runtime `log` crate output (via `tracing-log` bridge)
+- BAML's direct stderr output is suppressed (`BAML_LOG=off`)
+- Default filter: `info`+, with `hyper`/`h2`/`reqwest` suppressed
+
+**Example JSONL output:**
+```json
+{
+  "timestamp": "2026-03-07T20:34:24Z",
+  "level": "INFO",
+  "fields": {
+    "message": "coach_decision",
+    "agent": "coach",
+    "stage": "Opening",
+    "sentiment": "Skeptical",
+    "coaching_type": "ObjectionHandler"
+  },
+  "target": "souffleur_sim::runner",
+  "span": { "scenario": "university", "disc": "Dominant", "turn": 1, "name": "sim_turn" },
+  "spans": [{ "scenario": "university", "disc": "Dominant", "turn": 1, "name": "sim_turn" }]
+}
+```
+
+**Async spans** — use `tracing::Instrument` trait (not `.entered()` which is `!Send`):
+
+```rust
+use tracing::Instrument;
+
+let span = tracing::info_span!("my_turn", turn = n);
+async {
+    tracing::info!("inside span");  // gets span context
+    some_async_call().await;
+}.instrument(span).await;
+```
+
+**Custom filter** via `RUST_LOG` env var:
+```bash
+RUST_LOG=debug cargo run  # all debug+ events
+RUST_LOG=souffleur_sim=debug,info cargo run  # debug for sim, info for rest
+```
+
+### TUI telemetry (baml-agent-tui)
+
+For TUI apps, use `init_tui_telemetry()` which also redirects stderr to a file (prevents BAML's raw stderr output from corrupting the ratatui alternate screen):
+
+```rust
+use baml_agent_tui::init_tui_telemetry;
+
+let _guard = init_tui_telemetry(".agent", "tui");
+// stderr → .agent/stderr.log
+// telemetry → .agent/tui-YYYY-MM-DD.jsonl
+```
 
 ## Quick Start
 
