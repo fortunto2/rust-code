@@ -532,42 +532,80 @@ truncate_json_array(&mut res, "segments", 10); // keeps 10 + "... showing 10 of 
 truncate_json_array(&mut res, "beats", 10);
 ```
 
-### AgentContext — convention-based memory system
+### AgentContext — layered memory system
 
-Each agent has a configurable home directory with layered markdown context files:
+Two loading modes that merge into a single system message:
+
+#### 1. Agent home dir (`load`)
+
+Each agent has a configurable home dir (`.rust-code/`, `.va-sessions/`, `.epiphan/`):
 
 | File | Label | What |
 |------|-------|------|
 | `SOUL.md` | Soul | Who the agent is: values, boundaries, tone |
 | `IDENTITY.md` | Identity | Name, role, stack, domain |
-| `MANIFESTO.md` | Manifesto | Dev principles, harness engineering, anti-patterns |
+| `MANIFESTO.md` | Manifesto | Dev principles, harness engineering |
 | `RULES.md` | Rules | Coding rules, workflow constraints |
-| `MEMORY.md` | Memory | Cross-session learnings, preferences |
-| `context/*.md` | (filename) | User-extensible extras (any name, loaded alphabetically) |
+| `MEMORY.md` | Memory (user notes) | Human-editable free-form notes |
+| `MEMORY.jsonl` | Memory (learned) | Typed agent memory (auto GC) |
+| `context/*.md` | (filename) | User-extensible extras |
 
-All files are optional. Missing files are silently skipped.
+#### 2. Project dir (`load_project`) — Claude Code compatible
+
+| Priority | File | Scope |
+|----------|------|-------|
+| 1 | `AGENTS.md` > `CLAUDE.md` > `.claude/CLAUDE.md` | Project instructions (git) |
+| 2 | `AGENTS.local.md` > `CLAUDE.local.md` | Local instructions (gitignored) |
+| 3 | `.agents/rules/*.md` > `.claude/rules/*.md` | Rules by topic |
+
+Supports `@path/to/file` imports (Claude Code compatible, recursive up to depth 5).
 
 ```rust
 use baml_agent::AgentContext;
 
-// Load from agent home dir
-let ctx = AgentContext::load(".my-agent");
-assert!(!ctx.is_empty());
+// Load agent-specific context + project context
+let mut ctx = AgentContext::load(".my-agent");
+ctx.merge(AgentContext::load_project(Path::new(".")));
 
-// Inject into session as system message
+// Inject into session
 if let Some(msg) = ctx.to_system_message() {
     session.push(Role::system(), msg);
 }
-// Output format:
-// ## Soul
-// Be direct and honest.
-//
-// ## Identity
-// Name: my-agent
-// Role: coding assistant
+
+// With token budget (drops low-priority parts first)
+if let Some(msg) = ctx.to_system_message_with_budget(8000) {
+    session.push(Role::system(), msg);
+}
 ```
 
-Each agent configures its own home dir (e.g. `.rust-code/`, `.va-sessions/`, `.epiphan/`).
+#### Typed memory (MEMORY.jsonl)
+
+Agent writes structured entries via MemoryTool (defined in `memory.baml`):
+
+```jsonl
+{"category":"decision","section":"Build System","content":"Use cargo","context":"tested both","confidence":"confirmed","created":1772700000}
+{"category":"pattern","section":"Testing","content":"Run check before test","confidence":"tentative","created":1772700100}
+```
+
+Loaded into system message as:
+```
+### Build System
+- [✓|decision] Use cargo
+
+### Testing
+- [?|pattern] Run check before test
+```
+
+**Garbage collection**: tentative entries older than 7 days are auto-removed on load. Confirmed entries live forever.
+
+**Token budget priority** (lowest dropped first):
+1. context/* extras (3)
+2. Manifesto (5)
+3. Memory learned (6)
+4. Project/Local Instructions (7)
+5. Rules, Identity (8)
+6. Memory user notes (9) — never dropped
+7. Soul (10) — never dropped
 
 ### Agent manifesto loader (legacy)
 
@@ -576,12 +614,13 @@ Simple loader for `agent.md` / `.director/agent.md` in CWD. Use `AgentContext` f
 ```rust
 use baml_agent::{load_manifesto, load_manifesto_from};
 let manifesto = load_manifesto(); // from CWD
-let manifesto = load_manifesto_from(std::path::Path::new("/path/to/project"));
 ```
 
 ## Tests
 
 ```bash
 cargo test -p baml-agent
-# 46 unit + 4 integration tests: session, trimming, 3-tier loop detection, agent loop, streaming, empty actions guard, helpers, AgentContext
+# 58 unit + 4 doc tests: session, trimming, 3-tier loop detection,
+# agent loop, streaming, empty actions guard, helpers, AgentContext,
+# memory GC, token budget, @import, project loading
 ```

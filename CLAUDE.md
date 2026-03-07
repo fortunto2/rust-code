@@ -13,18 +13,26 @@ AI-powered terminal coding agent written in Rust.
 ## Architecture
 - `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs)
 - `crates/rc-baml/` — BAML source files (.baml) and generated client
-- `crates/rc-core/` — core types (unused, to be cleaned)
-- `crates/rc-tools/` — tool implementations (unused, inlined in rc-cli)
+- `crates/baml-agent/` — shared SGR agent library (session, loop detection, memory, helpers)
 
-Agent loop: user message → BAML `GetNextStep()` → model returns `NextStep { analysis, plan_updates, action }` → execute action → feed result back → repeat until `FinishTaskTool`.
+Agent loop: user message → BAML `GetNextStep()` → model returns `NextStep { situation, task, actions }` → execute actions → feed result back → repeat until `FinishTaskTool`.
 
 ## BAML Rules
 - **All prompts and tool schemas** live in `crates/rc-baml/baml_src/`
-- **Every tool class MUST have `tool_name` literal discriminator** — prevents model from picking wrong tool in 14-variant union
+- **Every tool class MUST have `tool_name` literal discriminator** — prevents model from picking wrong tool in 15-variant union
+- BAML files: `agent.baml` (tools + prompt), `memory.baml` (typed memory schema), `principles.baml` (composable `template_string` blocks), `clients.baml` (LLM providers)
 - After editing .baml: `~/.cargo/bin/baml-cli generate --from crates/rc-baml/baml_src`
 - Then sync: `rm -rf crates/rc-cli/src/baml_client && cp -r crates/rc-baml/src/baml_client crates/rc-cli/src/baml_client`
-- If union changes (add/remove tool), update Union name in agent.rs, main.rs, app.rs via sed
+- If union changes (add/remove tool), update Union name in agent.rs via sed
 - See `crates/rc-baml/README.md` for full prompt writing guide
+
+## Agent Memory System
+- **Agent home dir** (`.rust-code/`): SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md (user notes), MEMORY.jsonl (typed agent memory), context/*.md
+- **Project context** (Claude Code compatible): AGENTS.md > CLAUDE.md > .claude/CLAUDE.md, with `@import` support
+- **Rules**: `.agents/rules/*.md` > `.claude/rules/*.md`
+- **MemoryTool**: agent writes typed JSONL entries (category, confidence, context)
+- **GC**: tentative entries > 7 days auto-removed. Confirmed entries persist forever.
+- **Token budget**: `to_system_message_with_budget()` drops low-priority parts first
 
 ## Development Rules
 - TDD — write tests before implementing features
@@ -71,10 +79,13 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | File | What |
 |------|------|
 | `crates/rc-cli/src/app.rs` | TUI — all panels, keybindings, drawing (~3k lines) |
-| `crates/rc-cli/src/main.rs` | CLI entry, headless mode, doctor command |
-| `crates/rc-cli/src/agent.rs` | Agent struct, tool execution, session persistence |
-| `crates/rc-baml/baml_src/agent.baml` | Tool schemas, NextStep union, agent prompt |
+| `crates/rc-cli/src/main.rs` | CLI entry, headless mode, sessions command |
+| `crates/rc-cli/src/agent.rs` | Agent struct, 15 tools, SgrAgent impl |
+| `crates/rc-baml/baml_src/agent.baml` | Tool schemas, NextStep union, STAR prompt |
+| `crates/rc-baml/baml_src/memory.baml` | Typed MemoryTool schema |
+| `crates/rc-baml/baml_src/principles.baml` | AgentDiscipline, AntiLoop, Engineering, DecisionReplay |
 | `crates/rc-baml/baml_src/clients.baml` | LLM providers, fallback chain, retry policy |
+| `crates/baml-agent/src/helpers.rs` | AgentContext, memory GC, token budget, @import |
 | `install.sh` | One-liner installer with doctor |
 | `.github/workflows/release.yml` | CI: Linux build, crates.io, Homebrew update |
 
@@ -83,7 +94,7 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 |----------|------|-----|
 | ~~P0~~ | ~~Streaming responses~~ | Done — BAML streaming in TUI + headless |
 | ~~P0~~ | ~~Context window management~~ | Done — 60-msg sliding window, system msgs preserved |
-| ~~P1~~ | ~~Tests (TDD)~~ | Done — 14 inline tests (agent, fs, git) |
+| ~~P1~~ | ~~Tests (TDD)~~ | Done — 72 tests (58 baml-agent + 14 rc-cli) |
 | P1 | macOS CI (self-hosted runner) | Stop building manually |
 | ~~P2~~ | ~~Multi-tool per step~~ | Done — `actions[]` array, parallel tool execution |
 | P2 | Image/clipboard in chat | Paste screenshots for debugging |
