@@ -26,7 +26,7 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `loop_detect` | `LoopDetector`, `LoopStatus`, `normalize_signature` — 3-tier loop detection (exact, semantic, output) |
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
-| `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `load_manifesto` — reusable patterns |
+| `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `AgentContext` — reusable patterns + context loading |
 
 ## Quick Start
 
@@ -532,26 +532,56 @@ truncate_json_array(&mut res, "segments", 10); // keeps 10 + "... showing 10 of 
 truncate_json_array(&mut res, "beats", 10);
 ```
 
-### Agent manifesto loader
+### AgentContext — convention-based memory system
 
-Load project-level agent persona from standard paths (`agent.md`, `.director/agent.md`):
+Each agent has a configurable home directory with layered markdown context files:
+
+| File | Label | What |
+|------|-------|------|
+| `SOUL.md` | Soul | Who the agent is: values, boundaries, tone |
+| `IDENTITY.md` | Identity | Name, role, stack, domain |
+| `MANIFESTO.md` | Manifesto | Dev principles, harness engineering, anti-patterns |
+| `RULES.md` | Rules | Coding rules, workflow constraints |
+| `MEMORY.md` | Memory | Cross-session learnings, preferences |
+| `context/*.md` | (filename) | User-extensible extras (any name, loaded alphabetically) |
+
+All files are optional. Missing files are silently skipped.
+
+```rust
+use baml_agent::AgentContext;
+
+// Load from agent home dir
+let ctx = AgentContext::load(".my-agent");
+assert!(!ctx.is_empty());
+
+// Inject into session as system message
+if let Some(msg) = ctx.to_system_message() {
+    session.push(Role::system(), msg);
+}
+// Output format:
+// ## Soul
+// Be direct and honest.
+//
+// ## Identity
+// Name: my-agent
+// Role: coding assistant
+```
+
+Each agent configures its own home dir (e.g. `.rust-code/`, `.va-sessions/`, `.epiphan/`).
+
+### Agent manifesto loader (legacy)
+
+Simple loader for `agent.md` / `.director/agent.md` in CWD. Use `AgentContext` for new agents.
 
 ```rust
 use baml_agent::{load_manifesto, load_manifesto_from};
-
-// From CWD
-let manifesto = load_manifesto();
-
-// From specific directory
+let manifesto = load_manifesto(); // from CWD
 let manifesto = load_manifesto_from(std::path::Path::new("/path/to/project"));
-
-// Pass to BAML function
-let decision = B.DecideNextStep.call(&messages, &manifesto).await?;
 ```
 
 ## Tests
 
 ```bash
 cargo test -p baml-agent
-# 38 unit + 4 integration tests: session, trimming, 3-tier loop detection, agent loop, streaming, empty actions guard, helpers
+# 46 unit + 4 integration tests: session, trimming, 3-tier loop detection, agent loop, streaming, empty actions guard, helpers, AgentContext
 ```
