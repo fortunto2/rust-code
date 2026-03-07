@@ -95,6 +95,10 @@ fn walk_dir(
             if SKIP_DIRS.contains(&name) || name.starts_with('.') {
                 continue;
             }
+            // Skip nested git repos (they're separate projects)
+            if path.join(".git").exists() {
+                continue;
+            }
             walk_dir(&path, files, lang_counts);
             continue;
         }
