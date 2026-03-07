@@ -106,6 +106,35 @@ pub fn load_manifesto_from(dir: &std::path::Path) -> String {
     String::new()
 }
 
+/// Load all `.md` files from a context directory, sorted alphabetically, concatenated.
+///
+/// Each project can have a context dir (e.g. `.rust-code/context/`, `.va-sessions/context/`)
+/// where users place additional instructions as markdown files. These are injected as
+/// system messages alongside the BAML prompt.
+///
+/// Returns `None` if the directory doesn't exist or contains no `.md` files.
+pub fn load_context_dir(dir: &str) -> Option<String> {
+    let path = std::path::Path::new(dir);
+    if !path.is_dir() { return None; }
+
+    let mut entries: Vec<_> = std::fs::read_dir(path).ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    let mut parts = Vec::new();
+    for entry in entries {
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if !content.trim().is_empty() {
+                parts.push(content);
+            }
+        }
+    }
+
+    if parts.is_empty() { None } else { Some(parts.join("\n\n---\n\n")) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +206,29 @@ mod tests {
         // In test context, CWD is unlikely to have agent.md
         let m = load_manifesto_from(std::path::Path::new("/nonexistent"));
         assert!(m.is_empty());
+    }
+
+    #[test]
+    fn load_context_dir_combines_files() {
+        let dir = std::env::temp_dir().join("baml_test_ctx_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("01-rules.md"), "# Rules\nBe concise.").unwrap();
+        std::fs::write(dir.join("02-persona.md"), "# Persona\nExpert coder.").unwrap();
+        std::fs::write(dir.join("ignore.txt"), "not loaded").unwrap();
+
+        let ctx = load_context_dir(dir.to_str().unwrap()).unwrap();
+        assert!(ctx.contains("Be concise"));
+        assert!(ctx.contains("Expert coder"));
+        assert!(!ctx.contains("not loaded"));
+        // Files joined with separator
+        assert!(ctx.contains("---"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_context_dir_none_when_missing() {
+        assert!(load_context_dir("/nonexistent/path").is_none());
     }
 }

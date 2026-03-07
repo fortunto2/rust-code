@@ -16,7 +16,7 @@ pub use session::search_sessions;
 pub use loop_detect::{LoopDetector, LoopStatus, normalize_signature};
 pub use agent_loop::{SgrAgent, SgrAgentStream, StepDecision, ActionResult, LoopConfig, LoopEvent, run_loop, run_loop_stream, process_step};
 pub use prompt::{BASE_SYSTEM_PROMPT, build_system_prompt};
-pub use helpers::{norm, norm_owned, action_result_json, action_result_from, action_result_done, truncate_json_array, load_manifesto, load_manifesto_from};
+pub use helpers::{norm, norm_owned, action_result_json, action_result_from, action_result_done, truncate_json_array, load_manifesto, load_manifesto_from, load_context_dir};
 #[cfg(feature = "logging")]
 pub use logging::init_logging;
 

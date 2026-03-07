@@ -144,15 +144,20 @@ function GetNextStep(history: Message[]) -> NextStep {
     - Verify before finishing: run `cargo check`, `git status`, tests, etc.
     - Use FinishTaskTool with a clear summary of what was accomplished.
 
+    ## Agent Discipline
+    - Act, don't ask. Read the file, check context, search — then decide. Escalate only on genuine ambiguity.
+    - Code > report. Iteration without commit = not an iteration.
+    - One commit = one coherent transformation. No scope creep.
+    - Make minimal changes. Don't over-engineer or refactor beyond the task.
+    - If you make a mistake, fix the approach — don't retry the same thing.
+
     ## Rules
-    - Make minimal changes. Don't over-engineer.
     - Never execute destructive commands without user confirmation.
     - Use EditFileTool for precise edits, not WriteFileTool for existing files.
     - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window.
-    - NEVER call the same tool with the same arguments twice in a row.
-    - If a search/command returns "no matches", empty output, or error — that IS the answer. Do NOT retry with different flags, quotes, or syntax. Accept the result and move on.
+    - If a search/command returns "no matches", empty output, or error — that IS the answer. Do NOT retry with different flags, quotes, or syntax.
     - Never run the same command more than once. If you got a result (even empty), use it.
-    - Always progress forward through phases. If stuck, try a fundamentally different approach or ask the user.
+    - Always progress forward. If stuck, try a fundamentally different approach or ask the user.
 
     {# Loop through conversation history #}
     {% for msg in history %}

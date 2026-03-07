@@ -58,6 +58,11 @@ impl Agent {
     pub fn new() -> Self {
         let mut session = Session::new(SESSION_DIR, MAX_HISTORY);
 
+        // Inject user context files (.rust-code/context/*.md)
+        if let Some(ctx) = baml_agent::load_context_dir(&format!("{}/context", SESSION_DIR)) {
+            session.push(Role::system(), ctx);
+        }
+
         // Inject installed skills context as system message
         if let Some(skills_ctx) = build_skills_context() {
             session.push(Role::system(), skills_ctx);
@@ -448,5 +453,20 @@ mod tests {
         assert_eq!(ld.check("a"), LoopStatus::Ok);
         assert_eq!(ld.check("a"), LoopStatus::Ok);
         assert_eq!(ld.check("a"), LoopStatus::Warning(3));
+    }
+
+    #[test]
+    fn context_dir_loaded_via_baml_agent() {
+        let dir = std::env::temp_dir().join("rc_test_context_dir");
+        let ctx_dir = dir.join("context");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&ctx_dir).unwrap();
+        std::fs::write(ctx_dir.join("rules.md"), "# Rules\nAgent discipline").unwrap();
+
+        let ctx = baml_agent::load_context_dir(ctx_dir.to_str().unwrap());
+        assert!(ctx.is_some());
+        assert!(ctx.unwrap().contains("Agent discipline"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
