@@ -7,6 +7,8 @@ pub mod logging;
 pub mod loop_detect;
 pub mod prompt;
 pub mod session;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 
 pub use agent_loop::{
     process_step, run_loop, run_loop_stream, ActionResult, LoopConfig, LoopEvent, SgrAgent,
@@ -28,6 +30,8 @@ pub use session::{
     import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
     SessionMeta,
 };
+#[cfg(feature = "telemetry")]
+pub use telemetry::{init_telemetry, TelemetryGuard};
 
 /// Suppress BAML's default stdout logging (prompts, responses, timing).
 /// Call once at startup before any BAML calls.

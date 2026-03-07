@@ -690,6 +690,9 @@ pub struct App<'a> {
     pub context_map: ContextMap,
     pub tick_count: u32,
     pub client_override: Option<String>,
+    /// Slash command autocomplete state
+    pub slash_suggestions: Vec<&'static str>,
+    pub slash_selected: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -851,6 +854,8 @@ impl<'a> App<'a> {
             context_map: ContextMap::new(),
             tick_count: 0,
             client_override: None,
+            slash_suggestions: Vec::new(),
+            slash_selected: 0,
         }
     }
 
@@ -1332,6 +1337,50 @@ impl<'a> App<'a> {
                 .title(self.input_title()),
         );
         frame.render_widget(self.textarea.widget(), left_chunks[1]);
+
+        // Slash command autocomplete popup
+        if !self.slash_suggestions.is_empty() {
+            let items: Vec<ratatui::widgets::ListItem> = self
+                .slash_suggestions
+                .iter()
+                .enumerate()
+                .map(|(i, cmd)| {
+                    let desc = Self::SLASH_COMMANDS
+                        .iter()
+                        .find(|(c, _)| c == cmd)
+                        .map(|(_, d)| *d)
+                        .unwrap_or("");
+                    let style = if i == self.slash_selected {
+                        ratatui::style::Style::default()
+                            .fg(ratatui::style::Color::Black)
+                            .bg(ratatui::style::Color::Cyan)
+                    } else {
+                        ratatui::style::Style::default()
+                            .fg(ratatui::style::Color::Cyan)
+                    };
+                    ratatui::widgets::ListItem::new(format!("{:<12} {}", cmd, desc)).style(style)
+                })
+                .collect();
+
+            let popup_height = (self.slash_suggestions.len() as u16 + 2).min(10);
+            let input_area = left_chunks[1];
+            // Position popup above the input area
+            let popup_area = ratatui::layout::Rect {
+                x: input_area.x + 1,
+                y: input_area.y.saturating_sub(popup_height),
+                width: input_area.width.min(40),
+                height: popup_height,
+            };
+
+            let popup = ratatui::widgets::List::new(items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
+                    .title(" / commands (Tab to select) "),
+            );
+            frame.render_widget(ratatui::widgets::Clear, popup_area);
+            frame.render_widget(popup, popup_area);
+        }
 
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
@@ -4446,10 +4495,73 @@ impl<'a> App<'a> {
                 }
             }
             _ => {
+                // Tab completes slash suggestion
+                if key_event.code == KeyCode::Tab && !self.slash_suggestions.is_empty() {
+                    self.apply_slash_suggestion();
+                    return;
+                }
+                // Up/Down navigate slash suggestions
+                if !self.slash_suggestions.is_empty() {
+                    match key_event.code {
+                        KeyCode::Down => {
+                            if self.slash_selected + 1 < self.slash_suggestions.len() {
+                                self.slash_selected += 1;
+                            }
+                            return;
+                        }
+                        KeyCode::Up => {
+                            self.slash_selected = self.slash_selected.saturating_sub(1);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 self.input_history_pos = None;
                 self.bash_history_pos = None;
                 self.textarea.input(Input::from(key_event));
+                self.update_slash_suggestions();
             }
+        }
+    }
+
+    /// All known slash commands for autocomplete.
+    const SLASH_COMMANDS: &'static [(&'static str, &'static str)] = &[
+        ("/help", "Show available commands"),
+        ("/clear", "Clear chat messages"),
+        ("/reset", "Start new session"),
+        ("/status", "Show git status"),
+        ("/model", "Show current LLM model"),
+        ("/skills", "List installed skills"),
+        ("/mcp", "List MCP servers"),
+        ("/quit", "Exit rust-code"),
+    ];
+
+    /// Update slash autocomplete suggestions based on current input.
+    fn update_slash_suggestions(&mut self) {
+        let text = self.textarea.lines().join("");
+        if text.starts_with('/') && !text.contains(' ') && self.interaction_mode != InteractionMode::Bash {
+            let query = text.to_lowercase();
+            self.slash_suggestions = Self::SLASH_COMMANDS
+                .iter()
+                .filter(|(cmd, _)| cmd.starts_with(&query))
+                .map(|(cmd, _)| *cmd)
+                .collect();
+            // Keep selection in bounds
+            if self.slash_selected >= self.slash_suggestions.len() {
+                self.slash_selected = 0;
+            }
+        } else {
+            self.slash_suggestions.clear();
+            self.slash_selected = 0;
+        }
+    }
+
+    /// Apply selected slash suggestion to input.
+    fn apply_slash_suggestion(&mut self) {
+        if let Some(&cmd) = self.slash_suggestions.get(self.slash_selected) {
+            self.set_input_text(cmd);
+            self.slash_suggestions.clear();
+            self.slash_selected = 0;
         }
     }
 

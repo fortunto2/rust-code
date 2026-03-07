@@ -11,6 +11,15 @@ readme = "README.md"
 
 [features]
 logging = ["dep:tracing", "dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
+telemetry = [
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tracing-log",
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:chrono",
+]
 search = ["dep:nucleo-matcher"]
 
 [dependencies]
@@ -18,8 +27,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", optional = true, features = ["json"] }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }
 tracing-appender = { version = "0.2", optional = true }
+tracing-log = { version = "0.2", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v7"] }
