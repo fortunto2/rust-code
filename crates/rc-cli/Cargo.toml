@@ -21,8 +21,6 @@ crossterm.workspace = true
 tui-textarea.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing-subscriber = "0.3.22"
-tracing-appender = "0.2.4"
 ratatui = "0.29.0"
 syntect = "5.3.0"
 syntect-tui = "3.0.6"
@@ -34,5 +32,5 @@ nucleo.workspace = true
 nucleo-matcher.workspace = true
 baml.workspace = true
 rmcp.workspace = true
-baml-agent = { version = "0.2.0", path = "../baml-agent" }
+baml-agent = { version = "0.2.0", path = "../baml-agent", features = ["logging"] }
 baml-agent-tui = { version = "0.2.0", path = "../baml-agent-tui" }

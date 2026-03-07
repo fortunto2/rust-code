@@ -48,6 +48,7 @@ pub enum LoopEvent<'a, A> {
 }
 
 /// Configuration for the agent loop.
+#[derive(Clone)]
 pub struct LoopConfig {
     pub max_steps: usize,
     pub loop_abort_threshold: usize,
