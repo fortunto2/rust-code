@@ -106,6 +106,106 @@ pub fn generate_repomap_with_limit(root: &Path, max_files: usize) -> String {
     out
 }
 
+/// Generate a compact context map for LLM injection.
+///
+/// - Compact project header (files, languages, LOC)
+/// - Top files listed by name only (no symbols) — ~10 lines
+/// - Full symbols only for `changed_files` (e.g. from `git status`)
+///
+/// Much smaller than full repomap — ideal for ephemeral per-call injection.
+pub fn generate_context_map(root: &Path, changed_files: &[String]) -> String {
+    let stats = scan_project(root);
+
+    // Collect all ranked files
+    let mut ranked: Vec<RankedFile> = Vec::new();
+
+    for fi in &stats.files {
+        if !matches!(fi.language, "rust" | "python" | "typescript" | "javascript") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&fi.path) else {
+            continue;
+        };
+        let symbols = extract_symbols(&fi.path, &source);
+        if symbols.is_empty() {
+            continue;
+        }
+
+        let rel = fi.path.strip_prefix(root).unwrap_or(&fi.path);
+        let path_str = rel.to_str().unwrap_or("?").to_string();
+
+        let pub_count = symbols.iter().filter(|s| s.public).count();
+        let score = pub_count * 2 + symbols.len();
+
+        ranked.push(RankedFile {
+            path: path_str,
+            lines: fi.lines,
+            symbols,
+            source,
+            score,
+        });
+    }
+
+    ranked.sort_by(|a, b| b.score.cmp(&a.score));
+
+    // --- Header ---
+    let project_name = root
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "project".into());
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Project: {}\n# {} files, {} lines, languages: {}\n",
+        project_name,
+        stats.files.len(),
+        stats.total_lines,
+        stats
+            .languages
+            .iter()
+            .map(|(l, c)| format!("{}({})", l, c))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+
+    // --- Top files (names only, no symbols) ---
+    out.push_str("\n# Key files (by symbol density):\n");
+    for rf in ranked.iter().take(10) {
+        out.push_str(&format!("  - {} ({} lines)\n", rf.path, rf.lines));
+    }
+
+    // --- Changed files with full symbols ---
+    if !changed_files.is_empty() {
+        out.push_str("\n# Changed files (detailed):\n");
+        for changed in changed_files {
+            // Normalize path for matching
+            let changed_normalized = changed.trim_start_matches("./");
+            if let Some(rf) = ranked.iter().find(|rf| rf.path == changed_normalized) {
+                out.push_str(&format!("{}:\n", rf.path));
+                let public: Vec<&Symbol> = rf.symbols.iter().filter(|s| s.public).collect();
+                if public.is_empty() {
+                    continue;
+                }
+                out.push_str("  symbols:\n");
+                for sym in public.iter().take(12) {
+                    let sig = extract_signature(&rf.source, sym);
+                    out.push_str(&format!("    - {}: {}", kind_str(&sym.kind), sym.name));
+                    if let Some(sig) = sig {
+                        out.push_str(&format!("  # {}", sig));
+                    }
+                    out.push_str(&format!(" (L{})\n", sym.line));
+                }
+                if public.len() > 12 {
+                    out.push_str(&format!("    # ... +{} more\n", public.len() - 12));
+                }
+            }
+        }
+    }
+
+    out
+}
+
 struct RankedFile {
     path: String,
     #[allow(dead_code)]
@@ -194,6 +294,34 @@ mod tests {
         );
         // Should contain line references
         assert!(map.contains("(L"), "repomap should contain line references");
+    }
+
+    #[test]
+    fn context_map_compact() {
+        let map = generate_context_map(Path::new("."), &[]);
+        // Should have header
+        assert!(map.contains("# Project:"));
+        // Should have key files list
+        assert!(map.contains("# Key files"));
+        // Should NOT have full symbols (no changed files)
+        assert!(!map.contains("# Changed files"));
+        // Should be much shorter than full repomap
+        let full = generate_repomap(Path::new("."));
+        assert!(
+            map.len() < full.len(),
+            "context_map ({}) should be shorter than full repomap ({})",
+            map.len(),
+            full.len()
+        );
+    }
+
+    #[test]
+    fn context_map_with_changed_files() {
+        let map = generate_context_map(Path::new("."), &["src/repomap.rs".to_string()]);
+        assert!(map.contains("# Changed files"));
+        assert!(map.contains("repomap.rs"));
+        // Changed file should have symbols
+        assert!(map.contains("symbols:"));
     }
 
     #[test]

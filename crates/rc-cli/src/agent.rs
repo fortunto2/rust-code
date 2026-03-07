@@ -66,6 +66,7 @@ impl AgentMessage for Msg {
 pub struct Agent {
     session: Session<Msg>,
     mcp: Option<McpManager>,
+    step_count: usize,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -88,7 +89,11 @@ impl Agent {
             session.push(Role::system(), skills_ctx);
         }
 
-        Self { session, mcp: None }
+        Self {
+            session,
+            mcp: None,
+            step_count: 0,
+        }
     }
 
     /// Create a new LoopDetector (used by callers in app.rs/main.rs).
@@ -146,8 +151,12 @@ impl Agent {
 
     /// Get raw BAML messages for the LLM call.
     ///
-    /// Injects a fresh project map after system messages (ephemeral, not stored in session).
-    fn baml_history(&self) -> Vec<types::Message> {
+    /// Injects ephemeral project map after system messages (not stored in session).
+    /// - First call: full repomap (all top files with symbols)
+    /// - Subsequent calls: compact summary + detailed symbols for changed files only
+    fn baml_history(&mut self) -> Vec<types::Message> {
+        self.step_count += 1;
+
         let msgs: Vec<_> = self
             .session
             .messages()
@@ -162,13 +171,28 @@ impl Agent {
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        let repomap = solograph::generate_repomap(Path::new("."));
+        let root = Path::new(".");
+        let map_content = if self.step_count <= 1 {
+            // First call: full repomap so model understands the project
+            let repomap = solograph::generate_repomap(root);
+            format!(
+                "## Project Map (full, auto-generated)\n```\n{}\n```",
+                repomap
+            )
+        } else {
+            // Subsequent calls: compact summary + changed files detail
+            let changed = git_changed_files();
+            let context_map = solograph::generate_context_map(root, &changed);
+            format!(
+                "## Project Map (compact, {} changed files)\n```\n{}\n```",
+                changed.len(),
+                context_map
+            )
+        };
+
         let repomap_msg = types::Message {
             role: "system".into(),
-            content: format!(
-                "## Project Map (auto-generated, current snapshot)\n```\n{}\n```",
-                repomap
-            ),
+            content: map_content,
         };
 
         let mut result = Vec::with_capacity(msgs.len() + 1);
@@ -195,6 +219,11 @@ impl Agent {
         let history = self.baml_history();
         let stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
         Ok(stream)
+    }
+
+    /// Reset step count (e.g. when loading a new session).
+    pub fn reset_step_count(&mut self) {
+        self.step_count = 0;
     }
 
     /// Execute a single action. Returns tool output + done flag.
@@ -600,6 +629,29 @@ impl SgrAgentStream for Agent {
             })
         }
     }
+}
+
+/// Get list of changed files from git (modified + untracked, relative paths).
+fn git_changed_files() -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", "-u"])
+        .output();
+    let Ok(output) = output else {
+        return vec![];
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter_map(|line| {
+            // porcelain format: "XY path" or "XY path -> renamed"
+            let path = line.get(3..)?.split(" -> ").next()?;
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(trimmed.to_string())
+        })
+        .collect()
 }
 
 #[cfg(test)]
