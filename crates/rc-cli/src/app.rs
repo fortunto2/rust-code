@@ -694,6 +694,8 @@ pub struct App<'a> {
     pub client_override: Option<String>,
     /// Slash command autocomplete popup.
     pub command_palette: CommandPalette,
+    /// Temporary output from slash commands (shown near input, not in chat).
+    pub command_output: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -856,6 +858,7 @@ impl<'a> App<'a> {
             tick_count: 0,
             client_override: None,
             command_palette: CommandPalette::new(&Self::SLASH_COMMANDS),
+            command_output: None,
         }
     }
 
@@ -1347,6 +1350,29 @@ impl<'a> App<'a> {
 
         // Slash command autocomplete popup (renders via CommandPalette)
         self.command_palette.render(frame, left_chunks[1]);
+
+        // Command output (temporary, shown above input)
+        if let Some(ref output) = self.command_output {
+            let lines: Vec<&str> = output.lines().collect();
+            let popup_height = (lines.len() as u16 + 2).min(12);
+            let input_area = left_chunks[1];
+            let output_area = ratatui::layout::Rect {
+                x: input_area.x,
+                y: input_area.y.saturating_sub(popup_height),
+                width: input_area.width,
+                height: popup_height,
+            };
+            let text = Paragraph::new(output.as_str())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
+                        .title(" / output (any key to dismiss) "),
+                )
+                .style(ratatui::style::Style::default().fg(ratatui::style::Color::Gray));
+            frame.render_widget(Clear, output_area);
+            frame.render_widget(text, output_area);
+        }
 
         // Sidebar Rendering
         let sidebar_chunks = Layout::default()
@@ -3859,6 +3885,9 @@ impl<'a> App<'a> {
             }
         }
 
+        // Dismiss command output on any key
+        self.command_output = None;
+
         // Focus layer intercept — command palette gets first shot at input
         if self.command_palette.on_key(key_event).consumed() {
             if let Some(cmd) = self.command_palette.take_applied() {
@@ -4676,34 +4705,23 @@ impl<'a> App<'a> {
 
         match cmd.as_str() {
             "/help" => {
-                self.messages.push("> /help".to_string());
-                self.messages.push(
-                    "Available commands:\n\
-                     /help       — Show this help\n\
-                     /clear      — Clear chat messages\n\
-                     /reset      — Start new session (clear history)\n\
-                     /status     — Show git status\n\
-                     /model      — Show current LLM model\n\
-                     /skills     — List installed skills\n\
-                     /mcp        — List MCP servers and tools\n\
-                     /quit       — Exit rust-code"
+                self.command_output = Some(
+                    "/help  /clear  /reset  /status  /model  /skills  /mcp  /quit"
                         .to_string(),
                 );
                 true
             }
             "/clear" => {
                 self.messages.clear();
-                self.messages.push("Chat cleared.".to_string());
+                self.command_output = Some("Chat cleared.".to_string());
                 true
             }
             "/reset" => {
                 self.messages.clear();
-                self.messages
-                    .push("Session reset. History cleared.".to_string());
+                self.command_output = Some("Session reset.".to_string());
                 true
             }
             "/status" => {
-                self.messages.push("> /status".to_string());
                 match crate::tools::git_status() {
                     Ok(Some(status)) => {
                         let mut result =
@@ -4726,37 +4744,36 @@ impl<'a> App<'a> {
                                 status.untracked_files.len()
                             ));
                         }
-                        self.messages.push(result);
+                        self.command_output = Some(result);
                     }
-                    Ok(None) => self.messages.push("Not in a git repository".to_string()),
-                    Err(e) => self.messages.push(format!("Git error: {}", e)),
+                    Ok(None) => self.command_output = Some("Not in a git repository".to_string()),
+                    Err(e) => self.command_output = Some(format!("Git error: {}", e)),
                 }
                 true
             }
             "/model" => {
-                self.messages.push("> /model".to_string());
-                self.messages
-                    .push("Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string());
+                self.command_output = Some(
+                    "Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string(),
+                );
                 true
             }
             "/skills" => {
-                self.messages.push("> /skills".to_string());
                 if self.installed_skills.is_empty() {
-                    self.messages
-                        .push("No skills installed. Use F9 to browse skills.".to_string());
+                    self.command_output =
+                        Some("No skills installed. Use F9 to browse.".to_string());
                 } else {
-                    let mut lines = format!("Installed skills ({}):", self.installed_skills.len());
+                    let mut lines = format!("Skills ({}):", self.installed_skills.len());
                     for skill in &self.installed_skills {
                         lines.push_str(&format!("\n  • {} ({})", skill.name, skill.source));
                     }
-                    self.messages.push(lines);
+                    self.command_output = Some(lines);
                 }
                 true
             }
             "/mcp" => {
-                self.messages.push("> /mcp".to_string());
-                // MCP info is in agent system messages — show a summary
-                self.messages.push("MCP servers are configured in .mcp.json. Use /status or check system messages for details.".to_string());
+                self.command_output = Some(
+                    "MCP servers configured in .mcp.json".to_string(),
+                );
                 true
             }
             "/quit" | "/exit" => {
@@ -4764,10 +4781,8 @@ impl<'a> App<'a> {
                 true
             }
             _ => {
-                // Unknown slash command — show hint
-                self.messages.push(format!("> {}", input));
-                self.messages.push(format!(
-                    "Unknown command: {}. Type /help for available commands.",
+                self.command_output = Some(format!(
+                    "Unknown command: {}. Type /help",
                     cmd
                 ));
                 true
