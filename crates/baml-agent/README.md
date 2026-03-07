@@ -22,7 +22,7 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 |--------|------|
 | `config` | `AgentConfig`, `ProviderConfig` — multi-provider LLM config (Vertex AI, Google AI, OpenAI-compatible) |
 | `engine` | `BamlRegistry` trait, `AgentEngine` — builds BAML ClientRegistry from config |
-| `session` | `Session<M>`, `AgentMessage`, `MessageRole` — JSONL persistence, history trimming |
+| `session` | `Session<M>`, `AgentMessage`, `MessageRole`, `SessionMeta`, `list_sessions`, `search_sessions` — JSONL persistence, history trimming, session browsing |
 | `loop_detect` | `LoopDetector`, `LoopStatus`, `normalize_signature` — 3-tier loop detection (exact, semantic, output) |
 | `agent_loop` | `SgrAgent`, `SgrAgentStream`, `run_loop`, `run_loop_stream` — the core agent loop |
 | `prompt` | `BASE_SYSTEM_PROMPT`, `build_system_prompt()` — STAR system prompt template |
@@ -251,6 +251,46 @@ let session = Session::<MyMsg>::resume_last(".sessions", 60);
 
 // Auto-trim when history exceeds max (preserves system messages)
 let trimmed = session.trim(); // returns number of trimmed messages
+```
+
+### Session management
+
+List and search past sessions without loading full message history:
+
+```rust
+use baml_agent::session::{list_sessions, SessionMeta};
+
+// List all sessions (newest first)
+let sessions: Vec<SessionMeta> = list_sessions(".sessions");
+for s in &sessions {
+    println!("[{}] {} ({} msgs, {}B)",
+        s.created, s.topic, s.message_count, s.size_bytes);
+}
+
+// Resume by selection
+let picked = &sessions[0];
+let session = Session::<MyMsg>::resume(&picked.path, ".sessions", 60);
+```
+
+`SessionMeta` fields:
+- `path` — JSONL file path
+- `created` — unix timestamp (from filename `session_{ts}.jsonl`)
+- `message_count` — number of messages (line count)
+- `topic` — first user message (truncated to 120 chars)
+- `size_bytes` — file size
+
+### Fuzzy search (feature `search`)
+
+Requires `baml-agent = { features = ["search"] }` (adds `nucleo-matcher` dep):
+
+```rust
+use baml_agent::session::search_sessions;
+
+// Fuzzy match on topic (first user message)
+let results = search_sessions(".sessions", "fix bug");
+for (score, meta) in &results {
+    println!("[score={}] {}", score, meta.topic);
+}
 ```
 
 ## System prompt template
