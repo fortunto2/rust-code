@@ -535,17 +535,19 @@ Two loading modes that merge into a single system message:
 
 #### 1. Agent home dir (`load`)
 
-Each agent has a configurable home dir (e.g. `.my-agent/`):
+Each agent has a configurable home dir (e.g. `.my-agent/`). All files are optional — use only what your agent needs:
 
 | File | Label | What |
 |------|-------|------|
-| `SOUL.md` | Soul | Who the agent is: values, boundaries, tone |
-| `IDENTITY.md` | Identity | Name, role, stack, domain |
-| `MANIFESTO.md` | Manifesto | Dev principles, harness engineering |
-| `RULES.md` | Rules | Coding rules, workflow constraints |
-| `MEMORY.md` | Memory (user notes) | Human-editable free-form notes |
-| `MEMORY.jsonl` | Memory (learned) | Typed agent memory (auto GC) |
+| `SOUL.md` | Soul | Who the agent is: values, boundaries, tone (user-customizable persona) |
+| `IDENTITY.md` | Identity | Name, role, stack, domain (optional — prefer baking into BAML prompt) |
+| `MANIFESTO.md` | Manifesto | Dev principles, harness engineering (optional) |
+| `RULES.md` | Rules | Coding rules, workflow constraints (optional — prefer baking into BAML prompt) |
+| `MEMORY.md` | Memory (user notes) | Human-editable free-form notes (semi-manual) |
+| `MEMORY.jsonl` | Memory (learned) | Typed agent memory — auto-written, auto-GC'd |
 | `context/*.md` | (filename) | User-extensible extras |
+
+**Recommended pattern**: Bake domain logic (pipeline phases, tools, rules) into the BAML prompt. Use home dir files only for user-customizable content (persona, preferences, learned patterns). This prevents users from accidentally breaking agent behavior by editing logic files.
 
 #### 2. Project dir (`load_project`) — Claude Code compatible
 
@@ -577,12 +579,17 @@ if let Some(msg) = ctx.to_system_message_with_budget(8000) {
 
 #### Typed memory (MEMORY.jsonl)
 
-Agent writes structured entries via MemoryTool (defined in `memory.baml`):
+Agent writes structured entries via a MemoryTask tool (defined in each agent's BAML schema):
 
 ```jsonl
-{"category":"decision","section":"Build System","content":"Use cargo","context":"tested both","confidence":"confirmed","created":1772700000}
-{"category":"pattern","section":"Testing","content":"Run check before test","confidence":"tentative","created":1772700100}
+{"category":"preference","section":"User Rules","content":"Always use film profile for travel videos","confidence":"confirmed","created":1772700000}
+{"category":"pattern","section":"Scoring","content":"Garbage filter 0.3 works better for short clips","confidence":"tentative","created":1772700100}
+{"category":"decision","section":"Build System","content":"Use cargo, not make","confidence":"confirmed","created":1772700200}
 ```
+
+Two confidence levels:
+- `confirmed` — user-confirmed rules (via `store_rule`). Live forever.
+- `tentative` — agent-learned patterns (via `learn`). Auto-expire after 7 days if not confirmed.
 
 Loaded into system message as:
 ```
@@ -595,14 +602,17 @@ Loaded into system message as:
 
 **Garbage collection**: tentative entries older than 7 days are auto-removed on load. Confirmed entries live forever.
 
-**Token budget priority** (lowest dropped first):
-1. context/* extras (3)
-2. Manifesto (5)
-3. Memory learned (6)
-4. Project/Local Instructions (7)
-5. Rules, Identity (8)
-6. Memory user notes (9) — never dropped
-7. Soul (10) — never dropped
+**Token budget priority** (highest kept, lowest dropped first):
+
+| Priority | Label | Droppable? |
+|----------|-------|------------|
+| 10 | Soul | Never |
+| 9 | Memory (user notes) | Never |
+| 8 | Identity, Rules | Yes |
+| 7 | Project/Local Instructions | Yes |
+| 6 | Memory (learned) | Yes |
+| 5 | Manifesto | Yes |
+| 3 | context/* extras, rules/* | Yes (first to go) |
 
 ### Agent manifesto loader (legacy)
 
