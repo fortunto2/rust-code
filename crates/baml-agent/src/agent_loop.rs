@@ -159,13 +159,34 @@ where
         return Ok(Some(step_num));
     }
 
-    // Loop detection
+    // Loop detection (includes empty actions as signature "")
     let sig = decision
         .actions
         .iter()
         .map(A::action_signature)
         .collect::<Vec<_>>()
         .join("|");
+
+    // Empty actions: nudge model before loop detector kicks in
+    if decision.actions.is_empty() {
+        match detector.check(&sig) {
+            LoopStatus::Abort(n) => {
+                on_event(LoopEvent::LoopAbort(n));
+                session.push(
+                    <<A::Msg as AgentMessage>::Role>::system(),
+                    "SYSTEM: Repeatedly returning empty actions. Session terminated.".into(),
+                );
+                return Ok(Some(step_num));
+            }
+            _ => {
+                session.push(
+                    <<A::Msg as AgentMessage>::Role>::system(),
+                    "SYSTEM: You returned empty next_actions. You MUST emit at least one tool call in next_actions array. Look at the TOOLS section and pick the right tool for your current phase.".into(),
+                );
+                return Ok(None);
+            }
+        }
+    }
 
     match detector.check(&sig) {
         LoopStatus::Abort(n) => {
@@ -489,6 +510,116 @@ mod tests {
 
         assert!(completed);
         assert_eq!(tokens, vec!["Thin", "king", "..."]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Empty actions guard test ---
+
+    struct EmptyActionsAgent {
+        call_count: AtomicUsize,
+    }
+
+    impl SgrAgent for EmptyActionsAgent {
+        type Action = String;
+        type Msg = TestMsg;
+        type Error = String;
+
+        async fn decide(&self, _messages: &[TestMsg]) -> Result<StepDecision<String>, String> {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                // First 2 calls: empty actions (model forgot tool calls)
+                Ok(StepDecision {
+                    situation: "thinking...".into(),
+                    task: vec!["do something".into()],
+                    completed: false,
+                    actions: vec![],
+                })
+            } else {
+                // After nudge, model recovers
+                Ok(StepDecision {
+                    situation: "done".into(),
+                    task: vec![],
+                    completed: true,
+                    actions: vec![],
+                })
+            }
+        }
+
+        async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
+            Ok(ActionResult { output: "ok".into(), done: false })
+        }
+
+        fn action_signature(action: &String) -> String {
+            action.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_actions_nudges_model() {
+        let dir = std::env::temp_dir().join("baml_loop_test_empty_actions");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        session.push(TestRole::User, "do something".into());
+
+        let agent = EmptyActionsAgent { call_count: AtomicUsize::new(0) };
+        let config = LoopConfig { max_steps: 10, loop_abort_threshold: 6 };
+
+        let mut completed = false;
+        let steps = run_loop(&agent, &mut session, &config, |event| {
+            if matches!(event, LoopEvent::Completed) { completed = true; }
+        }).await.unwrap();
+
+        assert!(completed, "agent should recover after nudge");
+        // 2 empty steps + 1 completed = 3 decide calls, but empty steps return Ok(None)
+        // so step counter advances: step 1 (empty), step 2 (empty), step 3 (completed)
+        assert_eq!(steps, 3);
+
+        // Session should contain nudge messages
+        let messages: Vec<&str> = session.messages().iter().map(|m| m.content()).collect();
+        let nudges = messages.iter().filter(|m| m.contains("empty next_actions")).count();
+        assert_eq!(nudges, 2, "should have 2 nudge messages for 2 empty action steps");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn empty_actions_aborts_after_threshold() {
+        let dir = std::env::temp_dir().join("baml_loop_test_empty_abort");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        session.push(TestRole::User, "do something".into());
+
+        // Agent that always returns empty actions — never recovers
+        // Set threshold low so it aborts quickly
+        let config = LoopConfig { max_steps: 20, loop_abort_threshold: 4 };
+
+        // Use a separate agent that never completes
+        struct NeverRecoverAgent;
+        impl SgrAgent for NeverRecoverAgent {
+            type Action = String;
+            type Msg = TestMsg;
+            type Error = String;
+            async fn decide(&self, _messages: &[TestMsg]) -> Result<StepDecision<String>, String> {
+                Ok(StepDecision {
+                    situation: "stuck".into(),
+                    task: vec!["try again".into()],
+                    completed: false,
+                    actions: vec![],
+                })
+            }
+            async fn execute(&self, _action: &String) -> Result<ActionResult, String> {
+                Ok(ActionResult { output: "ok".into(), done: false })
+            }
+            fn action_signature(action: &String) -> String { action.clone() }
+        }
+
+        let mut got_abort = false;
+        let _steps = run_loop(&NeverRecoverAgent, &mut session, &config, |event| {
+            if matches!(event, LoopEvent::LoopAbort(_)) { got_abort = true; }
+        }).await.unwrap();
+
+        assert!(got_abort, "should abort after repeated empty actions");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
