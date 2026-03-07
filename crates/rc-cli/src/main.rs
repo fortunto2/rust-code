@@ -305,8 +305,12 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
     Ok(())
 }
 
-fn init_logging() -> impl Drop {
-    baml_agent::init_logging(".rust-code", "rust-code")
+fn init_telemetry_headless() -> baml_agent::TelemetryGuard {
+    baml_agent::init_telemetry(".rust-code", "rust-code")
+}
+
+fn init_telemetry_tui() -> baml_agent_tui::TuiTelemetryGuard {
+    baml_agent_tui::init_tui_telemetry(".rust-code", "rust-code")
 }
 
 fn setup_panic_hook() {
@@ -781,9 +785,6 @@ fn run_sessions_command(query: Option<String>) -> Result<()> {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize file logging (keeps stdout clean for TUI)
-    let _log_guard = init_logging();
-
     // Setup panic hook to restore terminal
     setup_panic_hook();
 
@@ -797,6 +798,15 @@ async fn main() -> Result<()> {
             Commands::Doctor { fix } => run_doctor(fix).await,
         };
     }
+
+    // Initialize OTEL-aware structured telemetry (JSONL + span context)
+    // TUI mode redirects stderr to file (prevents BAML output from corrupting ratatui)
+    let is_headless = args.prompt.is_some();
+    let _telemetry: Box<dyn std::any::Any> = if is_headless {
+        Box::new(init_telemetry_headless())
+    } else {
+        Box::new(init_telemetry_tui())
+    };
 
     // Initialize BAML runtime
     baml_client::init();
