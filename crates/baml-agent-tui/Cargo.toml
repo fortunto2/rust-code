@@ -1,0 +1,17 @@
+[package]
+name = "baml-agent-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Shared TUI shell for BAML SGR agents: chat panel, streaming, agent loop integration"
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-code"
+keywords = ["baml", "agent", "tui", "ratatui", "llm"]
+categories = ["command-line-interface"]
+
+[dependencies]
+baml-agent = { path = "../baml-agent" }
+ratatui = "0.29.0"
+crossterm = "0.27"
+tui-textarea = "0.4"
+tokio = { version = "1", features = ["sync", "macros", "rt"] }
+anyhow = "1"

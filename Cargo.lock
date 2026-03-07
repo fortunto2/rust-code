@@ -147,6 +147,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "baml-agent-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "baml-agent",
+ "crossterm 0.27.0",
+ "ratatui",
+ "tokio",
+ "tui-textarea",
+]
+
+[[package]]
 name = "baml-macros"
 version = "0.218.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1637,6 +1649,7 @@ dependencies = [
  "anyhow",
  "baml",
  "baml-agent",
+ "baml-agent-tui",
  "clap",
  "crossterm 0.27.0",
  "ignore",

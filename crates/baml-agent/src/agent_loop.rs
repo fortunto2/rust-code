@@ -133,8 +133,10 @@ pub trait SgrAgentStream: SgrAgent {
 // --- Shared loop internals ---
 
 /// Post-decision processing: loop detection, action execution, session updates.
-/// Shared between `run_loop` and `run_loop_stream`.
-async fn process_step<A, F>(
+///
+/// Shared between `run_loop`, `run_loop_stream`, and custom loops (e.g. TUI).
+/// Returns `Some(step_num)` if the loop should stop, `None` to continue.
+pub async fn process_step<A, F>(
     agent: &A,
     session: &mut Session<A::Msg>,
     decision: StepDecision<A::Action>,

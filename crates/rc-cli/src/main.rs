@@ -7,7 +7,8 @@ pub mod baml_client;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use crate::agent::{Agent, AgentEvent};
+use crate::agent::{Agent, HeadlessAgent};
+use baml_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
@@ -114,12 +115,7 @@ fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
 }
 
 fn setup_panic_hook() {
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        // Restore terminal so panic message is readable
-        let _ = tui::restore();
-        original_hook(panic_info);
-    }));
+    tui::setup_panic_hook();
 }
 
 async fn run_skills_command(action: SkillsAction) -> Result<()> {
@@ -525,109 +521,70 @@ async fn main() -> Result<()> {
         } else if args.resume {
             let _ = agent.load_last_session();
         }
-        agent.add_user_message(prompt);
+        agent.add_user_message(&prompt);
 
-        let mut last_action_debug = String::new();
-        let mut repeat_count: u32 = 0;
+        let headless = HeadlessAgent::new(agent);
+        let config = LoopConfig { max_steps: 50, loop_abort_threshold: 6 };
 
-        loop {
-            print!("Thinking...");
-            use std::io::Write as _;
-            std::io::stdout().flush().ok();
+        // Get session from the agent inside the Arc<Mutex>
+        let mut session = {
+            let mut locked = headless.agent.lock().await;
+            std::mem::replace(locked.session_mut(), baml_agent::Session::new(".rust-code-tmp", 60))
+        };
 
-            // Stream partial results — show analysis as it arrives
-            let mut stream = agent.step_stream()?;
-            let mut last_analysis_len = 0;
-            let mut printed_header = false;
-
-            while let Some(partial) = stream.next().await {
-                match partial {
-                    Ok(partial_step) => {
-                        if let Some(ref analysis) = partial_step.analysis {
-                            if analysis.len() > last_analysis_len {
-                                if !printed_header {
-                                    print!("\r\x1b[K"); // clear "Thinking..."
-                                    print!("\x1b[2mAnalysis: \x1b[0m");
-                                    printed_header = true;
-                                }
-                                print!("{}", &analysis[last_analysis_len..]);
-                                std::io::stdout().flush().ok();
-                                last_analysis_len = analysis.len();
-                            }
+        use std::io::Write as _;
+        let result = run_loop_stream(&headless, &mut session, &config, |event| {
+            match event {
+                LoopEvent::StepStart(n) => {
+                    print!("\n[Step {}] Thinking...", n);
+                    std::io::stdout().flush().ok();
+                }
+                LoopEvent::Decision { state, plan } => {
+                    print!("\r\x1b[K");
+                    println!("\x1b[2mAnalysis:\x1b[0m {}", state);
+                    if !plan.is_empty() {
+                        println!("Plan updates:");
+                        for p in plan {
+                            println!(" - {}", p);
                         }
                     }
-                    Err(e) => {
-                        eprintln!("\n[ERR] Stream error: {}", e);
-                    }
+                }
+                LoopEvent::Completed => {
+                    println!("\n[DONE] Task completed.");
+                }
+                LoopEvent::ActionStart(action) => {
+                    println!("\nAction: {}", HeadlessAgent::action_signature(action));
+                }
+                LoopEvent::ActionDone(result) => {
+                    println!("\nTool Result:\n{}", result.output);
+                }
+                LoopEvent::LoopWarning(n) => {
+                    println!("[WARN] Loop detected — {} repeats", n);
+                }
+                LoopEvent::LoopAbort(n) => {
+                    eprintln!("[ERR] Agent stuck in loop after {} identical actions — aborting", n);
+                }
+                LoopEvent::Trimmed(n) => {
+                    println!("[TRIM] Removed {} messages", n);
+                }
+                LoopEvent::MaxStepsReached(n) => {
+                    eprintln!("[ERR] Max steps ({}) reached", n);
+                }
+                LoopEvent::StreamToken(token) => {
+                    print!("{}", token);
+                    std::io::stdout().flush().ok();
                 }
             }
-            if printed_header {
-                println!(); // newline after streamed analysis
-            }
+        }).await;
 
-            let step = stream.get_final_response().await?;
+        // Put session back
+        {
+            let mut locked = headless.agent.lock().await;
+            *locked.session_mut() = session;
+        }
 
-            // Loop detection
-            let actions_debug = format!("{:?}", step.actions);
-            if actions_debug == last_action_debug {
-                repeat_count += 1;
-                if repeat_count >= 6 {
-                    eprintln!("[ERR] Agent stuck in loop after 6 identical actions — aborting");
-                    break;
-                } else if repeat_count >= 3 {
-                    agent.add_user_message(
-                        "SYSTEM: You are repeating the same action. STOP and try a completely different approach. If you were using GitDiffTool, try ReadFileTool instead. If a tool keeps failing, skip it and move on."
-                    );
-                    println!("[WARN] Loop detected — injecting correction");
-                }
-            } else {
-                repeat_count = 0;
-                last_action_debug = actions_debug;
-            }
-
-            println!("Plan updates:");
-            for p in &step.plan_updates {
-                println!(" - {}", p);
-            }
-
-            agent.add_assistant_message(format!(
-                "Analysis: {}\nActions: {:?}",
-                step.analysis, step.actions
-            ));
-
-            let mut is_done = false;
-            for (i, action) in step.actions.iter().enumerate() {
-                println!("\nAction {}/{}: {:?}", i + 1, step.actions.len(), action);
-
-                if matches!(
-                    action,
-                    baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                    baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
-                ) {
-                    is_done = true;
-                }
-
-                match agent.execute_action(action).await {
-                    Ok(AgentEvent::Message(msg)) => {
-                        println!("\nTool Result:\n{}", msg);
-                        agent.add_user_message(format!("Tool result:\n{}", msg));
-                    }
-                    Ok(AgentEvent::OpenEditor(path, _)) => {
-                        println!("\nAction requested opening editor for: {}", path);
-                        agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
-                    }
-                    Err(e) => {
-                        let err_msg = format!("Tool error: {}", e);
-                        println!("\n{}", err_msg);
-                        agent.add_user_message(format!("Tool error:\n{}", e));
-                    }
-                }
-            }
-
-            if is_done {
-                break;
-            }
-            println!("----------------------------------------");
+        if let Err(e) = result {
+            eprintln!("Agent error: {}", e);
         }
     } else {
         // Interactive TUI mode

@@ -5,8 +5,11 @@ use crate::tools::{
     build_skills_context,
     mcp::McpManager,
 };
-use baml_agent::{AgentMessage, MessageRole, Session, LoopDetector};
+use baml_agent::{AgentMessage, MessageRole, Session, LoopDetector, SgrAgent, SgrAgentStream, StepDecision, ActionResult};
 use std::path::Path;
+
+/// Shorthand for the 14-variant BAML action union.
+pub use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
 
 pub enum AgentEvent {
     Message(String),
@@ -112,6 +115,11 @@ impl Agent {
         self.session.messages().iter().map(|m| &m.0).collect()
     }
 
+    /// Get mutable reference to session (for run_loop).
+    pub fn session_mut(&mut self) -> &mut Session<Msg> {
+        &mut self.session
+    }
+
     /// Get raw BAML messages for the LLM call.
     fn baml_history(&self) -> Vec<types::Message> {
         self.session.messages().iter().map(|m| m.0.clone()).collect()
@@ -139,8 +147,8 @@ impl Agent {
         Ok(stream)
     }
 
-    pub async fn execute_action(&mut self, action: &types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
-        use types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::*;
+    pub async fn execute_action(&mut self, action: &Action) -> Result<AgentEvent> {
+        use Action::*;
         match action {
             ReadFileTool(cmd) => {
                 let content = read_file(&cmd.path, cmd.offset.map(|o| o as usize), cmd.limit.map(|l| l as usize)).await?;
@@ -272,6 +280,123 @@ impl Agent {
                     }
                 }
             }
+        }
+    }
+}
+
+/// SgrAgent implementation for headless mode.
+///
+/// Wraps Agent behind Arc<Mutex> since SgrAgent takes &self but
+/// execute_action needs &mut self (for MCP).
+pub struct HeadlessAgent {
+    pub agent: std::sync::Arc<tokio::sync::Mutex<Agent>>,
+}
+
+impl HeadlessAgent {
+    pub fn new(agent: Agent) -> Self {
+        Self {
+            agent: std::sync::Arc::new(tokio::sync::Mutex::new(agent)),
+        }
+    }
+}
+
+impl SgrAgent for HeadlessAgent {
+    type Action = Action;
+    type Msg = Msg;
+    type Error = anyhow::Error;
+
+    async fn decide(&self, messages: &[Msg]) -> Result<StepDecision<Action>> {
+        let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
+        let step = baml_client::async_client::B.GetNextStep.call(&history).await?;
+
+        let done = step.actions.iter().any(|a| {
+            matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_))
+        });
+
+        Ok(StepDecision {
+            state: step.analysis,
+            plan: step.plan_updates,
+            completed: done,
+            actions: step.actions,
+        })
+    }
+
+    async fn execute(&self, action: &Action) -> Result<ActionResult> {
+        let mut agent = self.agent.lock().await;
+        match agent.execute_action(action).await? {
+            AgentEvent::Message(msg) => {
+                let done = matches!(action, Action::FinishTaskTool(_));
+                Ok(ActionResult { output: msg, done })
+            }
+            AgentEvent::OpenEditor(path, _) => {
+                Ok(ActionResult {
+                    output: format!("User opened editor for {}", path),
+                    done: false,
+                })
+            }
+        }
+    }
+
+    fn action_signature(action: &Action) -> String {
+        use Action::*;
+        match action {
+            ReadFileTool(c) => format!("read:{}", c.path),
+            WriteFileTool(c) => format!("write:{}", c.path),
+            EditFileTool(c) => format!("edit:{}", c.path),
+            BashCommandTool(c) => format!("bash:{}", c.command),
+            BashBgTool(c) => format!("bg:{}", c.name),
+            SearchCodeTool(c) => format!("search:{}", c.query),
+            GitStatusTool(_) => "git_status".into(),
+            GitDiffTool(c) => format!("diff:{:?}", c.path),
+            GitAddTool(c) => format!("add:{:?}", c.paths),
+            GitCommitTool(c) => format!("commit:{}", c.message),
+            OpenEditorTool(c) => format!("open:{}", c.path),
+            AskUserTool(c) => format!("ask:{}", c.question),
+            FinishTaskTool(c) => format!("finish:{}", c.summary),
+            McpToolCall(c) => format!("mcp:{}:{}", c.server, c.tool),
+        }
+    }
+}
+
+impl SgrAgentStream for HeadlessAgent {
+    fn decide_stream<T>(
+        &self,
+        messages: &[Msg],
+        mut on_token: T,
+    ) -> impl std::future::Future<Output = Result<StepDecision<Action>>> + Send
+    where
+        T: FnMut(&str) + Send,
+    {
+        let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
+        async move {
+            let mut stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
+            let mut last_analysis_len = 0;
+
+            while let Some(partial) = stream.next().await {
+                match partial {
+                    Ok(partial_step) => {
+                        if let Some(ref analysis) = partial_step.analysis {
+                            if analysis.len() > last_analysis_len {
+                                on_token(&analysis[last_analysis_len..]);
+                                last_analysis_len = analysis.len();
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            let step = stream.get_final_response().await?;
+            let done = step.actions.iter().any(|a| {
+                matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_))
+            });
+
+            Ok(StepDecision {
+                state: step.analysis,
+                plan: step.plan_updates,
+                completed: done,
+                actions: step.actions,
+            })
         }
     }
 }

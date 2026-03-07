@@ -9,10 +9,10 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tui_textarea::{Input, TextArea};
 
-use crate::agent::{Agent, AgentEvent};
-use crate::baml_client;
+use crate::agent::{Agent, AgentEvent, Action};
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
+use baml_agent::{SgrAgent, LoopDetector, LoopStatus};
 
 #[derive(PartialEq)]
 pub enum AppMode {
@@ -4144,8 +4144,7 @@ impl<'a> App<'a> {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.add_user_message(prompt_clone);
 
-                        let mut last_action_debug = String::new();
-                        let mut repeat_count: u32 = 0;
+                        let mut detector = LoopDetector::new(6);
 
                         loop {
                             // Inject any queued user notes between reasoning steps
@@ -4169,6 +4168,9 @@ impl<'a> App<'a> {
                                     ))
                                     .await;
                             }
+
+                            // Trim context
+                            locked_agent.session_mut().trim();
 
                             // Stream the LLM response for real-time UI updates
                             let stream_result = locked_agent.step_stream();
@@ -4204,31 +4206,35 @@ impl<'a> App<'a> {
 
                             match step_result {
                                 Ok(step) => {
-                                    // Loop detection: break if same actions repeated 3+ times
-                                    let actions_debug = format!("{:?}", step.actions);
-                                    if actions_debug == last_action_debug {
-                                        repeat_count += 1;
-                                        if repeat_count >= 6 {
-                                            locked_agent.add_assistant_message("SYSTEM ABORT: Stuck in a loop after 6 identical actions. Stopping.");
+                                    // Loop detection via shared LoopDetector
+                                    let sig = step.actions.iter()
+                                        .map(|a| crate::agent::HeadlessAgent::action_signature(a))
+                                        .collect::<Vec<_>>()
+                                        .join("|");
+
+                                    match detector.check(&sig) {
+                                        LoopStatus::Abort(n) => {
+                                            locked_agent.add_assistant_message(
+                                                format!("SYSTEM ABORT: Stuck in a loop after {} identical actions.", n)
+                                            );
                                             let _ = agent_tx
                                                 .send(AppEvent::AgentResponse(
                                                     "[ERR] Agent stuck in loop — aborting task".to_string(),
                                                 ))
                                                 .await;
                                             break;
-                                        } else if repeat_count >= 3 {
+                                        }
+                                        LoopStatus::Warning(n) => {
                                             locked_agent.add_user_message(
-                                                "SYSTEM: You are repeating the same action. STOP and try a completely different approach. If you were using GitDiffTool, try ReadFileTool instead. If a tool keeps failing, skip it and move on."
+                                                "SYSTEM: You are repeating the same action. Try a different approach or report completion."
                                             );
                                             let _ = agent_tx
                                                 .send(AppEvent::AgentResponse(
-                                                    "[WARN] Loop detected — injecting correction".to_string(),
+                                                    format!("[WARN] Loop detected — {} repeats", n),
                                                 ))
                                                 .await;
                                         }
-                                    } else {
-                                        repeat_count = 0;
-                                        last_action_debug = actions_debug;
+                                        LoopStatus::Ok => {}
                                     }
 
                                     // Replace streaming message with final analysis
@@ -4249,20 +4255,16 @@ impl<'a> App<'a> {
                                     // Execute all actions sequentially
                                     let mut is_done = false;
                                     for action in &step.actions {
-                                        if matches!(
-                                            action,
-                                            baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                            baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
-                                        ) {
+                                        if matches!(action, Action::FinishTaskTool(_) | Action::AskUserTool(_)) {
                                             is_done = true;
                                         }
 
                                         match locked_agent.execute_action(action).await {
                                             Ok(AgentEvent::Message(result)) => {
-                                                if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = action {
+                                                if let Action::EditFileTool(cmd) = action {
                                                     let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                                 }
-                                                if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = action {
+                                                if let Action::WriteFileTool(cmd) = action {
                                                     let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
                                                 }
 
