@@ -5,8 +5,8 @@ use crate::tools::{
 };
 use anyhow::Result;
 use baml_agent::{
-    ActionResult, AgentMessage, LoopDetector, MessageRole, Session, SgrAgent, SgrAgentStream,
-    StepDecision,
+    ActionKind, ActionResult, AgentMessage, Intent, LoopDetector, MessageRole, Session, SgrAgent,
+    SgrAgentStream, StepDecision, guard_step,
 };
 use std::path::Path;
 
@@ -70,6 +70,8 @@ pub struct Agent {
     last_input_chars: usize,
     /// Override BAML client name (e.g. "OllamaDefault" for --local)
     client_override: Option<String>,
+    /// Current user intent for action filtering.
+    pub intent: Intent,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -98,6 +100,7 @@ impl Agent {
             step_count: 0,
             last_input_chars: 0,
             client_override: None,
+            intent: Intent::Auto,
         }
     }
 
@@ -610,11 +613,15 @@ impl SgrAgent for Agent {
             .iter()
             .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
+        // Intent guard — collect hints for mismatched actions
+        let hints = guard_step(self.intent, &step.actions, action_kind);
+
         Ok(StepDecision {
             situation: step.situation,
             task: step.task,
             completed: done,
             actions: step.actions,
+            hints,
         })
     }
 
@@ -643,6 +650,20 @@ impl SgrAgent for Agent {
             ProjectMapTool(c) => format!("project_map:{:?}", c.path),
             DependenciesTool(c) => format!("deps:{:?}", c.path),
         }
+    }
+}
+
+/// Classify action into coarse ActionKind for intent guard.
+pub fn action_kind(action: &Action) -> ActionKind {
+    use Action::*;
+    match action {
+        ReadFileTool(_) | SearchCodeTool(_) | GitStatusTool(_) | GitDiffTool(_)
+        | ProjectMapTool(_) | DependenciesTool(_) => ActionKind::Read,
+        WriteFileTool(_) | EditFileTool(_) | OpenEditorTool(_) => ActionKind::Write,
+        BashCommandTool(_) | BashBgTool(_) => ActionKind::Execute,
+        GitAddTool(_) | GitCommitTool(_) => ActionKind::GitMutate,
+        AskUserTool(_) | FinishTaskTool(_) | MemoryTool(_) => ActionKind::Plan,
+        McpToolCall(_) => ActionKind::External,
     }
 }
 
@@ -692,11 +713,14 @@ impl SgrAgentStream for Agent {
                 .iter()
                 .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
+            let hints = guard_step(self.intent, &step.actions, action_kind);
+
             Ok(StepDecision {
                 situation: step.situation,
                 task: step.task,
                 completed: done,
                 actions: step.actions,
+                hints,
             })
         }
     }

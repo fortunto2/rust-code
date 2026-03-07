@@ -58,6 +58,17 @@ impl InteractionMode {
             InteractionMode::Bash => InteractionMode::Auto,
         }
     }
+
+    /// Convert to baml-agent Intent for intent guard.
+    pub fn to_intent(self) -> baml_agent::Intent {
+        match self {
+            InteractionMode::Auto => baml_agent::Intent::Auto,
+            InteractionMode::Ask => baml_agent::Intent::Ask,
+            InteractionMode::Build => baml_agent::Intent::Build,
+            InteractionMode::Plan => baml_agent::Intent::Plan,
+            InteractionMode::Bash => baml_agent::Intent::Auto, // bash mode = full access
+        }
+    }
 }
 
 pub enum AppEvent {
@@ -656,7 +667,14 @@ pub struct App<'a> {
     pub textarea: TextArea<'a>,
     pub messages: Vec<String>,
     pub is_thinking: bool,
-    pub list_state: ListState,
+    /// Line-level scroll offset for chat (smooth scrolling).
+    pub chat_scroll: u16,
+    /// Currently selected message index (for highlight + copy).
+    pub chat_selected: Option<usize>,
+    /// Total rendered lines in chat (updated each frame).
+    pub chat_total_lines: u16,
+    /// Whether auto-scroll is pinned to bottom.
+    pub chat_pinned: bool,
     pub fuzzy_state: FuzzySearchState<'a>,
     pub session_state: SessionSearchState<'a>,
     pub symbols_state: SymbolsState<'a>,
@@ -799,8 +817,6 @@ impl<'a> App<'a> {
                 .title(" Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+G git, Tab sidebar, Ctrl+C quit) "),
         );
 
-        let mut list_state = ListState::default();
-        list_state.select(Some(1));
         let mut channel_state = ListState::default();
         channel_state.select(Some(0));
 
@@ -814,7 +830,10 @@ impl<'a> App<'a> {
                 "Type your prompt below and press Enter. Press Ctrl+P to search files, Ctrl+G refresh git, Tab to focus sidebar.".to_string(),
             ],
             is_thinking: false,
-            list_state,
+            chat_scroll: 0,
+            chat_selected: None,
+            chat_total_lines: 0,
+            chat_pinned: true,
             fuzzy_state: FuzzySearchState::new(),
             session_state: SessionSearchState::new(),
             symbols_state: SymbolsState::new(),
@@ -907,8 +926,7 @@ impl<'a> App<'a> {
         if !agent_instance.history().is_empty() {
             self.messages
                 .push("--- Restored previous session ---".to_string());
-            let len = self.messages.len();
-            self.list_state.select(Some(len.saturating_sub(1)));
+            self.chat_pin_bottom();
         }
 
         let agent = Arc::new(Mutex::new(agent_instance));
@@ -1008,15 +1026,12 @@ impl<'a> App<'a> {
                                     self.session_state.preview_scroll =
                                         (self.session_state.preview_scroll + 3).min(max_scroll);
                                 } else {
-                                    // Chat mode list scrolling
-                                    if let Some(selected) = self.list_state.selected() {
-                                        let next = if selected + 1 < self.messages.len() {
-                                            selected + 1
-                                        } else {
-                                            selected
-                                        };
-                                        self.list_state.select(Some(next));
-                                    }
+                                    // Chat smooth scroll (3 lines at a time)
+                                    let visible = self
+                                        .ui_regions
+                                        .map(|r| r.chat.height.saturating_sub(2))
+                                        .unwrap_or(20);
+                                    self.chat_scroll_down(3, visible);
                                 }
                             }
                             crossterm::event::MouseEventKind::ScrollUp => {
@@ -1027,11 +1042,8 @@ impl<'a> App<'a> {
                                     self.session_state.preview_scroll =
                                         self.session_state.preview_scroll.saturating_sub(3);
                                 } else {
-                                    // Chat mode list scrolling
-                                    if let Some(selected) = self.list_state.selected() {
-                                        let prev = selected.saturating_sub(1);
-                                        self.list_state.select(Some(prev));
-                                    }
+                                    // Chat smooth scroll
+                                    self.chat_scroll_up(3);
                                 }
                             }
                             _ => {}
@@ -1049,10 +1061,7 @@ impl<'a> App<'a> {
                         self.messages.push(msg);
 
                         // Auto-scroll to bottom
-                        let len = self.messages.len();
-                        if len > 0 {
-                            self.list_state.select(Some(len - 1));
-                        }
+                        self.chat_pin_bottom();
                     }
                     AppEvent::AgentStreamChunk(chunk) => {
                         // Update the last message in-place with streaming text
@@ -1071,10 +1080,7 @@ impl<'a> App<'a> {
                             self.messages.push(format!("[STREAM] Situation: {}", chunk));
                         }
                         // Auto-scroll
-                        let len = self.messages.len();
-                        if len > 0 {
-                            self.list_state.select(Some(len - 1));
-                        }
+                        self.chat_pin_bottom();
                     }
                     AppEvent::AgentPlan(plan) => {
                         self.agent_plan = plan;
@@ -1118,8 +1124,7 @@ impl<'a> App<'a> {
                         }
                         self.messages
                             .push("--- Restored previous session ---".to_string());
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
                     }
                     AppEvent::RefreshSkills => {
                         self.refresh_skills();
@@ -1188,8 +1193,7 @@ impl<'a> App<'a> {
                         // Add a message about the file being edited
                         self.messages
                             .push(format!("[TOOL] Opened editor for {}", path));
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
                     }
                     AppEvent::SuspendAndShell(command) => {
                         crate::tui::restore()?;
@@ -1219,8 +1223,7 @@ impl<'a> App<'a> {
                         terminal.clear()?;
 
                         self.messages.push(status_message);
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
                     }
                     AppEvent::Tick => {
                         self.tick_count = self.tick_count.wrapping_add(1);
@@ -1274,57 +1277,83 @@ impl<'a> App<'a> {
         let _tool_color = Color::Rgb(100, 200, 100); // Green
         let error_color = Color::Rgb(255, 100, 100); // Red
 
-        let items: Vec<ListItem> = self
-            .messages
-            .iter()
-            .map(|m| {
-                // Determine styling based on prefix
-                let style = if m.starts_with(">") {
-                    Style::default().fg(user_color).add_modifier(Modifier::BOLD)
-                } else if m.starts_with("[THINK]") {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC)
-                } else if m.starts_with("Situation:") {
-                    Style::default().fg(ai_color)
-                } else if m.starts_with("[TOOL]") {
-                    Style::default().fg(Color::Gray)
-                } else if m.starts_with("[ERR]") {
-                    Style::default()
-                        .fg(error_color)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
+        let max_width = (left_chunks[0].width.saturating_sub(2) as usize).max(10);
+        let visible_height = left_chunks[0].height.saturating_sub(2); // minus borders
+        let mut all_lines: Vec<Line<'_>> = Vec::new();
 
-                // Word wrap the text to fit within the chat area width.
-                // We subtract 2 for the borders.
-                let max_width = (left_chunks[0].width.saturating_sub(2) as usize).max(10);
+        for (msg_idx, m) in self.messages.iter().enumerate() {
+            // Determine styling based on prefix
+            let mut style = if m.starts_with(">") {
+                Style::default().fg(user_color).add_modifier(Modifier::BOLD)
+            } else if m.starts_with("[THINK]") {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC)
+            } else if m.starts_with("Situation:") {
+                Style::default().fg(ai_color)
+            } else if m.starts_with("[TOOL]") {
+                Style::default().fg(Color::Gray)
+            } else if m.starts_with("[ERR]") {
+                Style::default()
+                    .fg(error_color)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
 
-                let mut text_lines = Vec::new();
+            // Highlight selected message
+            if self.chat_selected == Some(msg_idx) {
+                style = style.bg(Color::Rgb(40, 40, 60));
+            }
 
-                for original_line in m.lines() {
-                    let wrapped_lines = textwrap::wrap(original_line, max_width);
-                    for line in wrapped_lines {
-                        text_lines.push(Line::from(Span::styled(line.to_string(), style)));
-                    }
+            for original_line in m.lines() {
+                let wrapped_lines = textwrap::wrap(original_line, max_width);
+                for line in wrapped_lines {
+                    all_lines.push(Line::from(Span::styled(line.to_string(), style)));
                 }
+            }
+            // Separator between messages
+            all_lines.push(Line::from(""));
+        }
 
-                // Add an empty line between messages
-                text_lines.push(Line::from(""));
+        // Track total lines for scroll bounds
+        self.chat_total_lines = all_lines.len() as u16;
 
-                ListItem::new(Text::from(text_lines))
-            })
-            .collect();
+        // Auto-scroll to bottom when pinned
+        if self.chat_pinned {
+            self.chat_scroll = self
+                .chat_total_lines
+                .saturating_sub(visible_height);
+        }
 
-        let chat_list = List::new(items).block(
-            Block::default()
-                .title(" rust-code :: tty ")
-                .borders(Borders::ALL)
-                .border_style(chat_border),
-        );
+        // Scrollbar indicator
+        let scroll_pct = if self.chat_total_lines > visible_height {
+            let max = self.chat_total_lines.saturating_sub(visible_height);
+            if max > 0 {
+                (self.chat_scroll as f32 / max as f32 * 100.0) as u16
+            } else {
+                100
+            }
+        } else {
+            100
+        };
+        let chat_title = if scroll_pct < 100 {
+            format!(" rust-code :: tty [{}%] ", scroll_pct)
+        } else {
+            " rust-code :: tty ".to_string()
+        };
 
-        frame.render_stateful_widget(chat_list, left_chunks[0], &mut self.list_state);
+        let chat_paragraph = ratatui::widgets::Paragraph::new(all_lines)
+            .block(
+                Block::default()
+                    .title(chat_title)
+                    .borders(Borders::ALL)
+                    .border_style(chat_border),
+            )
+            .scroll((self.chat_scroll, 0))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
+        frame.render_widget(chat_paragraph, left_chunks[0]);
 
         // Input Area
         self.textarea.set_block(
@@ -3267,8 +3296,7 @@ impl<'a> App<'a> {
                                 "[SKILL] '{}' is local-only (no remote repo). Copy to ~/.agents/skills/{}/",
                                 skill.name, skill.name
                             ));
-                            let len = self.messages.len();
-                            self.list_state.select(Some(len.saturating_sub(1)));
+                            self.chat_pin_bottom();
                             self.mode = AppMode::Chat;
                             return;
                         }
@@ -3279,8 +3307,7 @@ impl<'a> App<'a> {
                             "[THINK] Installing '{}' from {}...",
                             skill.name, skill.repo
                         ));
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
 
                         let tx_clone = tx.clone();
                         let skill_name = skill.name.clone();
@@ -3335,8 +3362,7 @@ impl<'a> App<'a> {
                         if skill.installed {
                             self.messages
                                 .push(format!("[THINK] Uninstalling skill: {}...", skill.name));
-                            let len = self.messages.len();
-                            self.list_state.select(Some(len.saturating_sub(1)));
+                            self.chat_pin_bottom();
 
                             let tx_clone = tx.clone();
                             let skill_name = skill.name.clone();
@@ -3975,8 +4001,7 @@ impl<'a> App<'a> {
                 self.refresh_bash_history_channel();
                 self.refresh_skills();
                 self.messages.push("[SYS] Git status refreshed".to_string());
-                let len = self.messages.len();
-                self.list_state.select(Some(len.saturating_sub(1)));
+                self.chat_pin_bottom();
             }
             KeyCode::F(6) => {
                 self.mode = AppMode::ProjectSymbolsSearch;
@@ -4009,12 +4034,15 @@ impl<'a> App<'a> {
             }
             KeyCode::BackTab => {
                 self.interaction_mode = self.interaction_mode.next();
+                // Sync intent to agent
+                if let Ok(mut locked) = agent.try_lock() {
+                    locked.intent = self.interaction_mode.to_intent();
+                }
                 self.messages.push(format!(
                     "[SYS] Task mode: {}",
                     self.interaction_mode.label()
                 ));
-                let len = self.messages.len();
-                self.list_state.select(Some(len.saturating_sub(1)));
+                self.chat_pin_bottom();
             }
             KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_thinking {
@@ -4024,8 +4052,7 @@ impl<'a> App<'a> {
                         self.is_thinking = false;
                         self.messages
                             .push("[ERR] Task interrupted by user.".to_string());
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
                     }
                 } else {
                     self.exit = true;
@@ -4039,8 +4066,7 @@ impl<'a> App<'a> {
                 self.refresh_git_sidebar();
                 self.refresh_git_history();
                 self.messages.push("[SYS] Git status refreshed".to_string());
-                let len = self.messages.len();
-                self.list_state.select(Some(len.saturating_sub(1)));
+                self.chat_pin_bottom();
             }
             KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::SessionSearch;
@@ -4210,10 +4236,7 @@ impl<'a> App<'a> {
                                     .borders(Borders::ALL)
                                     .title(self.input_title()),
                             );
-                            let len = self.messages.len();
-                            if len > 0 {
-                                self.list_state.select(Some(len - 1));
-                            }
+                            self.chat_pin_bottom();
                             return;
                         }
                         // If not handled, fall through to send as prompt to agent
@@ -4228,8 +4251,7 @@ impl<'a> App<'a> {
                                 .borders(Borders::ALL)
                                 .title(self.input_title()),
                         );
-                        let len = self.messages.len();
-                        self.list_state.select(Some(len.saturating_sub(1)));
+                        self.chat_pin_bottom();
                         return;
                     }
 
@@ -4245,18 +4267,18 @@ impl<'a> App<'a> {
                     self.messages.push("[THINK] Working...".to_string());
 
                     // Auto-scroll to bottom after adding thinking message
-                    let len = self.messages.len();
-                    if len > 0 {
-                        self.list_state.select(Some(len - 1));
-                    }
+                    self.chat_pin_bottom();
 
                     // Spawn agent task to prevent UI freezing
                     let agent_tx = tx.clone();
                     let prompt_clone = self.decorate_prompt_for_mode(&prompt);
                     let pending_notes = self.pending_notes.clone();
 
+                    // Sync intent before agent loop
+                    let intent = self.interaction_mode.to_intent();
                     self.agent_task = Some(tokio::spawn(async move {
                         let mut locked_agent = agent.lock().await;
+                        locked_agent.intent = intent;
                         locked_agent.add_user_message(prompt_clone);
 
                         let mut detector = LoopDetector::new(6);
@@ -4478,10 +4500,7 @@ impl<'a> App<'a> {
                             .borders(Borders::ALL)
                             .title(self.input_title()),
                     );
-                    let len = self.messages.len();
-                    if len > 0 {
-                        self.list_state.select(Some(len - 1));
-                    }
+                    self.chat_pin_bottom();
                 }
             }
             _ => {
@@ -4510,6 +4529,33 @@ impl<'a> App<'a> {
         ("/quit", "Exit rust-code"),
     ];
 
+
+    /// Mark chat as pinned to bottom (auto-scroll on new messages).
+    fn chat_pin_bottom(&mut self) {
+        self.chat_pinned = true;
+    }
+
+    /// Scroll chat up by N lines. Unpins from bottom.
+    fn chat_scroll_up(&mut self, lines: u16) {
+        self.chat_scroll = self.chat_scroll.saturating_sub(lines);
+        self.chat_pinned = false;
+    }
+
+    /// Scroll chat down by N lines. Re-pins if at bottom.
+    fn chat_scroll_down(&mut self, lines: u16, visible_height: u16) {
+        let max_scroll = self.chat_total_lines.saturating_sub(visible_height);
+        self.chat_scroll = (self.chat_scroll + lines).min(max_scroll);
+        if self.chat_scroll >= max_scroll {
+            self.chat_pinned = true;
+        }
+    }
+
+    /// Select a message by index for highlight/copy.
+    fn chat_select_message(&mut self, idx: usize) {
+        if idx < self.messages.len() {
+            self.chat_selected = Some(idx);
+        }
+    }
 
     fn input_title(&self) -> String {
         if self.interaction_mode == InteractionMode::Bash {

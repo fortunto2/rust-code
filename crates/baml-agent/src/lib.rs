@@ -2,6 +2,7 @@ pub mod agent_loop;
 pub mod config;
 pub mod engine;
 pub mod helpers;
+pub mod intent_guard;
 #[cfg(feature = "logging")]
 pub mod logging;
 pub mod loop_detect;
@@ -22,6 +23,7 @@ pub use helpers::{
     action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
     load_manifesto_from, norm, norm_owned, truncate_json_array, AgentContext,
 };
+pub use intent_guard::{guard_step, intent_allows, ActionKind, Intent, IntentCheck};
 #[cfg(feature = "logging")]
 pub use logging::init_logging;
 pub use loop_detect::{normalize_signature, LoopDetector, LoopStatus};
