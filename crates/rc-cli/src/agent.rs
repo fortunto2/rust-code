@@ -5,8 +5,8 @@ use crate::tools::{
 };
 use anyhow::Result;
 use baml_agent::{
-    ActionKind, ActionResult, AgentMessage, Intent, LoopDetector, MessageRole, Session, SgrAgent,
-    SgrAgentStream, StepDecision, guard_step,
+    ActionKind, ActionResult, AgentMessage, HintContext, Intent, LoopDetector, MessageRole,
+    Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints, default_sources,
 };
 use std::path::Path;
 
@@ -72,6 +72,8 @@ pub struct Agent {
     client_override: Option<String>,
     /// Current user intent for action filtering.
     pub intent: Intent,
+    /// Pluggable hint sources.
+    hint_sources: Vec<Box<dyn baml_agent::HintSource>>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -101,6 +103,7 @@ impl Agent {
             last_input_chars: 0,
             client_override: None,
             intent: Intent::Auto,
+            hint_sources: default_sources(),
         }
     }
 
@@ -613,8 +616,17 @@ impl SgrAgent for Agent {
             .iter()
             .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
-        // Intent guard — collect hints for mismatched actions
-        let hints = guard_step(self.intent, &step.actions, action_kind);
+        let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
+        let mcp_names: Vec<&str> = self.mcp.as_ref().map(|m| m.server_names()).unwrap_or_default();
+
+        let ctx = HintContext {
+            intent: self.intent,
+            action_kinds: &action_kinds,
+            step_num: self.step_count + 1,
+            mcp_servers: &mcp_names,
+        };
+
+        let hints = collect_hints(&ctx, &step.actions, action_kind, &self.hint_sources);
 
         Ok(StepDecision {
             situation: step.situation,
@@ -713,7 +725,17 @@ impl SgrAgentStream for Agent {
                 .iter()
                 .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
-            let hints = guard_step(self.intent, &step.actions, action_kind);
+            let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
+            let mcp_names: Vec<&str> = self.mcp.as_ref().map(|m| m.server_names()).unwrap_or_default();
+
+            let ctx = HintContext {
+                intent: self.intent,
+                action_kinds: &action_kinds,
+                step_num: self.step_count + 1,
+                mcp_servers: &mcp_names,
+            };
+
+            let hints = collect_hints(&ctx, &step.actions, action_kind, &self.hint_sources);
 
             Ok(StepDecision {
                 situation: step.situation,

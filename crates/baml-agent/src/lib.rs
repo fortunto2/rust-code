@@ -2,6 +2,7 @@ pub mod agent_loop;
 pub mod config;
 pub mod engine;
 pub mod helpers;
+pub mod hints;
 pub mod intent_guard;
 #[cfg(feature = "logging")]
 pub mod logging;
@@ -22,6 +23,9 @@ pub use engine::{AgentEngine, BamlRegistry};
 pub use helpers::{
     action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
     load_manifesto_from, norm, norm_owned, truncate_json_array, AgentContext,
+};
+pub use hints::{
+    collect_hints, default_sources, HintContext, HintSource, PatternHints, ToolHints, WorkflowHints,
 };
 pub use intent_guard::{guard_step, intent_allows, ActionKind, Intent, IntentCheck};
 #[cfg(feature = "logging")]

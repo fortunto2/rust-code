@@ -36,6 +36,10 @@ struct Args {
     #[arg(long)]
     codex: bool,
 
+    /// Intent mode: auto, ask, build, plan (affects which tools the agent uses)
+    #[arg(long, default_value = "auto")]
+    intent: String,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -819,6 +823,16 @@ async fn main() -> Result<()> {
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
         apply_provider(&provider_setup, &mut agent);
+        // Set intent from CLI flag
+        agent.intent = match args.intent.as_str() {
+            "ask" => baml_agent::Intent::Ask,
+            "build" => baml_agent::Intent::Build,
+            "plan" => baml_agent::Intent::Plan,
+            _ => baml_agent::Intent::Auto,
+        };
+        if agent.intent != baml_agent::Intent::Auto {
+            println!("Intent: {:?}", agent.intent);
+        }
         // Initialize MCP servers
         if let Err(e) = agent.init_mcp().await {
             tracing::warn!("MCP init failed: {}", e);
