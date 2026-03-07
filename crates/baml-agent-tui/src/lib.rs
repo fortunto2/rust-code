@@ -1,6 +1,7 @@
 pub mod agent_task;
 pub mod chat;
 pub mod command_palette;
+pub mod content_viewer;
 pub mod context_bar;
 pub mod event;
 pub mod focus;
@@ -14,6 +15,7 @@ pub use agent_task::{
 };
 pub use chat::ChatState;
 pub use command_palette::CommandPalette;
+pub use content_viewer::ContentViewer;
 pub use context_bar::ProjectContext;
 pub use event::AppEvent;
 pub use focus::{point_in_rect, route_key, route_mouse, FocusLayer, FocusResult};

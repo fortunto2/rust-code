@@ -27,6 +27,10 @@ impl Default for HelpOverlay {
                     description: "Send message / toggle expand",
                 },
                 HelpEntry {
+                    key: "Ctrl+O",
+                    description: "View last tool output",
+                },
+                HelpEntry {
                     key: "Ctrl+P",
                     description: "Open fuzzy picker",
                 },
