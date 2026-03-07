@@ -22,7 +22,7 @@ impl MessageRole for Role {
     fn assistant() -> Self { Self("assistant".into()) }
     fn tool() -> Self { Self("tool".into()) }
     fn as_str(&self) -> &str { &self.0 }
-    fn from_str(s: &str) -> Option<Self> {
+    fn parse_role(s: &str) -> Option<Self> {
         match s {
             "system" | "user" | "assistant" | "tool" => Some(Self(s.into())),
             _ => None,

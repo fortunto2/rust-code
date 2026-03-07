@@ -409,7 +409,7 @@ fn expand_line_imports(line: &str, base_dir: &std::path::Path, depth: u8) -> Str
             if let Ok(file_content) = std::fs::read_to_string(&resolved) {
                 let parent = resolved.parent().unwrap_or(base_dir);
                 let expanded = expand_imports(&file_content, parent, depth + 1);
-                result.push_str(&expanded.trim());
+                result.push_str(expanded.trim());
             } else {
                 result.push('@');
                 result.push_str(ref_path);

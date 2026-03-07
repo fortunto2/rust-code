@@ -134,7 +134,7 @@ impl<M: AgentMessage> Session<M> {
 
     fn persist_last(&mut self) {
         let Some(msg) = self.messages.last() else { return };
-        let Some(entry_type) = EntryType::from_str(msg.role().as_str()) else { return };
+        let Some(entry_type) = EntryType::parse(msg.role().as_str()) else { return };
         let persisted = make_persisted(
             entry_type,
             msg.content(),
@@ -169,7 +169,7 @@ impl<M: AgentMessage> Session<M> {
             }
 
             if let Some((entry_type, content)) = parse_entry(&value) {
-                messages.push(M::new(entry_type.to_role::<<M as AgentMessage>::Role>(), content));
+                messages.push(M::new(entry_type.into_role::<<M as AgentMessage>::Role>(), content));
             }
         }
 

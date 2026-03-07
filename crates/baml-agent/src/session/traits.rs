@@ -7,7 +7,7 @@ pub trait MessageRole: Clone + PartialEq {
     fn assistant() -> Self;
     fn tool() -> Self;
     fn as_str(&self) -> &str;
-    fn from_str(s: &str) -> Option<Self>;
+    fn parse_role(s: &str) -> Option<Self>;
     fn is_system(&self) -> bool {
         self.as_str() == "system"
     }
@@ -32,7 +32,7 @@ pub enum EntryType {
 }
 
 impl EntryType {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "user" => Some(Self::User),
             "assistant" => Some(Self::Assistant),
@@ -42,7 +42,7 @@ impl EntryType {
         }
     }
 
-    pub(crate) fn to_role<R: MessageRole>(&self) -> R {
+    pub(crate) fn into_role<R: MessageRole>(self) -> R {
         match self {
             Self::User => R::user(),
             Self::Assistant => R::assistant(),

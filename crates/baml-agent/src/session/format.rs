@@ -1,7 +1,7 @@
 //! Typed session entry format (Claude Code compatible).
 
 use super::time::now_iso;
-use super::traits::{MessageRole, EntryType};
+use super::traits::EntryType;
 
 /// Message body — matches Claude Code's format exactly.
 ///
@@ -78,7 +78,7 @@ pub(crate) fn make_persisted(entry_type: EntryType, content: &str, session_id: &
 pub(crate) fn parse_entry(value: &serde_json::Value) -> Option<(EntryType, String)> {
     // New format: {type, message: {content: ...}}
     if let Some(type_str) = value["type"].as_str() {
-        let entry_type = EntryType::from_str(type_str)?;
+        let entry_type = EntryType::parse(type_str)?;
         let content = extract_content(&value["message"])?;
         if !content.trim().is_empty() {
             return Some((entry_type, content));
@@ -87,7 +87,7 @@ pub(crate) fn parse_entry(value: &serde_json::Value) -> Option<(EntryType, Strin
     }
 
     // Legacy format: {role, content}
-    let entry_type = EntryType::from_str(value["role"].as_str()?)?;
+    let entry_type = EntryType::parse(value["role"].as_str()?)?;
     let content = value["content"].as_str()?;
     if !content.trim().is_empty() {
         return Some((entry_type, content.to_string()));

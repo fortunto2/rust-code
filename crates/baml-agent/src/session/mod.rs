@@ -41,7 +41,7 @@ pub(crate) mod tests {
                 Self::Tool => "tool",
             }
         }
-        fn from_str(s: &str) -> Option<Self> {
+        fn parse_role(s: &str) -> Option<Self> {
             match s {
                 "system" => Some(Self::System),
                 "user" => Some(Self::User),
@@ -75,9 +75,9 @@ pub(crate) mod tests {
 
     #[test]
     fn entry_type_rejects_invalid() {
-        assert!(EntryType::from_str("progress").is_none());
-        assert!(EntryType::from_str("file-history-snapshot").is_none());
-        assert!(EntryType::from_str("").is_none());
+        assert!(EntryType::parse("progress").is_none());
+        assert!(EntryType::parse("file-history-snapshot").is_none());
+        assert!(EntryType::parse("").is_none());
     }
 
     // --- Format ---

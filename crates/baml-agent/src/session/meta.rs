@@ -140,7 +140,7 @@ pub fn import_claude_session(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
 
         let type_str = value["type"].as_str().unwrap_or("");
-        if EntryType::from_str(type_str).is_none() { continue; }
+        if EntryType::parse(type_str).is_none() { continue; }
 
         // If it already has the full format, pass through with our session_id
         if value.get("message").is_some() && value.get("uuid").is_some() {
@@ -170,7 +170,7 @@ pub fn import_claude_session(
     fs::create_dir_all(output_dir).ok()?;
     let output_path = Path::new(output_dir).join(format!("{}.jsonl", session_id));
 
-    let mut file = OpenOptions::new().create(true).write(true).open(&output_path).ok()?;
+    let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(&output_path).ok()?;
     for json in &entries {
         let _ = writeln!(file, "{}", json);
     }
