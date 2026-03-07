@@ -53,6 +53,21 @@ client<llm> AgentBalanced {
   }
 }
 
+// Anthropic Claude with prompt caching
+client<llm> Claude {
+  provider anthropic
+  retry_policy Backoff
+  options {
+    model "claude-sonnet-4-6"
+    api_key env.ANTHROPIC_API_KEY
+    max_tokens 8192
+    allowed_role_metadata ["cache_control"]
+    headers {
+      "anthropic-beta" "prompt-caching-2024-07-31"
+    }
+  }
+}
+
 retry_policy Backoff {
   max_retries 3
   strategy {

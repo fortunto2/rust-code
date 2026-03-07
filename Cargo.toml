@@ -2,6 +2,7 @@
 members = [
     "crates/rc-cli",
     "crates/rc-baml",
+    "crates/baml-agent",
 ]
 default-members = ["crates/rc-cli"]
 resolver = "2"

@@ -1,0 +1,17 @@
+[package]
+name = "baml-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Shared BAML agent runtime: config, registry, session persistence, loop detection"
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-code"
+keywords = ["baml", "agent", "llm", "structured-output"]
+categories = ["development-tools"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

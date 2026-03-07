@@ -568,8 +568,8 @@ async fn main() -> Result<()> {
             let step = stream.get_final_response().await?;
 
             // Loop detection
-            let action_debug = format!("{:?}", step.action);
-            if action_debug == last_action_debug {
+            let actions_debug = format!("{:?}", step.actions);
+            if actions_debug == last_action_debug {
                 repeat_count += 1;
                 if repeat_count >= 6 {
                     eprintln!("[ERR] Agent stuck in loop after 6 identical actions — aborting");
@@ -582,7 +582,7 @@ async fn main() -> Result<()> {
                 }
             } else {
                 repeat_count = 0;
-                last_action_debug = action_debug;
+                last_action_debug = actions_debug;
             }
 
             println!("Plan updates:");
@@ -590,32 +590,37 @@ async fn main() -> Result<()> {
                 println!(" - {}", p);
             }
 
-            println!("\nAction: {:?}", step.action);
-
             agent.add_assistant_message(format!(
-                "Analysis: {}\nAction: {:?}",
-                step.analysis, step.action
+                "Analysis: {}\nActions: {:?}",
+                step.analysis, step.actions
             ));
 
-            let is_done = matches!(
-                step.action,
-                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
-            );
+            let mut is_done = false;
+            for (i, action) in step.actions.iter().enumerate() {
+                println!("\nAction {}/{}: {:?}", i + 1, step.actions.len(), action);
 
-            match agent.execute_action(&step.action).await {
-                Ok(AgentEvent::Message(msg)) => {
-                    println!("\nTool Result:\n{}", msg);
-                    agent.add_user_message(format!("Tool result:\n{}", msg));
+                if matches!(
+                    action,
+                    baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                    baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                ) {
+                    is_done = true;
                 }
-                Ok(AgentEvent::OpenEditor(path, _)) => {
-                    println!("\nAction requested opening editor for: {}", path);
-                    agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
-                }
-                Err(e) => {
-                    let err_msg = format!("Tool error: {}", e);
-                    println!("\n{}", err_msg);
-                    agent.add_user_message(format!("Tool error:\n{}", e));
+
+                match agent.execute_action(action).await {
+                    Ok(AgentEvent::Message(msg)) => {
+                        println!("\nTool Result:\n{}", msg);
+                        agent.add_user_message(format!("Tool result:\n{}", msg));
+                    }
+                    Ok(AgentEvent::OpenEditor(path, _)) => {
+                        println!("\nAction requested opening editor for: {}", path);
+                        agent.add_user_message(format!("Tool result:\nUser opened editor for {}", path));
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Tool error: {}", e);
+                        println!("\n{}", err_msg);
+                        agent.add_user_message(format!("Tool error:\n{}", e));
+                    }
                 }
             }
 

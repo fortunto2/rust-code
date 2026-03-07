@@ -622,10 +622,10 @@ impl NextStepClassBuilder {
     }
 
 
-    /// Access the `action` field builder.
-    pub fn property_action(&self) -> baml::ClassPropertyBuilder {
-        self.inner.get_property("action")
-            .expect("NextStep.action is statically defined in .baml and should always be present")
+    /// Access the `actions` field builder.
+    pub fn property_actions(&self) -> baml::ClassPropertyBuilder {
+        self.inner.get_property("actions")
+            .expect("NextStep.actions is statically defined in .baml and should always be present")
     }
 
 }

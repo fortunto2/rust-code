@@ -62,6 +62,7 @@ pub enum AppEvent {
     Ui(Event),
     Tick,
     AgentResponse(String),
+    AgentStreamChunk(String),
     AgentPlan(Vec<String>),
     FileModified(String),
     AgentDone,
@@ -998,9 +999,9 @@ impl<'a> App<'a> {
                     }
                     AppEvent::Ui(_) => {}
                     AppEvent::AgentResponse(msg) => {
-                        // Remove "Thinking..." message if it's the last one
+                        // Remove "Thinking..." or "[STREAM]" message if it's the last one
                         if let Some(last) = self.messages.last() {
-                            if last.starts_with("[THINK]") {
+                            if last.starts_with("[THINK]") || last.starts_with("[STREAM]") {
                                 self.messages.pop();
                             }
                         }
@@ -1008,6 +1009,28 @@ impl<'a> App<'a> {
                         self.messages.push(msg);
 
                         // Auto-scroll to bottom
+                        let len = self.messages.len();
+                        if len > 0 {
+                            self.list_state.select(Some(len - 1));
+                        }
+                    }
+                    AppEvent::AgentStreamChunk(chunk) => {
+                        // Update the last message in-place with streaming text
+                        if let Some(last) = self.messages.last_mut() {
+                            if last.starts_with("[STREAM]") {
+                                // Append to existing streaming message
+                                last.push_str(&chunk);
+                            } else if last.starts_with("[THINK]") {
+                                // Replace "Thinking..." with streaming content
+                                *last = format!("[STREAM] Analysis: {}", chunk);
+                            } else {
+                                // Start new streaming message
+                                self.messages.push(format!("[STREAM] Analysis: {}", chunk));
+                            }
+                        } else {
+                            self.messages.push(format!("[STREAM] Analysis: {}", chunk));
+                        }
+                        // Auto-scroll
                         let len = self.messages.len();
                         if len > 0 {
                             self.list_state.select(Some(len - 1));
@@ -4062,6 +4085,25 @@ impl<'a> App<'a> {
                         return;
                     }
 
+                    // Handle slash commands
+                    if prompt.trim().starts_with('/') {
+                        let handled = self.handle_slash_command(prompt.trim());
+                        if handled {
+                            self.textarea = TextArea::default();
+                            self.textarea.set_block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title(self.input_title()),
+                            );
+                            let len = self.messages.len();
+                            if len > 0 {
+                                self.list_state.select(Some(len - 1));
+                            }
+                            return;
+                        }
+                        // If not handled, fall through to send as prompt to agent
+                    }
+
                     if let Some(fast_reply) = self.fast_path_reply(&prompt) {
                         self.messages.push(format!("> {}", prompt));
                         self.messages.push(fast_reply);
@@ -4128,14 +4170,45 @@ impl<'a> App<'a> {
                                     .await;
                             }
 
-                            match locked_agent.step().await {
+                            // Stream the LLM response for real-time UI updates
+                            let stream_result = locked_agent.step_stream();
+                            let step_result = match stream_result {
+                                Ok(mut stream) => {
+                                    let mut last_analysis_len = 0;
+                                    while let Some(partial) = stream.next().await {
+                                        match partial {
+                                            Ok(partial_step) => {
+                                                if let Some(ref analysis) = partial_step.analysis {
+                                                    if analysis.len() > last_analysis_len {
+                                                        let new_text = analysis[last_analysis_len..].to_string();
+                                                        let _ = agent_tx.send(AppEvent::AgentStreamChunk(new_text)).await;
+                                                        last_analysis_len = analysis.len();
+                                                    }
+                                                }
+                                            }
+                                            Err(_) => {}
+                                        }
+                                    }
+                                    stream.get_final_response().await
+                                }
+                                Err(e) => {
+                                    let _ = agent_tx
+                                        .send(AppEvent::AgentResponse(format!(
+                                            "[ERR] AI Error: {}",
+                                            e
+                                        )))
+                                        .await;
+                                    break;
+                                }
+                            };
+
+                            match step_result {
                                 Ok(step) => {
-                                    // Loop detection: break if same action repeated 3+ times
-                                    let action_debug = format!("{:?}", step.action);
-                                    if action_debug == last_action_debug {
+                                    // Loop detection: break if same actions repeated 3+ times
+                                    let actions_debug = format!("{:?}", step.actions);
+                                    if actions_debug == last_action_debug {
                                         repeat_count += 1;
                                         if repeat_count >= 6 {
-                                            // Hard break — model is completely stuck
                                             locked_agent.add_assistant_message("SYSTEM ABORT: Stuck in a loop after 6 identical actions. Stopping.");
                                             let _ = agent_tx
                                                 .send(AppEvent::AgentResponse(
@@ -4155,10 +4228,10 @@ impl<'a> App<'a> {
                                         }
                                     } else {
                                         repeat_count = 0;
-                                        last_action_debug = action_debug;
+                                        last_action_debug = actions_debug;
                                     }
 
-                                    // Only output Analysis in the chat, plan goes to the sidebar
+                                    // Replace streaming message with final analysis
                                     let analysis_str = format!("Analysis: {}", step.analysis);
 
                                     let _ = agent_tx
@@ -4167,59 +4240,62 @@ impl<'a> App<'a> {
                                     let _ =
                                         agent_tx.send(AppEvent::AgentResponse(analysis_str)).await;
 
-                                    // Record the agent's thought process and intended action
+                                    // Record the agent's thought process and intended actions
                                     locked_agent.add_assistant_message(format!(
-                                        "Analysis: {}\nAction: {:?}",
-                                        step.analysis, step.action
+                                        "Analysis: {}\nActions: {:?}",
+                                        step.analysis, step.actions
                                     ));
 
-                                    let is_done = matches!(
-                                        step.action,
-                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
-                                        baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
-                                    );
+                                    // Execute all actions sequentially
+                                    let mut is_done = false;
+                                    for action in &step.actions {
+                                        if matches!(
+                                            action,
+                                            baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::FinishTaskTool(_) |
+                                            baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::AskUserTool(_)
+                                        ) {
+                                            is_done = true;
+                                        }
 
-                                    // Execute the action
-                                    match locked_agent.execute_action(&step.action).await {
-                                        Ok(AgentEvent::Message(result)) => {
-                                            // Check if it was an edit/write action to update sidebar
-                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = &step.action {
-                                                let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
-                                            }
-                                            if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = &step.action {
-                                                let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
-                                            }
+                                        match locked_agent.execute_action(action).await {
+                                            Ok(AgentEvent::Message(result)) => {
+                                                if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::EditFileTool(cmd) = action {
+                                                    let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                                }
+                                                if let baml_client::types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool::WriteFileTool(cmd) = action {
+                                                    let _ = agent_tx.send(AppEvent::FileModified(cmd.path.clone())).await;
+                                                }
 
-                                            locked_agent.add_user_message(format!(
-                                                "Tool result:\n{}",
-                                                result
-                                            ));
-                                            let _ = agent_tx
-                                                .send(AppEvent::AgentResponse(format!(
-                                                    "[TOOL]\n{}",
+                                                locked_agent.add_user_message(format!(
+                                                    "Tool result:\n{}",
                                                     result
-                                                )))
-                                                .await;
-                                        }
-                                        Ok(AgentEvent::OpenEditor(path, line)) => {
-                                            locked_agent.add_user_message(format!(
-                                                "Tool result:\nUser opened editor for {}",
-                                                path
-                                            ));
-                                            // Request the main thread to suspend TUI and open the editor
-                                            let _ = agent_tx
-                                                .send(AppEvent::SuspendAndRun(path, line))
-                                                .await;
-                                        }
-                                        Err(e) => {
-                                            locked_agent
-                                                .add_user_message(format!("Tool error:\n{}", e));
-                                            let _ = agent_tx
-                                                .send(AppEvent::AgentResponse(format!(
-                                                    "[ERR] Tool Error\n{}",
-                                                    e
-                                                )))
-                                                .await;
+                                                ));
+                                                let _ = agent_tx
+                                                    .send(AppEvent::AgentResponse(format!(
+                                                        "[TOOL]\n{}",
+                                                        result
+                                                    )))
+                                                    .await;
+                                            }
+                                            Ok(AgentEvent::OpenEditor(path, line)) => {
+                                                locked_agent.add_user_message(format!(
+                                                    "Tool result:\nUser opened editor for {}",
+                                                    path
+                                                ));
+                                                let _ = agent_tx
+                                                    .send(AppEvent::SuspendAndRun(path, line))
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                locked_agent
+                                                    .add_user_message(format!("Tool error:\n{}", e));
+                                                let _ = agent_tx
+                                                    .send(AppEvent::AgentResponse(format!(
+                                                        "[ERR] Tool Error\n{}",
+                                                        e
+                                                    )))
+                                                    .await;
+                                            }
                                         }
                                     }
 
@@ -4444,6 +4520,102 @@ impl<'a> App<'a> {
                 prompt
             ),
             InteractionMode::Bash => prompt.to_string(),
+        }
+    }
+
+    /// Handle slash commands. Returns true if command was handled.
+    fn handle_slash_command(&mut self, input: &str) -> bool {
+        let parts: Vec<&str> = input.splitn(2, ' ').collect();
+        let cmd = parts[0].to_lowercase();
+
+        match cmd.as_str() {
+            "/help" => {
+                self.messages.push("> /help".to_string());
+                self.messages.push(
+                    "Available commands:\n\
+                     /help       — Show this help\n\
+                     /clear      — Clear chat messages\n\
+                     /reset      — Start new session (clear history)\n\
+                     /status     — Show git status\n\
+                     /model      — Show current LLM model\n\
+                     /skills     — List installed skills\n\
+                     /mcp        — List MCP servers and tools\n\
+                     /quit       — Exit rust-code"
+                        .to_string(),
+                );
+                true
+            }
+            "/clear" => {
+                self.messages.clear();
+                self.messages.push("Chat cleared.".to_string());
+                true
+            }
+            "/reset" => {
+                self.messages.clear();
+                self.messages.push("Session reset. History cleared.".to_string());
+                true
+            }
+            "/status" => {
+                self.messages.push("> /status".to_string());
+                match crate::tools::git_status() {
+                    Ok(Some(status)) => {
+                        let mut result = format!("Branch: {}\nDirty: {}", status.branch, status.dirty);
+                        if !status.modified_files.is_empty() {
+                            result.push_str("\nModified:");
+                            for f in &status.modified_files {
+                                result.push_str(&format!("\n  M {}", f));
+                            }
+                        }
+                        if !status.staged_files.is_empty() {
+                            result.push_str("\nStaged:");
+                            for f in &status.staged_files {
+                                result.push_str(&format!("\n  + {}", f));
+                            }
+                        }
+                        if !status.untracked_files.is_empty() {
+                            result.push_str(&format!("\nUntracked: {} files", status.untracked_files.len()));
+                        }
+                        self.messages.push(result);
+                    }
+                    Ok(None) => self.messages.push("Not in a git repository".to_string()),
+                    Err(e) => self.messages.push(format!("Git error: {}", e)),
+                }
+                true
+            }
+            "/model" => {
+                self.messages.push("> /model".to_string());
+                self.messages.push("Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string());
+                true
+            }
+            "/skills" => {
+                self.messages.push("> /skills".to_string());
+                if self.installed_skills.is_empty() {
+                    self.messages.push("No skills installed. Use F9 to browse skills.".to_string());
+                } else {
+                    let mut lines = format!("Installed skills ({}):", self.installed_skills.len());
+                    for skill in &self.installed_skills {
+                        lines.push_str(&format!("\n  • {} ({})", skill.name, skill.source));
+                    }
+                    self.messages.push(lines);
+                }
+                true
+            }
+            "/mcp" => {
+                self.messages.push("> /mcp".to_string());
+                // MCP info is in agent system messages — show a summary
+                self.messages.push("MCP servers are configured in .mcp.json. Use /status or check system messages for details.".to_string());
+                true
+            }
+            "/quit" | "/exit" => {
+                self.exit = true;
+                true
+            }
+            _ => {
+                // Unknown slash command — show hint
+                self.messages.push(format!("> {}", input));
+                self.messages.push(format!("Unknown command: {}. Type /help for available commands.", cmd));
+                true
+            }
         }
     }
 

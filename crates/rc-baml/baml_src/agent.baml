@@ -83,7 +83,7 @@ class McpToolCall {
 class NextStep {
   analysis string @description("Analysis of the current state and task")
   plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  action ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall @stream.not_null @description("The specific tool action to execute right now")
+  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall)[] @stream.not_null @description("One or more tool actions to execute. Use multiple actions for independent operations (e.g. reading several files at once). Use a single action when steps depend on each other.")
 }
 
 // History message format for the prompt
@@ -95,7 +95,7 @@ class Message {
 function GetNextStep(history: Message[]) -> NextStep {
   client AgentFallback
   prompt #"
-    {{ _.role("system") }}
+    {{ _.role("system", cache_control={"type": "ephemeral"}) }}
     You are rust-code, an expert AI coding assistant operating in a Terminal UI environment.
 
     ## Your Mission
@@ -144,7 +144,9 @@ function GetNextStep(history: Message[]) -> NextStep {
     {% endfor %}
 
     {{ _.role("user") }}
-    Determine the next action to take based on the history above.
+    Determine the next action(s) to take based on the history above.
+    You can return multiple actions in the actions array for independent operations (e.g. reading 3 files at once).
+    Use a single action when the next step depends on the result of the current one.
 
     {{ ctx.output_format }}
   "#

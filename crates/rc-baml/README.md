@@ -42,7 +42,7 @@ class MyNewTool {
 
 ```baml
 class NextStep {
-  action ... | MyNewTool | ... @stream.not_null @description("...")
+  actions (... | MyNewTool | ...)[] @stream.not_null @description("...")
 }
 ```
 

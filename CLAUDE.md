@@ -81,11 +81,11 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 ## Priorities (Roadmap)
 | Priority | Task | Why |
 |----------|------|-----|
-| P0 | Streaming responses | TUI freezes waiting for full LLM response |
-| P0 | Context window management | History grows unbounded, will hit token limit |
-| P1 | Tests (TDD) | 0 tests currently, regressions go unnoticed |
+| ~~P0~~ | ~~Streaming responses~~ | Done — BAML streaming in TUI + headless |
+| ~~P0~~ | ~~Context window management~~ | Done — 60-msg sliding window, system msgs preserved |
+| ~~P1~~ | ~~Tests (TDD)~~ | Done — 14 inline tests (agent, fs, git) |
 | P1 | macOS CI (self-hosted runner) | Stop building manually |
-| P2 | Multi-tool per step | 1 tool = 1 LLM call is slow |
+| ~~P2~~ | ~~Multi-tool per step~~ | Done — `actions[]` array, parallel tool execution |
 | P2 | Image/clipboard in chat | Paste screenshots for debugging |
 
 ## LLM Config

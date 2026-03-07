@@ -5,48 +5,72 @@ use crate::tools::{
     build_skills_context,
     mcp::McpManager,
 };
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use baml_agent::{AgentMessage, MessageRole, Session, LoopDetector};
+use std::path::Path;
 
 pub enum AgentEvent {
     Message(String),
     OpenEditor(String, Option<i64>),
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PersistedMessage {
-    role: String,
-    content: String,
+// Implement baml-agent traits for BAML's generated Message type
+
+#[derive(Clone, PartialEq)]
+pub struct Role(String);
+
+impl MessageRole for Role {
+    fn system() -> Self { Self("system".into()) }
+    fn user() -> Self { Self("user".into()) }
+    fn assistant() -> Self { Self("assistant".into()) }
+    fn tool() -> Self { Self("tool".into()) }
+    fn as_str(&self) -> &str { &self.0 }
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "system" | "user" | "assistant" | "tool" => Some(Self(s.into())),
+            _ => None,
+        }
+    }
+}
+
+/// Wrapper around BAML's Message that implements baml-agent traits.
+#[derive(Clone)]
+pub struct Msg(pub types::Message);
+
+impl AgentMessage for Msg {
+    type Role = Role;
+    fn new(role: Role, content: String) -> Self {
+        Self(types::Message { role: role.0, content })
+    }
+    fn role(&self) -> &Role {
+        // Safety: Role is repr(String), same layout
+        unsafe { &*((&self.0.role) as *const String as *const Role) }
+    }
+    fn content(&self) -> &str { &self.0.content }
 }
 
 pub struct Agent {
-    history: Vec<types::Message>,
-    session_file: PathBuf,
+    session: Session<Msg>,
     mcp: Option<McpManager>,
 }
 
+const SESSION_DIR: &str = ".rust-code";
+const MAX_HISTORY: usize = 60;
+
 impl Agent {
     pub fn new() -> Self {
-        let _ = std::fs::create_dir_all(".rust-code");
-        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        let session_file = PathBuf::from(format!(".rust-code/session_{}.jsonl", timestamp));
-
-        let mut history = Vec::new();
+        let mut session = Session::new(SESSION_DIR, MAX_HISTORY);
 
         // Inject installed skills context as system message
         if let Some(skills_ctx) = build_skills_context() {
-            history.push(types::Message {
-                role: "system".to_string(),
-                content: skills_ctx,
-            });
+            session.push(Role::system(), skills_ctx);
         }
 
-        Self {
-            history,
-            session_file,
-            mcp: None,
-        }
+        Self { session, mcp: None }
+    }
+
+    /// Create a new LoopDetector (used by callers in app.rs/main.rs).
+    pub fn new_loop_detector() -> LoopDetector {
+        LoopDetector::new(6)
     }
 
     /// Initialize MCP servers from .mcp.json configs.
@@ -59,12 +83,8 @@ impl Agent {
         tracing::info!("Starting {} MCP server(s)...", config.mcp_servers.len());
         let manager = McpManager::start_all(&config).await?;
 
-        // Inject MCP tools context into history
         if let Some(mcp_ctx) = manager.build_context() {
-            self.history.push(types::Message {
-                role: "system".to_string(),
-                content: mcp_ctx,
-            });
+            self.session.push(Role::system(), mcp_ctx);
         }
 
         tracing::info!("MCP ready: {} servers, {} tools", manager.server_count(), manager.tool_count());
@@ -72,139 +92,51 @@ impl Agent {
         Ok(())
     }
 
-    /// Get MCP manager reference.
     pub fn mcp(&self) -> Option<&McpManager> {
         self.mcp.as_ref()
     }
 
     pub fn load_last_session(&mut self) -> Result<()> {
-        if !Path::new(".rust-code").exists() {
-            return Ok(());
-        }
-        
-        let mut entries: Vec<_> = std::fs::read_dir(".rust-code")?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "jsonl"))
-            .collect();
-            
-        entries.sort_by_key(|e| e.file_name());
-        
-        if let Some(latest) = entries.last() {
-            self.load_session_file(&latest.path())?;
+        if let Some(resumed) = Session::resume_last(SESSION_DIR, MAX_HISTORY) {
+            self.session = resumed;
         }
         Ok(())
     }
 
     pub fn load_session_file(&mut self, path: &Path) -> Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-        self.history.clear();
-
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            let line = line?;
-            if let Ok(persisted) = serde_json::from_str::<PersistedMessage>(&line) {
-                self.history.push(types::Message {
-                    role: persisted.role,
-                    content: persisted.content,
-                });
-            }
-        }
-        
-        self.session_file = path.to_path_buf();
+        self.session = Session::resume(path, SESSION_DIR, MAX_HISTORY);
         Ok(())
     }
 
-    pub fn history(&self) -> &[types::Message] {
-        &self.history
+    pub fn history(&self) -> Vec<&types::Message> {
+        self.session.messages().iter().map(|m| &m.0).collect()
+    }
+
+    /// Get raw BAML messages for the LLM call.
+    fn baml_history(&self) -> Vec<types::Message> {
+        self.session.messages().iter().map(|m| m.0.clone()).collect()
     }
 
     pub fn add_user_message(&mut self, content: impl Into<String>) {
-        let msg = types::Message {
-            role: "user".to_string(),
-            content: content.into(),
-        };
-        self.history.push(msg.clone());
-        let _ = self.append_to_history_file(&msg);
+        self.session.push(Role::user(), content.into());
     }
 
     pub fn add_assistant_message(&mut self, content: impl Into<String>) {
-        let msg = types::Message {
-            role: "assistant".to_string(),
-            content: content.into(),
-        };
-        self.history.push(msg.clone());
-        let _ = self.append_to_history_file(&msg);
-    }
-
-    fn append_to_history_file(&self, msg: &types::Message) -> Result<()> {
-        let persisted = PersistedMessage {
-            role: msg.role.clone(),
-            content: msg.content.clone(),
-        };
-        let json = serde_json::to_string(&persisted)?;
-        
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.session_file)?;
-            
-        writeln!(file, "{}", json)?;
-        Ok(())
+        self.session.push(Role::assistant(), content.into());
     }
 
     pub async fn step(&mut self) -> Result<types::NextStep> {
-        self.trim_history_if_needed();
-        let response = baml_client::async_client::B.GetNextStep.call(&self.history).await?;
+        self.session.trim();
+        let history = self.baml_history();
+        let response = baml_client::async_client::B.GetNextStep.call(&history).await?;
         Ok(response)
     }
 
-    /// Streaming step: returns a stream that yields partial NextStep objects.
-    /// Use `stream.next()` to get partial results (analysis text appears first),
-    /// then `stream.get_final_response()` for the complete NextStep.
     pub fn step_stream(&mut self) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>> {
-        self.trim_history_if_needed();
-        let stream = baml_client::async_client::B.GetNextStep.stream(&self.history)?;
+        self.session.trim();
+        let history = self.baml_history();
+        let stream = baml_client::async_client::B.GetNextStep.stream(&history)?;
         Ok(stream)
-    }
-
-    /// Context window management: keep history within token budget.
-    /// Preserves system messages and the last N user/assistant messages.
-    const MAX_HISTORY_MESSAGES: usize = 60;
-
-    fn trim_history_if_needed(&mut self) {
-        if self.history.len() <= Self::MAX_HISTORY_MESSAGES {
-            return;
-        }
-
-        // Split: keep system messages (skills, MCP context) + last N messages
-        let system_msgs: Vec<types::Message> = self.history
-            .iter()
-            .filter(|m| m.role == "system")
-            .cloned()
-            .collect();
-
-        let non_system: Vec<types::Message> = self.history
-            .iter()
-            .filter(|m| m.role != "system")
-            .cloned()
-            .collect();
-
-        let keep = Self::MAX_HISTORY_MESSAGES.saturating_sub(system_msgs.len());
-        let skip = non_system.len().saturating_sub(keep);
-
-        let mut trimmed = system_msgs;
-        if skip > 0 {
-            trimmed.push(types::Message {
-                role: "system".to_string(),
-                content: format!("[{} earlier messages trimmed to fit context window]", skip),
-            });
-        }
-        trimmed.extend(non_system.into_iter().skip(skip));
-        self.history = trimmed;
     }
 
     pub async fn execute_action(&mut self, action: &types::Union14AskUserToolOrBashBgToolOrBashCommandToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrOpenEditorToolOrReadFileToolOrSearchCodeToolOrWriteFileTool) -> Result<AgentEvent> {
@@ -231,36 +163,30 @@ impl Agent {
                 Ok(AgentEvent::Message(format!("[BG] {}", output)))
             }
             SearchCodeTool(cmd) => {
-                // First, try fuzzy path matching just in case they are looking for a file
                 let mut result = String::new();
-                
+
                 if let Ok(files) = FuzzySearcher::get_all_files().await {
                     let mut searcher = FuzzySearcher::new();
                     let matches = searcher.fuzzy_match_files(&cmd.query, &files);
                     if !matches.is_empty() {
                         result.push_str(&format!("File path matches for '{}':\n", cmd.query));
                         for (score, path) in matches.iter().take(5) {
-                            if *score > 50 { // only show good matches
+                            if *score > 50 {
                                 result.push_str(&format!("- {}\n", path));
                             }
                         }
-                        result.push_str("\n");
+                        result.push('\n');
                     }
                 }
-                
-                // Then, do a full text search using ripgrep (rg) if available, fallback to grep
+
                 result.push_str(&format!("Content search results for '{}':\n", cmd.query));
-                
-                // Escape quotes for bash
                 let safe_query = cmd.query.replace("'", "'\\''");
-                
                 let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
                 match run_command(&search_cmd).await {
                     Ok(output) => {
                         if output.trim().is_empty() {
                             result.push_str("No content matches found.");
                         } else {
-                            // truncate to avoid flooding context
                             let lines: Vec<&str> = output.lines().collect();
                             if lines.len() > 100 {
                                 result.push_str(&lines[..100].join("\n"));
@@ -274,7 +200,7 @@ impl Agent {
                         result.push_str("No content matches found or search tool failed.");
                     }
                 }
-                
+
                 Ok(AgentEvent::Message(result))
             }
             GitStatusTool(_cmd) => {
@@ -327,7 +253,6 @@ impl Agent {
                 Ok(AgentEvent::Message(format!("Task finished: {}", cmd.summary)))
             }
             AskUserTool(cmd) => {
-                // In a real TUI, this would yield to the user prompt
                 Ok(AgentEvent::Message(format!("Question for user: {}", cmd.question)))
             }
             McpToolCall(cmd) => {
@@ -377,56 +302,20 @@ mod tests {
     }
 
     #[test]
-    fn trim_history_preserves_system_messages() {
-        let mut agent = Agent::new();
-        // Clear and add a known system message
-        agent.history = vec![types::Message {
-            role: "system".into(),
-            content: "system prompt".into(),
-        }];
-
-        // Add 80 user/assistant pairs
-        for i in 0..80 {
-            agent.history.push(types::Message {
-                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
-                content: format!("msg {}", i),
-            });
-        }
-        assert_eq!(agent.history.len(), 81); // 1 system + 80
-
-        agent.trim_history_if_needed();
-
-        // Should be trimmed
-        assert!(agent.history.len() <= Agent::MAX_HISTORY_MESSAGES + 2); // +2 for system + trimmed notice
-        // System message preserved
-        assert_eq!(agent.history[0].role, "system");
-        assert_eq!(agent.history[0].content, "system prompt");
-        // Trimmed notice
-        assert!(agent.history[1].content.contains("trimmed"));
-        // Last message preserved
-        assert_eq!(agent.history.last().unwrap().content, "msg 79");
-    }
-
-    #[test]
-    fn trim_noop_when_small_history() {
-        let mut agent = Agent::new();
-        agent.history = vec![
-            types::Message { role: "user".into(), content: "hi".into() },
-            types::Message { role: "assistant".into(), content: "hello".into() },
-        ];
-        let len_before = agent.history.len();
-        agent.trim_history_if_needed();
-        assert_eq!(agent.history.len(), len_before);
-    }
-
-    #[test]
     fn session_file_written() {
         let mut agent = Agent::new();
         agent.add_user_message("test persistence");
 
-        // Session file should exist
-        assert!(agent.session_file.exists());
-        let content = std::fs::read_to_string(&agent.session_file).unwrap();
+        let content = std::fs::read_to_string(agent.session.session_file()).unwrap();
         assert!(content.contains("test persistence"));
+    }
+
+    #[test]
+    fn loop_detector_works() {
+        let mut ld = Agent::new_loop_detector();
+        use baml_agent::LoopStatus;
+        assert_eq!(ld.check("a"), LoopStatus::Ok);
+        assert_eq!(ld.check("a"), LoopStatus::Ok);
+        assert_eq!(ld.check("a"), LoopStatus::Warning(3));
     }
 }

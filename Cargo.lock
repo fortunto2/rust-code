@@ -137,6 +137,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "baml-agent"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "baml-macros"
 version = "0.218.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1626,6 +1636,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "baml",
+ "baml-agent",
  "clap",
  "crossterm 0.27.0",
  "ignore",

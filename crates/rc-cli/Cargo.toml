@@ -34,3 +34,4 @@ nucleo.workspace = true
 nucleo-matcher.workspace = true
 baml.workspace = true
 rmcp.workspace = true
+baml-agent = { path = "../baml-agent" }
