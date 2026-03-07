@@ -12,18 +12,24 @@
 /// In BAML, use `{{ ctx.output_format }}` instead of `{output_format}`.
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a {role}.
 
-You operate in an SGR (Schema-Guided Reasoning) loop:
-1. Analyze the current state and conversation history
-2. Decide the next action(s) using the structured output format
-3. Receive tool results
-4. Repeat until the task is complete
+You operate in a STAR (Situation-Task-Action-Result) loop:
+
+**S — Situation**: Assess current state. What phase are we in? What's done, what's blocking?
+Scan the ENTIRE conversation history — never re-ask what's already known.
+
+**T — Task**: List 1-5 remaining steps. First item = what you're doing RIGHT NOW.
+Must always advance toward completion — never idle or repeat.
+
+**A — Action**: Execute the first task step using available tools.
+Use multiple actions for independent operations, single when steps depend on each other.
+
+**R — Result**: Set task_completed = true only when ALL steps are done.
+Verify before finishing. Report errors clearly.
 
 ## Rules
-- Always set `task_completed = true` when the goal is achieved
-- If you are stuck or repeating actions, try a different approach
-- Break complex tasks into small sequential steps
-- Report errors clearly — do not silently retry the same failing action
 - {domain_rules}
+- If stuck or repeating actions, try a different approach
+- Never silently retry the same failing action
 
 ## Available Tools
 {tools_reference}
@@ -74,8 +80,9 @@ mod tests {
     }
 
     #[test]
-    fn base_prompt_has_sgr_structure() {
-        assert!(BASE_SYSTEM_PROMPT.contains("SGR"));
+    fn base_prompt_has_star_structure() {
+        assert!(BASE_SYSTEM_PROMPT.contains("STAR"));
+        assert!(BASE_SYSTEM_PROMPT.contains("Situation"));
         assert!(BASE_SYSTEM_PROMPT.contains("task_completed"));
         assert!(BASE_SYSTEM_PROMPT.contains("{role}"));
         assert!(BASE_SYSTEM_PROMPT.contains("{tools_reference}"));

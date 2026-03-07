@@ -11,15 +11,15 @@ pub struct ActionResult {
     pub done: bool,
 }
 
-/// Result of one LLM decision step.
+/// Result of one LLM decision step (STAR: Situation → Task → Action).
 pub struct StepDecision<A> {
-    /// Current state description (shown to user).
-    pub state: String,
-    /// Remaining plan steps (shown to user).
-    pub plan: Vec<String>,
-    /// Whether the overall task is complete.
+    /// S — Situation: current state assessment.
+    pub situation: String,
+    /// T — Task: remaining steps (first = current).
+    pub task: Vec<String>,
+    /// Whether the overall task is complete (R — Result).
     pub completed: bool,
-    /// Actions to execute this step.
+    /// A — Action: tools to execute.
     pub actions: Vec<A>,
 }
 
@@ -28,7 +28,7 @@ pub enum LoopEvent<'a, A> {
     /// Step started (step number, 1-based).
     StepStart(usize),
     /// LLM returned a decision.
-    Decision { state: &'a str, plan: &'a [String] },
+    Decision { situation: &'a str, task: &'a [String] },
     /// Task completed by LLM (task_completed=true).
     Completed,
     /// About to execute an action.
@@ -150,8 +150,8 @@ where
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
     on_event(LoopEvent::Decision {
-        state: &decision.state,
-        plan: &decision.plan,
+        situation: &decision.situation,
+        task: &decision.task,
     });
 
     if decision.completed {
@@ -308,15 +308,15 @@ mod tests {
             let remaining = self.steps_before_done.fetch_sub(1, Ordering::SeqCst);
             if remaining <= 1 {
                 Ok(StepDecision {
-                    state: "done".into(),
-                    plan: vec![],
+                    situation: "done".into(),
+                    task: vec![],
                     completed: true,
                     actions: vec![],
                 })
             } else {
                 Ok(StepDecision {
-                    state: format!("{} steps left", remaining - 1),
-                    plan: vec!["do something".into()],
+                    situation: format!("{} steps left", remaining - 1),
+                    task: vec!["do something".into()],
                     completed: false,
                     actions: vec![format!("action_{}", remaining)],
                 })
@@ -373,8 +373,8 @@ mod tests {
 
         async fn decide(&self, _messages: &[TestMsg]) -> Result<StepDecision<String>, String> {
             Ok(StepDecision {
-                state: "stuck".into(),
-                plan: vec!["same thing again".into()],
+                situation: "stuck".into(),
+                task: vec!["same thing again".into()],
                 completed: false,
                 actions: vec!["same_action".into()],
             })
@@ -429,8 +429,8 @@ mod tests {
 
         async fn decide(&self, _messages: &[TestMsg]) -> Result<StepDecision<String>, String> {
             Ok(StepDecision {
-                state: "done".into(),
-                plan: vec![],
+                situation: "done".into(),
+                task: vec![],
                 completed: true,
                 actions: vec![],
             })
@@ -459,8 +459,8 @@ mod tests {
                 on_token("king");
                 on_token("...");
                 Ok(StepDecision {
-                    state: "done".into(),
-                    plan: vec![],
+                    situation: "done".into(),
+                    task: vec![],
                     completed: true,
                     actions: vec![],
                 })

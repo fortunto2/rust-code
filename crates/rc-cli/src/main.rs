@@ -526,13 +526,13 @@ async fn main() -> Result<()> {
                     print!("\n[Step {}] Thinking...", n);
                     std::io::stdout().flush().ok();
                 }
-                LoopEvent::Decision { state, plan } => {
+                LoopEvent::Decision { situation, task } => {
                     print!("\r\x1b[K");
-                    println!("\x1b[2mAnalysis:\x1b[0m {}", state);
-                    if !plan.is_empty() {
-                        println!("Plan updates:");
-                        for p in plan {
-                            println!(" - {}", p);
+                    println!("\x1b[2mSituation:\x1b[0m {}", situation);
+                    if !task.is_empty() {
+                        println!("Task:");
+                        for t in task {
+                            println!(" - {}", t);
                         }
                     }
                 }

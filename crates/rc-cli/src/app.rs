@@ -749,7 +749,7 @@ impl ContextMap {
             ContextCategory::System
         } else if msg.starts_with(">") {
             ContextCategory::User
-        } else if msg.starts_with("Analysis:") {
+        } else if msg.starts_with("Situation:") {
             ContextCategory::Assistant
         } else if msg.starts_with("[THINK]") {
             ContextCategory::Thinking
@@ -851,7 +851,7 @@ impl<'a> App<'a> {
             if msg.role == "user" {
                 self.messages.push(format!("> {}", msg.content));
             } else if msg.role == "assistant" {
-                self.messages.push(format!("Analysis: {}", msg.content));
+                self.messages.push(format!("Situation: {}", msg.content));
             }
         }
         if !agent_instance.history().is_empty() {
@@ -1022,13 +1022,13 @@ impl<'a> App<'a> {
                                 last.push_str(&chunk);
                             } else if last.starts_with("[THINK]") {
                                 // Replace "Thinking..." with streaming content
-                                *last = format!("[STREAM] Analysis: {}", chunk);
+                                *last = format!("[STREAM] Situation: {}", chunk);
                             } else {
                                 // Start new streaming message
-                                self.messages.push(format!("[STREAM] Analysis: {}", chunk));
+                                self.messages.push(format!("[STREAM] Situation: {}", chunk));
                             }
                         } else {
-                            self.messages.push(format!("[STREAM] Analysis: {}", chunk));
+                            self.messages.push(format!("[STREAM] Situation: {}", chunk));
                         }
                         // Auto-scroll
                         let len = self.messages.len();
@@ -1070,7 +1070,7 @@ impl<'a> App<'a> {
                             if msg.role == "user" {
                                 self.messages.push(format!("> {}", msg.content));
                             } else if msg.role == "assistant" {
-                                self.messages.push(format!("Analysis: {}", msg.content));
+                                self.messages.push(format!("Situation: {}", msg.content));
                             }
                         }
                         self.messages
@@ -1239,7 +1239,7 @@ impl<'a> App<'a> {
                     Style::default()
                         .fg(Color::DarkGray)
                         .add_modifier(Modifier::ITALIC)
-                } else if m.starts_with("Analysis:") {
+                } else if m.starts_with("Situation:") {
                     Style::default().fg(ai_color)
                 } else if m.starts_with("[TOOL]") {
                     Style::default().fg(Color::Gray)
@@ -4180,7 +4180,7 @@ impl<'a> App<'a> {
                                     while let Some(partial) = stream.next().await {
                                         match partial {
                                             Ok(partial_step) => {
-                                                if let Some(ref analysis) = partial_step.analysis {
+                                                if let Some(ref analysis) = partial_step.situation {
                                                     if analysis.len() > last_analysis_len {
                                                         let new_text = analysis[last_analysis_len..].to_string();
                                                         let _ = agent_tx.send(AppEvent::AgentStreamChunk(new_text)).await;
@@ -4237,19 +4237,19 @@ impl<'a> App<'a> {
                                         LoopStatus::Ok => {}
                                     }
 
-                                    // Replace streaming message with final analysis
-                                    let analysis_str = format!("Analysis: {}", step.analysis);
+                                    // Replace streaming message with final situation
+                                    let situation_str = format!("Situation: {}", step.situation);
 
                                     let _ = agent_tx
-                                        .send(AppEvent::AgentPlan(step.plan_updates.clone()))
+                                        .send(AppEvent::AgentPlan(step.task.clone()))
                                         .await;
                                     let _ =
-                                        agent_tx.send(AppEvent::AgentResponse(analysis_str)).await;
+                                        agent_tx.send(AppEvent::AgentResponse(situation_str)).await;
 
-                                    // Record the agent's thought process and intended actions
+                                    // Record STAR state in history
                                     locked_agent.add_assistant_message(format!(
-                                        "Analysis: {}\nActions: {:?}",
-                                        step.analysis, step.actions
+                                        "Situation: {}\nTask: {:?}\nActions: {:?}",
+                                        step.situation, step.task, step.actions
                                     ));
 
                                     // Execute all actions sequentially

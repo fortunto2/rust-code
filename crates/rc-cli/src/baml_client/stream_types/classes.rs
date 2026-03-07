@@ -333,11 +333,11 @@ pub struct NextStep {
 
 
 
-    pub analysis: Option<String>,
+    pub situation: Option<String>,
 
 
 
-    pub plan_updates: Vec<String>,
+    pub task: Vec<String>,
 
 
 

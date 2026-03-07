@@ -26,10 +26,10 @@ where
                 print!("{}", token);
                 let _ = std::io::stdout().flush();
             }
-            LoopEvent::Decision { state, plan } => {
+            LoopEvent::Decision { situation, task } => {
                 println!();
-                println!("State: {}", state);
-                for (i, step) in plan.iter().enumerate() {
+                println!("Situation: {}", situation);
+                for (i, step) in task.iter().enumerate() {
                     println!("  {}. {}", i + 1, step);
                 }
             }

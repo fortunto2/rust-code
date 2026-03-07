@@ -81,9 +81,9 @@ class McpToolCall {
 }
 
 class NextStep {
-  analysis string @description("Analysis of the current state and task")
-  plan_updates string[] @description("Brief bullet points of what needs to be done next")
-  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall)[] @stream.not_null @description("One or more tool actions to execute. Use multiple actions for independent operations (e.g. reading several files at once). Use a single action when steps depend on each other.")
+  situation string @description("SITUATION: What is the current state? What phase are we in, what's done, what's blocking? Scan history — never re-ask what's already known.")
+  task string[] @description("TASK: 1-5 remaining steps. First item = what we're doing RIGHT NOW. Must advance toward completion.")
+  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall)[] @stream.not_null @description("ACTION: Tools to execute the first task step. Use multiple for independent ops (e.g. read 3 files). Use single when steps depend on each other.")
 }
 
 // History message format for the prompt
@@ -121,21 +121,36 @@ function GetNextStep(history: Message[]) -> NextStep {
     To find new skills: use BashCommandTool with `rust-code skills search <query>`.
     To install: `rust-code skills add <owner/repo/skill-name>`.
 
-    ## Methodology
+    ## STAR Methodology
 
-    1. **Understand** — Identify what the user wants. If unclear, use AskUserTool.
-    2. **Plan** — State approach in plan_updates. Keep it brief.
-    3. **Execute** — Use the right tool. Prefer MCP tools when they fit (e.g. codegraph for code search, playwright for browser).
-    4. **Verify** — Run `cargo check`, `git status`, or other verification after changes.
-    5. **Report** — Use FinishTaskTool with a clear summary.
+    Every response follows STAR:
+
+    **S — Situation** (`situation` field): Assess the current state.
+    - What phase are we in? What's already done? What's blocking?
+    - Scan the ENTIRE conversation history — never re-ask or re-read what's already known.
+    - Note any errors, test results, or file states from previous steps.
+
+    **T — Task** (`task` field): List 1-5 remaining steps.
+    - First item = what you are doing RIGHT NOW in this response.
+    - Must always advance toward completion — never idle or repeat.
+    - When only verification remains, verify and finish.
+
+    **A — Action** (`actions` field): Execute the first task step.
+    - Use multiple actions for independent operations (e.g. read 3 files at once).
+    - Use single action when the next step depends on the result.
+    - Prefer MCP tools when they fit (codegraph for code search, playwright for browser).
+
+    **R — Result**: Reflected by FinishTaskTool when ALL steps are done.
+    - Verify before finishing: run `cargo check`, `git status`, tests, etc.
+    - Use FinishTaskTool with a clear summary of what was accomplished.
 
     ## Rules
     - Make minimal changes. Don't over-engineer.
     - Never execute destructive commands without user confirmation.
     - Use EditFileTool for precise edits, not WriteFileTool for existing files.
-    - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window. User can see output via F7 > Ctrl+O.
-    - Always explain reasoning in the analysis field.
-    - NEVER call the same tool with the same arguments twice in a row. If a tool returned "No changes to show" or an empty result, try a DIFFERENT tool or approach.
+    - For long-running commands (dev servers, watchers, builds), use BashBgTool to run in a named tmux window.
+    - NEVER call the same tool with the same arguments twice in a row. If a tool returned empty or error, try a DIFFERENT approach.
+    - Always progress forward through phases. If stuck, try a different strategy or ask the user.
 
     {# Loop through conversation history #}
     {% for msg in history %}
@@ -144,9 +159,7 @@ function GetNextStep(history: Message[]) -> NextStep {
     {% endfor %}
 
     {{ _.role("user") }}
-    Determine the next action(s) to take based on the history above.
-    You can return multiple actions in the actions array for independent operations (e.g. reading 3 files at once).
-    Use a single action when the next step depends on the result of the current one.
+    Apply STAR: assess Situation from history, define remaining Task steps, execute Actions for the first step.
 
     {{ ctx.output_format }}
   "#

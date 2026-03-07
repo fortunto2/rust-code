@@ -11,8 +11,8 @@ pub enum AgentTaskEvent {
     StepStart(usize),
     /// Streaming text chunk from LLM.
     StreamChunk(String),
-    /// LLM decision: state + plan.
-    Decision { state: String, plan: Vec<String> },
+    /// LLM decision: situation + task (STAR).
+    Decision { situation: String, task: Vec<String> },
     /// About to execute an action (human-readable label).
     ActionStart(String),
     /// Action executed, result output.
@@ -177,10 +177,10 @@ where
         // Map LoopEvent to AgentTaskEvent
         let mut on_event = |event: LoopEvent<'_, A::Action>| {
             match event {
-                LoopEvent::Decision { state, plan } => {
+                LoopEvent::Decision { situation, task } => {
                     handler.on_event(AgentTaskEvent::Decision {
-                        state: state.to_string(),
-                        plan: plan.to_vec(),
+                        situation: situation.to_string(),
+                        task: task.to_vec(),
                     });
                 }
                 LoopEvent::Completed => {

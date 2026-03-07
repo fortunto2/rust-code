@@ -314,8 +314,8 @@ impl SgrAgent for HeadlessAgent {
         });
 
         Ok(StepDecision {
-            state: step.analysis,
-            plan: step.plan_updates,
+            situation: step.situation,
+            task: step.task,
             completed: done,
             actions: step.actions,
         })
@@ -375,7 +375,7 @@ impl SgrAgentStream for HeadlessAgent {
             while let Some(partial) = stream.next().await {
                 match partial {
                     Ok(partial_step) => {
-                        if let Some(ref analysis) = partial_step.analysis {
+                        if let Some(ref analysis) = partial_step.situation {
                             if analysis.len() > last_analysis_len {
                                 on_token(&analysis[last_analysis_len..]);
                                 last_analysis_len = analysis.len();
@@ -392,8 +392,8 @@ impl SgrAgentStream for HeadlessAgent {
             });
 
             Ok(StepDecision {
-                state: step.analysis,
-                plan: step.plan_updates,
+                situation: step.situation,
+                task: step.task,
                 completed: done,
                 actions: step.actions,
             })

@@ -328,11 +328,11 @@ pub struct NextStep {
 
 
 
-    pub analysis: String,
+    pub situation: String,
 
 
 
-    pub plan_updates: Vec<String>,
+    pub task: Vec<String>,
 
 
 
