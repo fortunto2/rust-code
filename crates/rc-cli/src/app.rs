@@ -4550,13 +4550,6 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Select a message by index for highlight/copy.
-    fn chat_select_message(&mut self, idx: usize) {
-        if idx < self.messages.len() {
-            self.chat_selected = Some(idx);
-        }
-    }
-
     fn input_title(&self) -> String {
         if self.interaction_mode == InteractionMode::Bash {
             let cwd = self.bash_cwd.display();

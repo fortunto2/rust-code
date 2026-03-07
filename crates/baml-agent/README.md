@@ -27,6 +27,8 @@ User request → [SGR Loop] → decide (LLM) → execute (tools) → push result
 | `helpers` | `norm`, `action_result_from`, `truncate_json_array`, `AgentContext` — reusable patterns + context loading |
 | `providers` | `UserConfig`, `ProviderAuth`, `resolve_provider()`, keychain/proxy auth — shared provider infrastructure (feature `providers`) |
 | `logging` | `init_logging()` — daily file logging via tracing-appender (feature `logging`) |
+| `intent_guard` | `ActionKind`, `Intent`, `intent_allows`, `guard_step` — mode-based permission matrix (Auto/Ask/Build/Plan) |
+| `hints` | `HintSource`, `HintContext`, `collect_hints`, `default_sources` — pluggable tactical advice pipeline |
 | `telemetry` | `init_telemetry()`, `TelemetryGuard` — OTEL-aware JSONL with trace context (feature `telemetry`) |
 
 ## Logging & Telemetry
@@ -887,12 +889,154 @@ use baml_agent::{load_manifesto, load_manifesto_from};
 let manifesto = load_manifesto(); // from CWD
 ```
 
+## Intent guard
+
+Mode-based permission matrix that restricts which actions an agent can take based on user intent.
+
+### ActionKind — action classification
+
+6 categories for any tool:
+
+| Kind | Examples |
+|------|----------|
+| `Read` | file reads, grep, git status, project map |
+| `Write` | file write, edit, open editor |
+| `Execute` | bash commands, background tasks |
+| `GitMutate` | git add, git commit |
+| `Plan` | ask user, finish task, memory |
+| `External` | MCP tool calls |
+
+### Intent — user modes
+
+| Intent | Allowed | Use case |
+|--------|---------|----------|
+| `Auto` | everything | Default — full autonomy |
+| `Ask` | Read, Plan | Research mode — no mutations |
+| `Build` | Read, Write, Execute, Plan | Code mode — no git, no external |
+| `Plan` | Read, Plan | Planning only — read + think |
+
+```rust
+use baml_agent::{ActionKind, Intent, intent_allows, guard_step};
+
+// Check single action
+assert!(intent_allows(Intent::Auto, ActionKind::Execute));
+assert!(!intent_allows(Intent::Ask, ActionKind::Write));
+
+// Guard a step — returns hint strings for blocked actions
+let actions = vec![ActionKind::Write, ActionKind::Read];
+let hints = guard_step(Intent::Ask, &actions, |k| *k);
+// → ["Ask mode: Write actions are restricted — switch to Auto or Build mode."]
+```
+
+Hints are soft — they don't block execution, they inject `HINT: ...` system messages that steer the LLM away from restricted actions.
+
+## Hints — tactical advice pipeline
+
+Pluggable hint system that injects tactical advice before each agent step. Multiple sources analyze the step context and emit hints that get deduplicated and injected as system messages.
+
+```
+StepDecision { actions, situation, ... }
+     │
+     ├─→ intent_guard::guard_step()     → hints
+     ├─→ pattern_hints()                → hints
+     ├─→ tool_hints()                   → hints
+     └─→ workflow_hints()               → hints
+          │
+          ▼
+    deduplicated Vec<String> → HINT: system messages
+```
+
+### HintSource trait
+
+```rust
+use baml_agent::{HintSource, HintContext};
+
+pub trait HintSource: Send + Sync {
+    fn hints(&self, ctx: &HintContext) -> Vec<String>;
+}
+```
+
+Stateless — no tracking, just advice per step based on `HintContext`:
+
+| Field | Type | What |
+|-------|------|------|
+| `intent` | `Intent` | Current user mode (Auto/Ask/Build/Plan) |
+| `action_kinds` | `&[ActionKind]` | Actions the agent wants to take |
+| `step_num` | `usize` | Step number (1-based) |
+| `mcp_servers` | `&[&str]` | Available MCP server names |
+
+### Built-in sources
+
+| Source | What it does |
+|--------|-------------|
+| `PatternHints` | Warns on write-without-read on step 1 |
+| `ToolHints` | Suggests codegraph MCP when available (steps 1-2) |
+| `WorkflowHints` | TDD reminder on writes, git commit reminder after step 5 |
+
+### Usage
+
+```rust
+use baml_agent::{
+    collect_hints, default_sources, HintContext, ActionKind, Intent,
+};
+
+// Classify your actions (project-specific)
+fn action_kind(action: &MyAction) -> ActionKind {
+    match action {
+        MyAction::ReadFile(_) => ActionKind::Read,
+        MyAction::WriteFile(_) => ActionKind::Write,
+        MyAction::Bash(_) => ActionKind::Execute,
+        MyAction::Finish(_) => ActionKind::Plan,
+    }
+}
+
+// In your decide() or decide_stream():
+let kinds: Vec<_> = decision.actions.iter().map(action_kind).collect();
+let ctx = HintContext {
+    intent: Intent::Auto,
+    action_kinds: &kinds,
+    step_num: current_step,
+    mcp_servers: &["codegraph"],
+};
+let sources = default_sources();
+let hints = collect_hints(&ctx, &decision.actions, action_kind, &sources);
+
+// Inject as system messages
+for hint in &hints {
+    session.push(Role::system(), format!("HINT: {}", hint));
+}
+```
+
+### Custom hint sources
+
+Add project-specific advice by implementing `HintSource`:
+
+```rust
+struct MyDomainHints;
+
+impl HintSource for MyDomainHints {
+    fn hints(&self, ctx: &HintContext) -> Vec<String> {
+        let mut hints = Vec::new();
+        if ctx.action_kinds.iter().any(|k| matches!(k, ActionKind::External)) {
+            hints.push("Check API rate limits before batch MCP calls.".into());
+        }
+        hints
+    }
+}
+
+// Add to sources
+let mut sources = default_sources();
+sources.push(Box::new(MyDomainHints));
+let hints = collect_hints(&ctx, &actions, classify, &sources);
+```
+
 ## Tests
 
 ```bash
 cargo test -p baml-agent
-# 85 tests (with --features providers): session, UUID v7, format,
+# 100+ tests (with --features providers): session, UUID v7, format,
 # trimming, 3-tier loop detection, agent loop, streaming,
 # empty actions guard, helpers, AgentContext, memory GC,
-# token budget, @import, project loading, providers (resolve, config)
+# token budget, @import, project loading, providers (resolve, config),
+# intent guard (9 tests), hints pipeline (7 tests)
 ```
