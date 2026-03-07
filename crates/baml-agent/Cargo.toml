@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/fortunto2/rust-code"
 keywords = ["baml", "agent", "llm", "structured-output"]
 categories = ["development-tools"]
+readme = "README.md"
 
 [features]
 logging = ["dep:tracing", "dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]

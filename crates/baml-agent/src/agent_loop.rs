@@ -443,7 +443,7 @@ mod tests {
     async fn loop_completes_after_n_steps() {
         let dir = std::env::temp_dir().join("baml_loop_test_complete");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "do something".into());
 
         let agent = MockAgent {
@@ -503,7 +503,7 @@ mod tests {
     async fn loop_detects_and_aborts() {
         let dir = std::env::temp_dir().join("baml_loop_test_abort");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "do something".into());
 
         let config = LoopConfig {
@@ -586,7 +586,7 @@ mod tests {
     async fn streaming_tokens_emitted() {
         let dir = std::env::temp_dir().join("baml_loop_test_stream");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "hello".into());
 
         let config = LoopConfig {
@@ -663,7 +663,7 @@ mod tests {
     async fn empty_actions_nudges_model() {
         let dir = std::env::temp_dir().join("baml_loop_test_empty_actions");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "do something".into());
 
         let agent = EmptyActionsAgent {
@@ -706,7 +706,7 @@ mod tests {
     async fn empty_actions_aborts_after_threshold() {
         let dir = std::env::temp_dir().join("baml_loop_test_empty_abort");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "do something".into());
 
         // Agent that always returns empty actions — never recovers
@@ -760,7 +760,7 @@ mod tests {
     async fn non_streaming_agent_works() {
         let dir = std::env::temp_dir().join("baml_loop_test_nostream");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "hello".into());
 
         let config = LoopConfig {

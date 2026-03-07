@@ -2,9 +2,7 @@
 
 Shared Rust crate for building BAML-powered SGR (Schema-Guided Reasoning) agents.
 
-**Path:** `~/startups/shared/rust-code/crates/baml-agent`
-
-Used by: [video-analyzer](~/startups/active/life2film/video-analyzer) (via symlink), [rust-code](~/startups/shared/rust-code), [epiphan-voice-ai](~/startups/active/epiphan-voice-ai).
+Reusable across multiple agent projects — just implement `SgrAgent` trait and wire your BAML-generated types.
 
 ## What is SGR?
 
@@ -145,7 +143,7 @@ async fn main() {
     let reg: MyRegistry = engine.build_registry().unwrap();
 
     // Create session
-    let mut session = Session::<MyMsg>::new(".sessions", 60);
+    let mut session = Session::<MyMsg>::new(".sessions", 60).unwrap();
     session.push(MyRole::user(), "Find competitors for my SaaS idea".into());
 
     // Build agent and run
@@ -231,9 +229,8 @@ run_loop(impl SgrAgent)           run_loop_stream(impl SgrAgentStream)
   3-tier loop detection             3-tier loop detection
 ```
 
-- **va-agent** — `SgrAgent` only, `run_loop()`. No streaming needed for autonomous CLI.
-- **rc-cli** — `Agent` implements both `SgrAgent` + `SgrAgentStream` directly (no adapter layer). Headless mode uses `run_loop_stream()`. TUI uses `step_stream()` + manual loop with `process_step()`.
-- **epiphan-voice-ai** — `SgrAgent` only, `run_loop()`.
+- **CLI agents** — `SgrAgent` only, `run_loop()`. No streaming needed for autonomous CLI.
+- **TUI agents** — implement both `SgrAgent` + `SgrAgentStream`. Headless mode uses `run_loop_stream()`. TUI uses `step_stream()` + manual loop with `process_step()`.
 
 ## Session persistence
 
@@ -538,7 +535,7 @@ Two loading modes that merge into a single system message:
 
 #### 1. Agent home dir (`load`)
 
-Each agent has a configurable home dir (`.rust-code/`, `.va-sessions/`, `.epiphan/`):
+Each agent has a configurable home dir (e.g. `.my-agent/`):
 
 | File | Label | What |
 |------|-------|------|

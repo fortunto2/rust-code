@@ -633,7 +633,7 @@ async fn main() -> Result<()> {
         // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
         let mut session = std::mem::replace(
             agent.session_mut(),
-            baml_agent::Session::new(".rust-code-tmp", 60),
+            baml_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
         );
 
         use std::io::Write as _;

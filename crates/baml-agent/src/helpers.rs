@@ -110,7 +110,7 @@ pub fn load_manifesto_from(dir: &std::path::Path) -> String {
 ///
 /// ### 1. Agent home dir (`load`)
 ///
-/// Each agent has a home dir (e.g. `.rust-code/`, `.va-sessions/`, `.epiphan/`).
+/// Each agent has a home dir (e.g. `.my-agent/`).
 /// Inside it, markdown files provide agent-specific context:
 ///
 /// | File | Label | What |

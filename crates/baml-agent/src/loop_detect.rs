@@ -312,6 +312,21 @@ impl LoopDetector {
             .max(self.category.count())
             .max(self.output.count())
     }
+
+    /// Exact signature repeat count.
+    pub fn exact_count(&self) -> usize {
+        self.exact.count()
+    }
+
+    /// Normalized category repeat count.
+    pub fn category_count(&self) -> usize {
+        self.category.count()
+    }
+
+    /// Output stagnation repeat count.
+    pub fn output_count(&self) -> usize {
+        self.output.count()
+    }
 }
 
 // ---------------------------------------------------------------------------

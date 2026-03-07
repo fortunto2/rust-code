@@ -20,17 +20,20 @@ pub struct Session<M: AgentMessage> {
 
 impl<M: AgentMessage> Session<M> {
     /// Create a new session with a fresh JSONL file.
-    pub fn new(session_dir: &str, max_history: usize) -> Self {
-        let _ = std::fs::create_dir_all(session_dir);
+    ///
+    /// Creates the session directory if it doesn't exist.
+    /// Returns an error if the directory cannot be created.
+    pub fn new(session_dir: &str, max_history: usize) -> std::io::Result<Self> {
+        std::fs::create_dir_all(session_dir)?;
         let session_id = uuid::Uuid::now_v7().to_string();
         let session_file = PathBuf::from(format!("{}/{}.jsonl", session_dir, session_id));
-        Self {
+        Ok(Self {
             messages: Vec::new(),
             session_file,
             session_id,
             last_uuid: None,
             max_history,
-        }
+        })
     }
 
     /// Resume from a specific session file.

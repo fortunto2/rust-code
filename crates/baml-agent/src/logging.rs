@@ -8,7 +8,7 @@ use tracing_subscriber::prelude::*;
 ///
 /// # Usage
 /// ```ignore
-/// let _guard = baml_agent::init_logging(".va-sessions", "va-agent");
+/// let _guard = baml_agent::init_logging(".my-agent", "agent");
 /// // all tracing::info!(), warn!(), error!() go to file
 /// // BAML stdout logging suppressed
 /// ```

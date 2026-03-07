@@ -73,7 +73,8 @@ const MAX_HISTORY: usize = 60;
 
 impl Agent {
     pub fn new() -> Self {
-        let mut session = Session::new(AGENT_HOME, MAX_HISTORY);
+        let mut session = Session::new(AGENT_HOME, MAX_HISTORY)
+            .expect("failed to create session directory");
 
         // Load layered context: agent home (SOUL, IDENTITY, etc.) + project (AGENTS.md/CLAUDE.md + rules)
         let mut ctx = baml_agent::AgentContext::load(AGENT_HOME);

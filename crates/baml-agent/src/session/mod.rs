@@ -271,7 +271,7 @@ pub(crate) mod tests {
     fn trim_preserves_system_and_recent() {
         let dir = std::env::temp_dir().join("baml_mod_test_trim");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 10);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 10).unwrap();
 
         session.push(TestRole::System, "sys prompt".into());
         for i in 0..20 {
@@ -298,7 +298,7 @@ pub(crate) mod tests {
     fn trim_noop_small_history() {
         let dir = std::env::temp_dir().join("baml_mod_test_noop");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "hello".into());
         assert_eq!(session.trim(), 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -308,7 +308,7 @@ pub(crate) mod tests {
     fn persist_and_reload() {
         let dir = std::env::temp_dir().join("baml_mod_test_persist");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         let sid = session.session_id().to_string();
         session.push(TestRole::User, "hello world".into());
         session.push(TestRole::Assistant, "hi there".into());
@@ -334,7 +334,7 @@ pub(crate) mod tests {
     fn persist_parent_uuid_chain() {
         let dir = std::env::temp_dir().join("baml_mod_test_parent");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(TestRole::User, "first".into());
         session.push(TestRole::Assistant, "second".into());
         session.push(TestRole::User, "third".into());
@@ -362,7 +362,7 @@ pub(crate) mod tests {
     fn persist_multibyte_content() {
         let dir = std::env::temp_dir().join("baml_mod_test_multibyte");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         session.push(
             TestRole::User,
             "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}".into(),
@@ -406,10 +406,10 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_resume");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s1.push(TestRole::User, "first".into());
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s2.push(TestRole::User, "second".into());
 
         let resumed = Session::<TestMsg>::resume_last(dir.to_str().unwrap(), 60).unwrap();
@@ -425,7 +425,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_topic");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s.push(TestRole::System, "you are an agent".into());
         s.push(TestRole::User, "deploy to production".into());
 
@@ -447,7 +447,7 @@ pub(crate) mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s.push(TestRole::User, "test".into());
         let after = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -465,10 +465,10 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_list");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s1.push(TestRole::User, "fix parser bug".into());
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s2.push(TestRole::User, "add new feature".into());
 
         let sessions = list_sessions(dir.to_str().unwrap());
@@ -492,7 +492,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_long_topic");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s.push(TestRole::User, "a".repeat(200));
 
         let meta = SessionMeta::from_path(s.session_file()).unwrap();
@@ -510,13 +510,13 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join("baml_mod_test_search");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s1.push(TestRole::User, "fix parser bug in baml".into());
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s2.push(TestRole::User, "deploy to production".into());
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let mut s3 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let mut s3 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
         s3.push(TestRole::User, "fix loop detection bug".into());
 
         let results = search_sessions(dir.to_str().unwrap(), "fix bug");
