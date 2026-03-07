@@ -10,7 +10,9 @@ pub mod logging;
 
 pub use config::{AgentConfig, ProviderConfig, AgentConfigError};
 pub use engine::{BamlRegistry, AgentEngine};
-pub use session::{AgentMessage, MessageRole, Session};
+pub use session::{AgentMessage, MessageRole, Session, SessionMeta, list_sessions};
+#[cfg(feature = "search")]
+pub use session::search_sessions;
 pub use loop_detect::{LoopDetector, LoopStatus, normalize_signature};
 pub use agent_loop::{SgrAgent, SgrAgentStream, StepDecision, ActionResult, LoopConfig, LoopEvent, run_loop, run_loop_stream, process_step};
 pub use prompt::{BASE_SYSTEM_PROMPT, build_system_prompt};

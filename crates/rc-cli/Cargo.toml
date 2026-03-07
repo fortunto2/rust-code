@@ -32,5 +32,5 @@ nucleo.workspace = true
 nucleo-matcher.workspace = true
 baml.workspace = true
 rmcp.workspace = true
-baml-agent = { version = "0.2.0", path = "../baml-agent", features = ["logging"] }
+baml-agent = { version = "0.2.0", path = "../baml-agent", features = ["logging", "search"] }
 baml-agent-tui = { version = "0.2.0", path = "../baml-agent-tui" }

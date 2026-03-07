@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -180,6 +180,99 @@ impl<M: AgentMessage> Session<M> {
     }
 }
 
+/// Metadata about a saved session (lightweight, no full message load).
+#[derive(Debug, Clone)]
+pub struct SessionMeta {
+    /// Path to the JSONL file.
+    pub path: PathBuf,
+    /// Unix timestamp from filename (session_{ts}.jsonl).
+    pub created: u64,
+    /// Number of messages (lines in JSONL).
+    pub message_count: usize,
+    /// First user message — serves as session "topic".
+    pub topic: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+}
+
+impl SessionMeta {
+    /// Extract metadata from a session JSONL file without loading all messages.
+    fn from_path(path: &Path) -> Option<Self> {
+        let meta = fs::metadata(path).ok()?;
+        let filename = path.file_stem()?.to_str()?;
+        let created = filename.strip_prefix("session_")?.parse::<u64>().ok()?;
+
+        let file = fs::File::open(path).ok()?;
+        let reader = BufReader::new(file);
+        let mut message_count = 0;
+        let mut topic = String::new();
+
+        for line in reader.lines().map_while(Result::ok) {
+            message_count += 1;
+            if topic.is_empty() {
+                if let Ok(p) = serde_json::from_str::<PersistedMessage>(&line) {
+                    if p.role == "user" {
+                        // Truncate long topics for display
+                        topic = if p.content.len() > 120 {
+                            format!("{}...", &p.content[..117])
+                        } else {
+                            p.content
+                        };
+                    }
+                }
+            }
+        }
+
+        Some(Self {
+            path: path.to_path_buf(),
+            created,
+            message_count,
+            topic,
+            size_bytes: meta.len(),
+        })
+    }
+}
+
+/// List all sessions in a directory, sorted by creation time (newest first).
+pub fn list_sessions(session_dir: &str) -> Vec<SessionMeta> {
+    let Ok(entries) = fs::read_dir(session_dir) else { return vec![] };
+    let mut sessions: Vec<SessionMeta> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .filter_map(|e| SessionMeta::from_path(&e.path()))
+        .collect();
+    sessions.sort_by(|a, b| b.created.cmp(&a.created));
+    sessions
+}
+
+/// Search sessions by fuzzy-matching their topic (first user message).
+///
+/// Returns matches sorted by score (best first). Requires the `search` feature.
+#[cfg(feature = "search")]
+pub fn search_sessions(session_dir: &str, query: &str) -> Vec<(u32, SessionMeta)> {
+    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    use nucleo_matcher::pattern::{Pattern, CaseMatching, Normalization};
+
+    let sessions = list_sessions(session_dir);
+    if sessions.is_empty() || query.is_empty() {
+        return sessions.into_iter().map(|s| (0, s)).collect();
+    }
+
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+
+    let mut matches: Vec<(u32, SessionMeta)> = sessions
+        .into_iter()
+        .filter_map(|s| {
+            let haystack = Utf32Str::Ascii(s.topic.as_bytes());
+            pattern.score(haystack, &mut matcher).map(|score| (score, s))
+        })
+        .collect();
+
+    matches.sort_by(|a, b| b.0.cmp(&a.0));
+    matches
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -289,6 +382,106 @@ pub(crate) mod tests {
 
         let resumed = Session::<TestMsg>::resume_last(dir.to_str().unwrap(), 60).unwrap();
         assert_eq!(resumed.messages()[0].content(), "second");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sessions_returns_sorted() {
+        let dir = std::env::temp_dir().join("baml_test_list_sessions");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s1.push(TestRole::User, "fix parser bug".into());
+        s1.push(TestRole::Assistant, "looking at it".into());
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s2.push(TestRole::User, "add new feature".into());
+
+        let sessions = super::list_sessions(dir.to_str().unwrap());
+        assert_eq!(sessions.len(), 2);
+        // Newest first
+        assert_eq!(sessions[0].topic, "add new feature");
+        assert_eq!(sessions[1].topic, "fix parser bug");
+        assert_eq!(sessions[1].message_count, 2);
+        assert!(sessions[0].created >= sessions[1].created);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_meta_extracts_topic() {
+        let dir = std::env::temp_dir().join("baml_test_meta_topic");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        // System message first, then user — topic should be the user msg
+        s.push(TestRole::System, "you are an agent".into());
+        s.push(TestRole::User, "deploy to production".into());
+        s.push(TestRole::Assistant, "on it".into());
+
+        let meta = super::SessionMeta::from_path(s.session_file()).unwrap();
+        assert_eq!(meta.topic, "deploy to production");
+        assert_eq!(meta.message_count, 3);
+        assert!(meta.size_bytes > 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sessions_empty_dir() {
+        let dir = std::env::temp_dir().join("baml_test_list_empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+
+        let sessions = super::list_sessions(dir.to_str().unwrap());
+        assert!(sessions.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn search_sessions_fuzzy() {
+        let dir = std::env::temp_dir().join("baml_test_search_sessions");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s1.push(TestRole::User, "fix parser bug in baml".into());
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s2.push(TestRole::User, "deploy to production".into());
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let mut s3 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s3.push(TestRole::User, "fix loop detection bug".into());
+
+        let results = super::search_sessions(dir.to_str().unwrap(), "fix bug");
+        assert!(!results.is_empty());
+        // Both "fix" sessions should match, "deploy" should not (or score lower)
+        let topics: Vec<&str> = results.iter().map(|(_, m)| m.topic.as_str()).collect();
+        assert!(topics.iter().any(|t| t.contains("fix")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn topic_truncated_for_long_messages() {
+        let dir = std::env::temp_dir().join("baml_test_long_topic");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        let long_msg = "a".repeat(200);
+        s.push(TestRole::User, long_msg);
+
+        let meta = super::SessionMeta::from_path(s.session_file()).unwrap();
+        assert!(meta.topic.len() <= 120);
+        assert!(meta.topic.ends_with("..."));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
