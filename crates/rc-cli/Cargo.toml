@@ -1,6 +1,6 @@
 [package]
 name = "rust-code"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "AI-powered TUI coding agent written in Rust"
 license = "MIT"
