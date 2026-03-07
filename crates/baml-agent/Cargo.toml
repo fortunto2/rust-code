@@ -21,6 +21,7 @@ tracing-subscriber = { version = "0.3", optional = true, features = ["json"] }
 tracing-appender = { version = "0.2", optional = true }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
+uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
