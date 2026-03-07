@@ -72,6 +72,8 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// Interactive provider setup wizard
+    Setup,
 }
 
 #[derive(Subcommand, Debug)]
@@ -306,6 +308,243 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
             println!("Config reset to defaults (Gemini)");
         }
     }
+    Ok(())
+}
+
+async fn run_setup() -> Result<()> {
+    use baml_agent::providers::{self, ProviderAuth};
+    use std::io::{self, BufRead, Write};
+
+    println!("rust-code setup\n");
+    println!("Choose your LLM provider:\n");
+
+    // Group providers for display
+    struct ProviderOption {
+        name: &'static str,
+        desc: &'static str,
+        auth_hint: &'static str,
+    }
+
+    let options = [
+        ProviderOption {
+            name: "gemini",
+            desc: "Google Gemini (API key)",
+            auth_hint: "GEMINI_API_KEY",
+        },
+        ProviderOption {
+            name: "claude",
+            desc: "Claude via Claude Code auth (macOS Keychain)",
+            auth_hint: "run `claude` first",
+        },
+        ProviderOption {
+            name: "anthropic",
+            desc: "Claude via API key",
+            auth_hint: "ANTHROPIC_API_KEY",
+        },
+        ProviderOption {
+            name: "openai",
+            desc: "OpenAI (API key)",
+            auth_hint: "OPENAI_API_KEY",
+        },
+        ProviderOption {
+            name: "codex",
+            desc: "ChatGPT Plus/Pro subscription",
+            auth_hint: "run `codex login` first",
+        },
+        ProviderOption {
+            name: "ollama",
+            desc: "Local models via Ollama (free)",
+            auth_hint: "install ollama",
+        },
+        ProviderOption {
+            name: "claude-cli",
+            desc: "Claude via `claude` CLI subprocess",
+            auth_hint: "install claude CLI",
+        },
+        ProviderOption {
+            name: "gemini-cli",
+            desc: "Gemini via `gemini` CLI subprocess",
+            auth_hint: "install gemini CLI",
+        },
+    ];
+
+    // Check which have auth ready
+    for (i, opt) in options.iter().enumerate() {
+        let status = match opt.name {
+            "gemini" => {
+                if std::env::var("GEMINI_API_KEY").is_ok() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "anthropic" => {
+                if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "openai" => {
+                if std::env::var("OPENAI_API_KEY").is_ok() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "claude" => {
+                if providers::load_claude_keychain_token().is_ok() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "codex" | "chatgpt" => {
+                let auth_path = std::env::var("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".codex/auth.json"))
+                    .unwrap_or_default();
+                if auth_path.exists() {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            "ollama" => {
+                if std::process::Command::new("ollama")
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            cli if cli.ends_with("-cli") => {
+                let cmd = cli.strip_suffix("-cli").unwrap_or(cli);
+                if std::process::Command::new(cmd)
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    "\x1b[32m✓\x1b[0m"
+                } else {
+                    "\x1b[33m·\x1b[0m"
+                }
+            }
+            _ => "\x1b[33m·\x1b[0m",
+        };
+        println!(
+            "  {} {:>2}) \x1b[1m{}\x1b[0m — {} [{}]",
+            status,
+            i + 1,
+            opt.name,
+            opt.desc,
+            opt.auth_hint
+        );
+    }
+
+    println!("\n\x1b[32m✓\x1b[0m = auth ready, \x1b[33m·\x1b[0m = needs setup\n");
+    print!("Enter number (1-{}): ", options.len());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input)?;
+    let choice: usize = input
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid number"))?;
+
+    if choice == 0 || choice > options.len() {
+        anyhow::bail!("Invalid choice: {}", choice);
+    }
+
+    let selected = &options[choice - 1];
+    let provider_name = selected.name;
+
+    // Validate auth
+    if let Some((_, auth)) = providers::resolve_provider(provider_name) {
+        let ok = match &auth {
+            ProviderAuth::EnvKey(var) => {
+                if std::env::var(var).is_ok() {
+                    true
+                } else {
+                    eprintln!(
+                        "\n\x1b[33mWarning:\x1b[0m {} not set. Set it in your shell profile:",
+                        var
+                    );
+                    eprintln!("  export {}=\"your-api-key\"", var);
+                    false
+                }
+            }
+            ProviderAuth::ClaudeKeychain => {
+                if providers::load_claude_keychain_token().is_ok() {
+                    true
+                } else {
+                    eprintln!("\n\x1b[33mWarning:\x1b[0m Claude auth not found.");
+                    eprintln!("  Run `claude` first to authenticate via OAuth.");
+                    false
+                }
+            }
+            ProviderAuth::CodexProxy => {
+                let auth_path = std::env::var("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".codex/auth.json"))
+                    .unwrap_or_default();
+                if auth_path.exists() {
+                    true
+                } else {
+                    eprintln!("\n\x1b[33mWarning:\x1b[0m Codex auth not found.");
+                    eprintln!("  Run `codex login` first.");
+                    false
+                }
+            }
+            ProviderAuth::CliProxy(cli_name) => {
+                if std::process::Command::new(cli_name)
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    true
+                } else {
+                    eprintln!(
+                        "\n\x1b[33mWarning:\x1b[0m `{}` CLI not found in PATH.",
+                        cli_name
+                    );
+                    false
+                }
+            }
+            ProviderAuth::None => true,
+        };
+
+        if !ok {
+            print!("\nSave anyway? (y/N): ");
+            io::stdout().flush()?;
+            let mut confirm = String::new();
+            io::stdin().lock().read_line(&mut confirm)?;
+            if !confirm.trim().eq_ignore_ascii_case("y") {
+                println!("Setup cancelled. Run `rust-code setup` again when ready.");
+                return Ok(());
+            }
+        }
+    }
+
+    // Save config
+    let cfg = providers::UserConfig {
+        provider: Some(provider_name.to_string()),
+        model: None,
+    };
+    providers::save_config(".rust-code", &cfg).map_err(|e| anyhow::anyhow!(e))?;
+
+    println!(
+        "\n\x1b[32m✓\x1b[0m Provider set to: \x1b[1m{}\x1b[0m",
+        provider_name
+    );
+    println!("  Saved to ~/.rust-code/config.toml");
+    println!("  Change later: rust-code config set <provider>");
+
     Ok(())
 }
 
@@ -800,6 +1039,7 @@ async fn main() -> Result<()> {
             Commands::Sessions { query } => run_sessions_command(query),
             Commands::Config { action } => run_config_command(action),
             Commands::Doctor { fix } => run_doctor(fix).await,
+            Commands::Setup => run_setup().await,
         };
     }
 
@@ -814,6 +1054,21 @@ async fn main() -> Result<()> {
 
     // Initialize BAML runtime
     baml_client::init();
+
+    // Auto-setup on first run if no config and no CLI flags
+    if !args.codex && !args.local && args.model.is_none() {
+        let cfg = baml_agent::providers::load_config(".rust-code");
+        if cfg.provider.is_none() && std::env::var("GEMINI_API_KEY").is_err() {
+            eprintln!("First run detected — checking environment...\n");
+            let _ = run_doctor(false).await;
+            println!();
+            if let Err(e) = run_setup().await {
+                eprintln!("Setup failed: {}", e);
+                std::process::exit(1);
+            }
+            println!();
+        }
+    }
 
     // Resolve provider: CLI flags override config file
     let provider_setup = resolve_provider_setup(&args).await;
