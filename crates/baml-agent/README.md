@@ -232,8 +232,8 @@ run_loop(impl SgrAgent)           run_loop_stream(impl SgrAgentStream)
 ```
 
 - **va-agent** — `SgrAgent` only, `run_loop()`. No streaming needed for autonomous CLI.
-- **rc-cli headless** — `SgrAgent` + `SgrAgentStream`, `run_loop_stream()`. Streams tokens.
-- **rc-cli TUI** — `SgrAgentStream` + `run_loop_stream()` with `StreamToken` → TUI render.
+- **rc-cli** — `Agent` implements both `SgrAgent` + `SgrAgentStream` directly (no adapter layer). Headless mode uses `run_loop_stream()`. TUI uses `step_stream()` + manual loop with `process_step()`.
+- **epiphan-voice-ai** — `SgrAgent` only, `run_loop()`.
 
 ## Session persistence
 
@@ -513,5 +513,5 @@ let decision = B.DecideNextStep.call(&messages, &manifesto).await?;
 
 ```bash
 cargo test -p baml-agent
-# 25 tests: session CRUD, trimming, loop detection, agent loop, streaming, empty actions guard, helpers
+# 38 unit + 4 integration tests: session, trimming, 3-tier loop detection, agent loop, streaming, empty actions guard, helpers
 ```
