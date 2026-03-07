@@ -16,8 +16,9 @@ struct Args {
     #[arg(short, long)]
     prompt: Option<String>,
 
-    #[arg(short, long, default_value_t = false)]
-    resume: bool,
+    /// Resume last session, or fuzzy-search by topic (e.g. --resume "parser bug")
+    #[arg(short, long, num_args = 0..=1, default_missing_value = "")]
+    resume: Option<String>,
 
     /// Resume a specific session by file path (e.g. .rust-code/session_123.jsonl)
     #[arg(short, long)]
@@ -38,6 +39,11 @@ enum Commands {
     Mcp {
         #[command(subcommand)]
         action: McpAction,
+    },
+    /// List or search past sessions
+    Sessions {
+        /// Fuzzy search query (omit to list all)
+        query: Option<String>,
     },
     /// Check environment health and fix missing dependencies
     Doctor {
@@ -472,6 +478,52 @@ async fn run_doctor(fix: bool) -> Result<()> {
     Ok(())
 }
 
+fn run_sessions_command(query: Option<String>) -> Result<()> {
+    let sessions = if let Some(ref q) = query {
+        let matches = baml_agent::search_sessions(".rust-code", q);
+        if matches.is_empty() {
+            println!("No sessions matching '{}'.", q);
+            return Ok(());
+        }
+        println!("Sessions matching '{}' ({}):\n", q, matches.len());
+        matches.into_iter().map(|(score, m)| (Some(score), m)).collect::<Vec<_>>()
+    } else {
+        let all = baml_agent::list_sessions(".rust-code");
+        if all.is_empty() {
+            println!("No sessions found in .rust-code/");
+            return Ok(());
+        }
+        println!("Sessions ({}):\n", all.len());
+        all.into_iter().map(|m| (None, m)).collect::<Vec<_>>()
+    };
+
+    for (score, meta) in &sessions {
+        let age = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(meta.created);
+        let age_str = if age < 3600 {
+            format!("{}m ago", age / 60)
+        } else if age < 86400 {
+            format!("{}h ago", age / 3600)
+        } else {
+            format!("{}d ago", age / 86400)
+        };
+
+        let topic = if meta.topic.is_empty() { "(no topic)" } else { &meta.topic };
+        if let Some(s) = score {
+            println!("  \x1b[1m{}\x1b[0m  [score:{}] {} msgs, {}", topic, s, meta.message_count, age_str);
+        } else {
+            println!("  \x1b[1m{}\x1b[0m  {} msgs, {}", topic, meta.message_count, age_str);
+        }
+        println!("    {}", meta.path.display());
+    }
+
+    println!("\nResume: rust-code -r \"<topic>\" -p \"continue...\"");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -487,6 +539,7 @@ async fn main() -> Result<()> {
         return match command {
             Commands::Skills { action } => run_skills_command(action).await,
             Commands::Mcp { action } => run_mcp_command(action).await,
+            Commands::Sessions { query } => run_sessions_command(query),
             Commands::Doctor { fix } => run_doctor(fix).await,
         };
     }
@@ -505,8 +558,19 @@ async fn main() -> Result<()> {
         // Only resume if explicitly requested via --session or --resume
         if let Some(session_path) = &args.session {
             let _ = agent.load_session_file(std::path::Path::new(session_path));
-        } else if args.resume {
-            let _ = agent.load_last_session();
+        } else if let Some(query) = &args.resume {
+            if query.is_empty() {
+                let _ = agent.load_last_session();
+            } else {
+                // Fuzzy search for matching session
+                let matches = baml_agent::search_sessions(".rust-code", query);
+                if let Some((score, meta)) = matches.first() {
+                    println!("Resuming: \"{}\" (score: {})", meta.topic, score);
+                    let _ = agent.load_session_file(&meta.path);
+                } else {
+                    println!("No session matching '{}', starting fresh.", query);
+                }
+            }
         }
         agent.add_user_message(&prompt);
 
@@ -574,7 +638,7 @@ async fn main() -> Result<()> {
         let mut terminal = tui::init()?;
         let mut app = app::App::new();
 
-        let result = app.run(&mut terminal, args.resume, args.session.as_deref()).await;
+        let result = app.run(&mut terminal, args.resume.as_deref(), args.session.as_deref()).await;
 
         tui::restore()?;
 

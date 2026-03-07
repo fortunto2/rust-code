@@ -831,7 +831,7 @@ impl<'a> App<'a> {
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut crate::tui::Tui, resume: bool, session: Option<&str>) -> Result<()> {
+    pub async fn run(&mut self, terminal: &mut crate::tui::Tui, resume: Option<&str>, session: Option<&str>) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(100);
 
         // Share the agent so the background worker can use it
@@ -842,8 +842,15 @@ impl<'a> App<'a> {
         }
         if let Some(session_path) = session {
             let _ = agent_instance.load_session_file(std::path::Path::new(session_path));
-        } else if resume {
-            let _ = agent_instance.load_last_session();
+        } else if let Some(query) = resume {
+            if query.is_empty() {
+                let _ = agent_instance.load_last_session();
+            } else {
+                let matches = baml_agent::search_sessions(".rust-code", query);
+                if let Some((_score, meta)) = matches.first() {
+                    let _ = agent_instance.load_session_file(&meta.path);
+                }
+            }
         }
 
         // Load messages from agent history for the UI
