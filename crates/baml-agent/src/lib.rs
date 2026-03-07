@@ -33,9 +33,14 @@ pub use session::{
 #[cfg(feature = "telemetry")]
 pub use telemetry::{init_telemetry, TelemetryGuard};
 
-/// Suppress BAML's default stdout logging (prompts, responses, timing).
-/// Call once at startup before any BAML calls.
+/// Suppress BAML's default stderr logging (prompts, responses, timing).
+///
+/// Respects existing `BAML_LOG` env var — if already set, does nothing.
+/// For debug mode: `BAML_LOG=debug cargo run` shows full prompts/responses on stderr.
 pub fn suppress_baml_log() {
+    if std::env::var("BAML_LOG").is_ok() {
+        return; // user explicitly set BAML_LOG, respect it
+    }
     // SAFETY: single-threaded init, before any BAML calls
     unsafe {
         std::env::set_var("BAML_LOG", "off");

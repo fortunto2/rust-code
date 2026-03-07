@@ -107,11 +107,21 @@ async {
 }.instrument(span).await;
 ```
 
-**Custom filter** via `RUST_LOG` env var:
+**Debug mode** — two env vars:
+
 ```bash
-RUST_LOG=debug cargo run  # all debug+ events
+# BAML prompt/response debug (full LLM I/O on stderr)
+BAML_LOG=debug cargo run   # shows prompts, responses, timing
+
+# Tracing filter (controls what goes into JSONL)
+RUST_LOG=debug cargo run   # all debug+ events in JSONL
 RUST_LOG=souffleur_sim=debug,info cargo run  # debug for sim, info for rest
+
+# Both together — full debug
+BAML_LOG=debug RUST_LOG=debug cargo run
 ```
+
+By default `BAML_LOG` is suppressed (`off`). Setting it explicitly enables BAML's native logging to stderr. In TUI mode stderr is redirected to `{log_dir}/stderr.log`, so BAML debug output ends up there.
 
 ### TUI telemetry (baml-agent-tui)
 
