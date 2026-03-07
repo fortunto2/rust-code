@@ -61,6 +61,8 @@ pub struct FuzzyPicker {
     channels: Vec<String>,
     active_channel: Option<usize>,
     pub visible: bool,
+    /// Stored action from FocusLayer::on_key — retrieve with `take_action()`.
+    last_action: Option<PickerAction>,
 }
 
 impl FocusLayer for FuzzyPicker {
@@ -70,7 +72,8 @@ impl FocusLayer for FuzzyPicker {
 
     fn on_key(&mut self, key: crossterm::event::KeyEvent) -> FocusResult {
         // Picker is modal — all keys consumed while visible
-        FuzzyPicker::on_key(self, key.code);
+        let action = FuzzyPicker::on_key(self, key.code);
+        self.last_action = Some(action);
         FocusResult::Consumed
     }
 }
@@ -91,7 +94,14 @@ impl FuzzyPicker {
             channels: Vec::new(),
             active_channel: None,
             visible: false,
+            last_action: None,
         }
+    }
+
+    /// Take the last action stored by FocusLayer::on_key.
+    /// Returns `None` if no action pending or action was already taken.
+    pub fn take_action(&mut self) -> Option<PickerAction> {
+        self.last_action.take()
     }
 
     /// Set items and rebuild channel list. Call before showing.

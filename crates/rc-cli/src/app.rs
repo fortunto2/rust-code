@@ -3862,7 +3862,13 @@ impl<'a> App<'a> {
         // Focus layer intercept — command palette gets first shot at input
         if self.command_palette.on_key(key_event).consumed() {
             if let Some(cmd) = self.command_palette.take_applied() {
-                self.set_input_text(cmd);
+                if key_event.code == KeyCode::Enter {
+                    // Enter = select AND execute immediately
+                    self.handle_slash_command(cmd);
+                } else {
+                    // Tab = insert into input (user can edit before submitting)
+                    self.set_input_text(cmd);
+                }
             }
             return;
         }
