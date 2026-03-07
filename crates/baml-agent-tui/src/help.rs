@@ -1,5 +1,7 @@
 //! Help overlay widget — shows keybindings and shortcuts.
 
+use crate::focus::{FocusLayer, FocusResult};
+use crossterm::event::KeyCode;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -57,6 +59,23 @@ impl Default for HelpOverlay {
                     description: "Previous picker channel",
                 },
             ],
+        }
+    }
+}
+
+impl FocusLayer for HelpOverlay {
+    fn is_active(&self) -> bool {
+        self.visible
+    }
+
+    fn on_key(&mut self, key: crossterm::event::KeyEvent) -> FocusResult {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.close();
+                FocusResult::Consumed
+            }
+            // Help overlay is modal — consume all keys while visible
+            _ => FocusResult::Consumed,
         }
     }
 }

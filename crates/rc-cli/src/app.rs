@@ -700,6 +700,7 @@ pub struct UiRegions {
     pub chat: Rect,
     pub input: Rect,
     pub channels: Rect,
+    pub slash_popup: Option<Rect>,
 }
 
 // Context map: tracks what fills the agent context window
@@ -962,6 +963,46 @@ impl<'a> App<'a> {
                             .await;
                     }
                     AppEvent::Ui(Event::Mouse(mouse_event)) => {
+                        // Slash popup mouse handling (scroll & click)
+                        if let Some(Some(popup)) = self.ui_regions.map(|r| r.slash_popup) {
+                            if !self.slash_suggestions.is_empty() {
+                                let col = mouse_event.column;
+                                let row = mouse_event.row;
+                                let in_popup = col >= popup.x
+                                    && col < popup.x + popup.width
+                                    && row >= popup.y
+                                    && row < popup.y + popup.height;
+                                if in_popup {
+                                    match mouse_event.kind {
+                                        crossterm::event::MouseEventKind::ScrollDown => {
+                                            if self.slash_selected + 1 < self.slash_suggestions.len() {
+                                                self.slash_selected += 1;
+                                            }
+                                            continue;
+                                        }
+                                        crossterm::event::MouseEventKind::ScrollUp => {
+                                            self.slash_selected = self.slash_selected.saturating_sub(1);
+                                            continue;
+                                        }
+                                        crossterm::event::MouseEventKind::Down(
+                                            crossterm::event::MouseButton::Left,
+                                        ) => {
+                                            // Click on item (subtract border)
+                                            let inner_y = popup.y + 1;
+                                            if row >= inner_y {
+                                                let idx = (row - inner_y) as usize;
+                                                if idx < self.slash_suggestions.len() {
+                                                    self.slash_selected = idx;
+                                                    self.apply_slash_suggestion();
+                                                }
+                                            }
+                                            continue;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
                         match mouse_event.kind {
                             crossterm::event::MouseEventKind::Down(
                                 crossterm::event::MouseButton::Left,
@@ -1380,6 +1421,11 @@ impl<'a> App<'a> {
             );
             frame.render_widget(ratatui::widgets::Clear, popup_area);
             frame.render_widget(popup, popup_area);
+            if let Some(ref mut regions) = self.ui_regions {
+                regions.slash_popup = Some(popup_area);
+            }
+        } else if let Some(ref mut regions) = self.ui_regions {
+            regions.slash_popup = None;
         }
 
         // Sidebar Rendering
@@ -1397,6 +1443,7 @@ impl<'a> App<'a> {
             chat: left_chunks[0],
             input: left_chunks[1],
             channels: sidebar_chunks[1],
+            slash_popup: None,
         });
 
         // Plan Panel
@@ -3893,6 +3940,32 @@ impl<'a> App<'a> {
             }
         }
 
+        // Slash command autocomplete intercept — before main match
+        if !self.slash_suggestions.is_empty() {
+            match key_event.code {
+                KeyCode::Tab | KeyCode::Enter => {
+                    self.apply_slash_suggestion();
+                    return;
+                }
+                KeyCode::Down => {
+                    if self.slash_selected + 1 < self.slash_suggestions.len() {
+                        self.slash_selected += 1;
+                    }
+                    return;
+                }
+                KeyCode::Up => {
+                    self.slash_selected = self.slash_selected.saturating_sub(1);
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.slash_suggestions.clear();
+                    self.slash_selected = 0;
+                    return;
+                }
+                _ => {} // Fall through to normal handling
+            }
+        }
+
         match key_event.code {
             KeyCode::F(1) => {
                 self.load_git_diff();
@@ -4038,10 +4111,7 @@ impl<'a> App<'a> {
                 }
             }
             KeyCode::Tab => {
-                self.sidebar_focus = match self.sidebar_focus {
-                    SidebarFocus::None => SidebarFocus::Channels,
-                    SidebarFocus::Channels => SidebarFocus::None,
-                };
+                // Tab inserts nothing when no slash suggestions (F10 toggles sidebar)
             }
             KeyCode::Char('g') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Refresh git status
@@ -4495,27 +4565,6 @@ impl<'a> App<'a> {
                 }
             }
             _ => {
-                // Tab completes slash suggestion
-                if key_event.code == KeyCode::Tab && !self.slash_suggestions.is_empty() {
-                    self.apply_slash_suggestion();
-                    return;
-                }
-                // Up/Down navigate slash suggestions
-                if !self.slash_suggestions.is_empty() {
-                    match key_event.code {
-                        KeyCode::Down => {
-                            if self.slash_selected + 1 < self.slash_suggestions.len() {
-                                self.slash_selected += 1;
-                            }
-                            return;
-                        }
-                        KeyCode::Up => {
-                            self.slash_selected = self.slash_selected.saturating_sub(1);
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
                 self.input_history_pos = None;
                 self.bash_history_pos = None;
                 self.textarea.input(Input::from(key_event));

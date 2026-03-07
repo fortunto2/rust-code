@@ -2,6 +2,7 @@ pub mod agent_task;
 pub mod chat;
 pub mod context_bar;
 pub mod event;
+pub mod focus;
 pub mod headless;
 pub mod help;
 pub mod picker;
@@ -13,6 +14,7 @@ pub use agent_task::{
 pub use chat::ChatState;
 pub use context_bar::ProjectContext;
 pub use event::AppEvent;
+pub use focus::{point_in_rect, route_key, route_mouse, FocusLayer, FocusResult};
 pub use headless::run_headless;
 pub use help::HelpOverlay;
 pub use picker::{FuzzyPicker, PickerAction, PickerItem, PickerPreview};

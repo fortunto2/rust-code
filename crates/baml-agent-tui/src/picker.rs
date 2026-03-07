@@ -3,6 +3,7 @@
 //! Uses nucleo-matcher for fuzzy scoring. Channels allow grouping items
 //! (e.g. "music" | "video" | "session") with Tab switching.
 
+use crate::focus::{FocusLayer, FocusResult};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::prelude::*;
@@ -60,6 +61,18 @@ pub struct FuzzyPicker {
     channels: Vec<String>,
     active_channel: Option<usize>,
     pub visible: bool,
+}
+
+impl FocusLayer for FuzzyPicker {
+    fn is_active(&self) -> bool {
+        self.visible
+    }
+
+    fn on_key(&mut self, key: crossterm::event::KeyEvent) -> FocusResult {
+        // Picker is modal — all keys consumed while visible
+        FuzzyPicker::on_key(self, key.code);
+        FocusResult::Consumed
+    }
 }
 
 impl Default for FuzzyPicker {
