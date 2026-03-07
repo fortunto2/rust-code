@@ -2,6 +2,7 @@ use crate::loop_detect::{normalize_signature, LoopDetector, LoopStatus};
 use crate::session::{AgentMessage, MessageRole, Session};
 use std::fmt;
 use std::future::Future;
+use tracing::{info_span, Instrument};
 
 /// Result of executing a single action.
 pub struct ActionResult {
@@ -160,12 +161,21 @@ where
     A: SgrAgent,
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
+    tracing::info!(
+        step = step_num,
+        situation = %decision.situation,
+        actions = decision.actions.len(),
+        completed = decision.completed,
+        "agent_decision"
+    );
+
     on_event(LoopEvent::Decision {
         situation: &decision.situation,
         task: &decision.task,
     });
 
     if decision.completed {
+        tracing::info!(step = step_num, "agent_completed");
         on_event(LoopEvent::Completed);
         return Ok(Some(step_num));
     }
@@ -187,8 +197,10 @@ where
 
     // --- Empty actions guard ---
     if decision.actions.is_empty() {
+        tracing::warn!(step = step_num, "agent_empty_actions");
         match detector.check(&sig) {
             LoopStatus::Abort(n) => {
+                tracing::error!(step = step_num, repeats = n, "agent_empty_abort");
                 on_event(LoopEvent::LoopAbort(n));
                 session.push(
                     <<A::Msg as AgentMessage>::Role>::system(),
@@ -211,6 +223,7 @@ where
     // --- Tier 1+2: exact + category loop detection ---
     match detector.check_with_category(&sig, &category) {
         LoopStatus::Abort(n) => {
+            tracing::error!(step = step_num, repeats = n, category = %category, "agent_loop_abort");
             on_event(LoopEvent::LoopAbort(n));
             session.push(
                 <<A::Msg as AgentMessage>::Role>::system(),
@@ -223,6 +236,7 @@ where
             return Ok(Some(step_num));
         }
         LoopStatus::Warning(n) => {
+            tracing::warn!(step = step_num, repeats = n, category = %category, "agent_loop_warning");
             on_event(LoopEvent::LoopWarning(n));
             session.push(
                 <<A::Msg as AgentMessage>::Role>::system(),
@@ -239,10 +253,22 @@ where
 
     // --- Execute actions ---
     for action in &decision.actions {
+        let action_sig = A::action_signature(action);
         on_event(LoopEvent::ActionStart(action));
 
+        let t0 = std::time::Instant::now();
         match agent.execute(action).await {
             Ok(result) => {
+                let elapsed_ms = t0.elapsed().as_millis() as u64;
+                tracing::info!(
+                    step = step_num,
+                    action = %action_sig,
+                    duration_ms = elapsed_ms,
+                    output_bytes = result.output.len(),
+                    done = result.done,
+                    "tool_executed"
+                );
+
                 session.push(
                     <<A::Msg as AgentMessage>::Role>::tool(),
                     result.output.clone(),
@@ -254,6 +280,7 @@ where
                 // --- Tier 3: output stagnation ---
                 match detector.record_output(&result.output) {
                     LoopStatus::Abort(n) => {
+                        tracing::error!(step = step_num, repeats = n, "output_stagnation_abort");
                         on_event(LoopEvent::LoopAbort(n));
                         session.push(
                             <<A::Msg as AgentMessage>::Role>::system(),
@@ -287,6 +314,7 @@ where
                 }
             }
             Err(e) => {
+                tracing::error!(step = step_num, action = %action_sig, error = %e, "tool_error");
                 session.push(
                     <<A::Msg as AgentMessage>::Role>::tool(),
                     format!("Tool error: {}", e),
@@ -314,16 +342,25 @@ where
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    tracing::info!(max_steps = config.max_steps, "agent_loop_start");
 
     for step_num in 1..=config.max_steps {
         let trimmed = session.trim();
         if trimmed > 0 {
+            tracing::info!(trimmed, "context_trimmed");
             on_event(LoopEvent::Trimmed(trimmed));
         }
 
         on_event(LoopEvent::StepStart(step_num));
 
-        let decision = agent.decide(session.messages()).await?;
+        let step_span = info_span!("agent_step", step = step_num);
+        let t0 = std::time::Instant::now();
+        let decision = agent
+            .decide(session.messages())
+            .instrument(step_span)
+            .await?;
+        let decide_ms = t0.elapsed().as_millis() as u64;
+        tracing::info!(step = step_num, decide_ms, "llm_decision");
 
         if let Some(final_step) = process_step(
             agent,
@@ -335,10 +372,12 @@ where
         )
         .await?
         {
+            tracing::info!(total_steps = final_step, "agent_loop_done");
             return Ok(final_step);
         }
     }
 
+    tracing::warn!(max_steps = config.max_steps, "agent_max_steps_reached");
     on_event(LoopEvent::MaxStepsReached(config.max_steps));
     Ok(config.max_steps)
 }
@@ -360,20 +399,31 @@ where
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    tracing::info!(
+        max_steps = config.max_steps,
+        streaming = true,
+        "agent_loop_start"
+    );
 
     for step_num in 1..=config.max_steps {
         let trimmed = session.trim();
         if trimmed > 0 {
+            tracing::info!(trimmed, "context_trimmed");
             on_event(LoopEvent::Trimmed(trimmed));
         }
 
         on_event(LoopEvent::StepStart(step_num));
 
+        let step_span = info_span!("agent_step", step = step_num);
+        let t0 = std::time::Instant::now();
         let decision = agent
             .decide_stream(session.messages(), |token| {
                 on_event(LoopEvent::StreamToken(token));
             })
+            .instrument(step_span)
             .await?;
+        let decide_ms = t0.elapsed().as_millis() as u64;
+        tracing::info!(step = step_num, decide_ms, "llm_decision");
 
         if let Some(final_step) = process_step(
             agent,
@@ -385,10 +435,12 @@ where
         )
         .await?
         {
+            tracing::info!(total_steps = final_step, "agent_loop_done");
             return Ok(final_step);
         }
     }
 
+    tracing::warn!(max_steps = config.max_steps, "agent_max_steps_reached");
     on_event(LoopEvent::MaxStepsReached(config.max_steps));
     Ok(config.max_steps)
 }
