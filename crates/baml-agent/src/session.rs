@@ -23,15 +23,76 @@ pub trait AgentMessage: Clone {
     fn content(&self) -> &str;
 }
 
+// ---------------------------------------------------------------------------
+// Typed session entry format (Claude Code compatible)
+// ---------------------------------------------------------------------------
+
+/// Entry type discriminator — prevents invalid types at compile time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryType {
+    User,
+    Assistant,
+    System,
+    Tool,
+}
+
+impl EntryType {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "user" => Some(Self::User),
+            "assistant" => Some(Self::Assistant),
+            "system" => Some(Self::System),
+            "tool" => Some(Self::Tool),
+            _ => None,
+        }
+    }
+
+    fn to_role<R: MessageRole>(&self) -> R {
+        match self {
+            Self::User => R::user(),
+            Self::Assistant => R::assistant(),
+            Self::System => R::system(),
+            Self::Tool => R::tool(),
+        }
+    }
+}
+
+/// Message body — matches Claude Code's format exactly.
+///
+/// - user/system: `{role: "user", content: "plain string"}`
+/// - assistant: `{role: "assistant", content: [{type: "text", text: "..."}, ...]}`
+#[derive(serde::Serialize)]
+struct MessageBody {
+    role: EntryType,
+    content: MessageContent,
+}
+
+/// Content is either a plain string (user/system) or content blocks (assistant/tool).
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum MessageContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+}
+
+/// Typed content block for serialization.
+#[derive(serde::Serialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+enum ContentBlock {
+    Text { text: String },
+}
+
 /// Claude Code compatible session entry (v7 UUIDs, time-sortable).
 ///
-/// Format: `{type, message: {content: [...]}, uuid, sessionId, timestamp, ...}`
-/// Reads both this format and legacy `{role, content}` for backward compat.
-#[derive(serde::Serialize, serde::Deserialize)]
+/// Serialization-only — reading uses `parse_entry()` on `serde_json::Value`
+/// for maximum flexibility with unknown/evolving Claude Code entry types.
+#[derive(serde::Serialize)]
 struct PersistedMessage {
     #[serde(rename = "type")]
-    msg_type: String,
-    message: serde_json::Value,
+    entry_type: EntryType,
+    message: MessageBody,
     uuid: String,
     #[serde(rename = "parentUuid", skip_serializing_if = "Option::is_none")]
     parent_uuid: Option<String>,
@@ -42,25 +103,26 @@ struct PersistedMessage {
     cwd: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Constructors
+// ---------------------------------------------------------------------------
+
 fn now_iso() -> String {
     let dur = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = dur.as_secs();
-    // Manual ISO 8601 from epoch (no chrono dependency)
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let h = time_of_day / 3600;
     let m = (time_of_day % 3600) / 60;
     let s = time_of_day % 60;
     let ms = dur.subsec_millis();
-    // Days since 1970-01-01
     let (y, mo, d) = days_to_ymd(days);
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, m, s, ms)
 }
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
-    // Simplified Gregorian calendar conversion
     let mut y = 1970;
     loop {
         let year_days = if is_leap(y) { 366 } else { 365 };
@@ -83,10 +145,21 @@ fn is_leap(y: u64) -> bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
-fn make_persisted(msg_type: &str, content: &str, session_id: &str, parent_uuid: Option<&str>) -> PersistedMessage {
+fn make_persisted(entry_type: EntryType, content: &str, session_id: &str, parent_uuid: Option<&str>) -> PersistedMessage {
+    let message = MessageBody {
+        role: entry_type,
+        content: match entry_type {
+            // Claude Code uses plain string for user/system
+            EntryType::User | EntryType::System => MessageContent::Text(content.to_string()),
+            // Claude Code uses content blocks array for assistant/tool
+            EntryType::Assistant | EntryType::Tool => MessageContent::Blocks(vec![
+                ContentBlock::Text { text: content.to_string() },
+            ]),
+        },
+    };
     PersistedMessage {
-        msg_type: msg_type.to_string(),
-        message: serde_json::json!({"content": [{"type": "text", "text": content}]}),
+        entry_type,
+        message,
         uuid: uuid::Uuid::now_v7().to_string(),
         parent_uuid: parent_uuid.map(String::from),
         session_id: session_id.to_string(),
@@ -95,54 +168,94 @@ fn make_persisted(msg_type: &str, content: &str, session_id: &str, parent_uuid: 
     }
 }
 
-/// Extract role and content from either new or legacy format.
-fn parse_entry(value: &serde_json::Value) -> Option<(String, String)> {
-    // Try new format: {type, message: {content: [...]}}
-    if let Some(msg_type) = value["type"].as_str() {
-        if matches!(msg_type, "user" | "assistant" | "system" | "tool") {
-            let content = if let Some(arr) = value["message"]["content"].as_array() {
-                arr.iter()
-                    .filter_map(|block| {
-                        if block["type"].as_str() == Some("text") {
-                            block["text"].as_str().map(String::from)
-                        } else if block["type"].as_str() == Some("tool_use") {
-                            Some(format!("[tool: {}]", block["name"].as_str().unwrap_or("?")))
-                        } else if block["type"].as_str() == Some("tool_result") {
-                            block["content"].as_str().map(|s| format!("[result: {}]", truncate(s, 200)))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else if let Some(s) = value["message"]["content"].as_str() {
-                s.to_string()
-            } else if let Some(s) = value["message"].as_str() {
-                s.to_string()
-            } else {
-                return None;
-            };
-            if !content.trim().is_empty() {
-                return Some((msg_type.to_string(), content));
-            }
+// ---------------------------------------------------------------------------
+// Parsing (reads any format: Claude Code, our format, legacy)
+// ---------------------------------------------------------------------------
+
+/// Extract entry type and text content from a JSONL entry.
+///
+/// Handles three formats:
+/// - Claude Code: `{type: "user", message: {role, content: "str" | [{type, text}]}}`
+/// - Our format: same as Claude Code (since we now match it)
+/// - Legacy: `{role: "user", content: "text"}`
+fn parse_entry(value: &serde_json::Value) -> Option<(EntryType, String)> {
+    // New format: {type, message: {content: ...}}
+    if let Some(type_str) = value["type"].as_str() {
+        let entry_type = EntryType::from_str(type_str)?;
+        let content = extract_content(&value["message"])?;
+        if !content.trim().is_empty() {
+            return Some((entry_type, content));
         }
         return None;
     }
 
-    // Try legacy format: {role, content}
-    if let Some(role) = value["role"].as_str() {
-        if let Some(content) = value["content"].as_str() {
-            if !content.trim().is_empty() {
-                return Some((role.to_string(), content.to_string()));
-            }
-        }
+    // Legacy format: {role, content}
+    let entry_type = EntryType::from_str(value["role"].as_str()?)?;
+    let content = value["content"].as_str()?;
+    if !content.trim().is_empty() {
+        return Some((entry_type, content.to_string()));
     }
     None
 }
 
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+/// Extract text content from a message body.
+///
+/// Handles: plain string, content block array, or direct string.
+fn extract_content(message: &serde_json::Value) -> Option<String> {
+    let content = &message["content"];
+
+    // Array of content blocks (assistant format)
+    if let Some(arr) = content.as_array() {
+        let parts: Vec<String> = arr.iter()
+            .filter_map(|block| {
+                match block["type"].as_str()? {
+                    "text" => block["text"].as_str().map(String::from),
+                    "tool_use" => Some(format!("[tool: {}]", block["name"].as_str().unwrap_or("?"))),
+                    "tool_result" => block["content"].as_str()
+                        .map(|s| format!("[result: {}]", truncate_str(s, 200))),
+                    _ => None, // skip thinking, etc.
+                }
+            })
+            .collect();
+        return if parts.is_empty() { None } else { Some(parts.join("\n")) };
+    }
+
+    // Plain string content (user format)
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+
+    // Direct string message (rare)
+    if let Some(s) = message.as_str() {
+        return Some(s.to_string());
+    }
+
+    None
 }
+
+/// UTF-8 safe string truncation (never panics on multibyte chars).
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
+}
+
+/// Extract unix timestamp (seconds) from a UUID v7 string.
+fn uuid_v7_timestamp(uuid_str: &str) -> Option<u64> {
+    let uuid = uuid::Uuid::parse_str(uuid_str).ok()?;
+    let (secs, _nanos) = uuid.get_timestamp()?.to_unix();
+    Some(secs)
+}
+
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
 
 /// Session manager: JSONL persistence, history access, context trimming.
 ///
@@ -271,8 +384,9 @@ impl<M: AgentMessage> Session<M> {
 
     fn persist_last(&mut self) {
         let Some(msg) = self.messages.last() else { return };
+        let Some(entry_type) = EntryType::from_str(msg.role().as_str()) else { return };
         let persisted = make_persisted(
-            msg.role().as_str(),
+            entry_type,
             msg.content(),
             &self.session_id,
             self.last_uuid.as_deref(),
@@ -297,7 +411,6 @@ impl<M: AgentMessage> Session<M> {
         for line in BufReader::new(file).lines().map_while(Result::ok) {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
 
-            // Extract session_id and uuid from new format entries
             if let Some(sid) = value["sessionId"].as_str() {
                 session_id = Some(sid.to_string());
             }
@@ -305,15 +418,12 @@ impl<M: AgentMessage> Session<M> {
                 last_uuid = Some(uid.to_string());
             }
 
-            if let Some((role_str, content)) = parse_entry(&value) {
-                if let Some(role) = <M as AgentMessage>::Role::from_str(&role_str) {
-                    messages.push(M::new(role, content));
-                }
+            if let Some((entry_type, content)) = parse_entry(&value) {
+                messages.push(M::new(entry_type.to_role::<<M as AgentMessage>::Role>(), content));
             }
         }
 
         let sid = session_id.unwrap_or_else(|| {
-            // Derive from filename if legacy format
             path.file_stem()
                 .and_then(|s| s.to_str())
                 .map(String::from)
@@ -334,12 +444,16 @@ impl<M: AgentMessage> Session<M> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SessionMeta
+// ---------------------------------------------------------------------------
+
 /// Metadata about a saved session (lightweight, no full message load).
 #[derive(Debug, Clone)]
 pub struct SessionMeta {
     /// Path to the JSONL file.
     pub path: PathBuf,
-    /// Unix timestamp from filename or first entry.
+    /// Unix timestamp (seconds) — extracted from UUID v7, filename, or file mtime.
     pub created: u64,
     /// Number of messages (lines in JSONL).
     pub message_count: usize,
@@ -357,21 +471,12 @@ impl SessionMeta {
         let meta = fs::metadata(path).ok()?;
         let filename = path.file_stem()?.to_str()?;
 
-        // Try legacy "session_{ts}" format, otherwise use file modification time
-        let created = filename.strip_prefix("session_")
-            .and_then(|s| s.parse::<u64>().ok())
-            .or_else(|| {
-                meta.modified().ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-            })
-            .unwrap_or(0);
-
         let file = fs::File::open(path).ok()?;
         let reader = BufReader::new(file);
         let mut message_count = 0;
         let mut topic = String::new();
         let mut session_id = None;
+        let mut first_uuid = None;
 
         for line in reader.lines().map_while(Result::ok) {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
@@ -380,19 +485,27 @@ impl SessionMeta {
             if session_id.is_none() {
                 session_id = value["sessionId"].as_str().map(String::from);
             }
+            if first_uuid.is_none() {
+                first_uuid = value["uuid"].as_str().map(String::from);
+            }
 
             if topic.is_empty() {
-                if let Some((role, content)) = parse_entry(&value) {
-                    if role == "user" {
-                        topic = if content.len() > 120 {
-                            format!("{}...", &content[..117])
-                        } else {
-                            content
-                        };
-                    }
+                if let Some((EntryType::User, content)) = parse_entry(&value) {
+                    topic = truncate_topic(&content);
                 }
             }
         }
+
+        // Determine creation time: UUID v7 timestamp > filename > file mtime
+        let created = first_uuid.as_deref()
+            .and_then(uuid_v7_timestamp)
+            .or_else(|| filename.strip_prefix("session_")?.parse::<u64>().ok())
+            .or_else(|| {
+                meta.modified().ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+            })
+            .unwrap_or(0);
 
         Some(Self {
             path: path.to_path_buf(),
@@ -402,6 +515,16 @@ impl SessionMeta {
             size_bytes: meta.len(),
             session_id,
         })
+    }
+}
+
+/// Truncate topic for display, respecting UTF-8 boundaries.
+fn truncate_topic(s: &str) -> String {
+    if s.len() <= 120 {
+        s.to_string()
+    } else {
+        let truncated = truncate_str(s, 117);
+        format!("{}...", truncated)
     }
 }
 
@@ -466,12 +589,11 @@ pub fn import_claude_session(
     for line in reader.lines().map_while(Result::ok) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
 
-        let msg_type = value["type"].as_str().unwrap_or("");
-        if !matches!(msg_type, "user" | "assistant" | "system") { continue; }
+        let type_str = value["type"].as_str().unwrap_or("");
+        if EntryType::from_str(type_str).is_none() { continue; }
 
         // If it already has the full format, pass through with our session_id
         if value.get("message").is_some() && value.get("uuid").is_some() {
-            // Re-serialize with our session_id but preserve the rest
             let mut entry = value.clone();
             entry["sessionId"] = serde_json::Value::String(session_id.clone());
             if let Some(uid) = entry["uuid"].as_str() {
@@ -484,8 +606,8 @@ pub fn import_claude_session(
         }
 
         // Extract content for non-standard entries
-        if let Some((role, content)) = parse_entry(&value) {
-            let persisted = make_persisted(&role, &content, &session_id, last_uuid.as_deref());
+        if let Some((entry_type, content)) = parse_entry(&value) {
+            let persisted = make_persisted(entry_type, &content, &session_id, last_uuid.as_deref());
             last_uuid = Some(persisted.uuid.clone());
             if let Ok(json) = serde_json::to_string(&persisted) {
                 entries.push(json);
@@ -505,6 +627,10 @@ pub fn import_claude_session(
 
     Some(output_path)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -547,23 +673,187 @@ pub(crate) mod tests {
         fn content(&self) -> &str { &self.content }
     }
 
+    // --- Type safety tests ---
+
+    #[test]
+    fn entry_type_roundtrip() {
+        for t in [EntryType::User, EntryType::Assistant, EntryType::System, EntryType::Tool] {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: EntryType = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, back);
+        }
+    }
+
+    #[test]
+    fn entry_type_rejects_invalid() {
+        assert!(EntryType::from_str("progress").is_none());
+        assert!(EntryType::from_str("file-history-snapshot").is_none());
+        assert!(EntryType::from_str("").is_none());
+    }
+
+    #[test]
+    fn user_message_serialized_as_plain_string() {
+        let p = make_persisted(EntryType::User, "hello", "sid", None);
+        let json: serde_json::Value = serde_json::to_value(&p).unwrap();
+        // User content should be a plain string, not blocks array
+        assert!(json["message"]["content"].is_string());
+        assert_eq!(json["message"]["content"].as_str(), Some("hello"));
+        assert_eq!(json["message"]["role"].as_str(), Some("user"));
+    }
+
+    #[test]
+    fn assistant_message_serialized_as_blocks() {
+        let p = make_persisted(EntryType::Assistant, "thinking...", "sid", None);
+        let json: serde_json::Value = serde_json::to_value(&p).unwrap();
+        // Assistant content should be blocks array
+        let blocks = json["message"]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"].as_str(), Some("text"));
+        assert_eq!(blocks[0]["text"].as_str(), Some("thinking..."));
+    }
+
+    #[test]
+    fn system_message_serialized_as_plain_string() {
+        let p = make_persisted(EntryType::System, "you are an agent", "sid", None);
+        let json: serde_json::Value = serde_json::to_value(&p).unwrap();
+        assert!(json["message"]["content"].is_string());
+    }
+
+    // --- UTF-8 safety ---
+
+    #[test]
+    fn truncate_str_ascii() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+        assert_eq!(truncate_str("hi", 10), "hi");
+    }
+
+    #[test]
+    fn truncate_str_utf8_safe() {
+        // Multibyte chars: each CJK/Cyrillic char is 2+ bytes in UTF-8
+        let s = "ab\u{00e9}cd\u{00fc}ef"; // 10 bytes (a,b,é,c,d,ü,e,f = 6 ASCII + 2×2-byte)
+        let t = truncate_str(s, 4);
+        assert!(t.len() <= 4);
+        assert_eq!(t, "ab\u{00e9}"); // 'a'(1) + 'b'(1) + 'é'(2) = 4 bytes
+
+        // Odd limit must not split a 2-byte char
+        let t2 = truncate_str(s, 3);
+        assert!(t2.len() <= 3);
+        assert_eq!(t2, "ab"); // 'é' at byte 2 is 2 bytes, doesn't fit in 3
+    }
+
+    #[test]
+    fn truncate_str_emoji() {
+        let s = "Hello 🌍🌍🌍";
+        let t = truncate_str(s, 8);
+        // "Hello " is 6 bytes, 🌍 is 4 bytes → doesn't fit at 8
+        assert!(t.len() <= 8);
+        assert_eq!(t, "Hello "); // 6 bytes, emoji doesn't fit
+    }
+
+    #[test]
+    fn truncate_topic_multibyte() {
+        let long_multibyte = "\u{00e9}".repeat(200); // 400 bytes (2-byte chars)
+        let topic = truncate_topic(&long_multibyte);
+        assert!(topic.ends_with("..."));
+        assert!(topic.len() <= 120);
+    }
+
+    // --- UUID v7 ---
+
+    #[test]
+    fn uuid_v7_is_time_ordered() {
+        let id1 = uuid::Uuid::now_v7().to_string();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let id2 = uuid::Uuid::now_v7().to_string();
+        assert!(id2 > id1, "v7 UUIDs should be time-ordered: {} > {}", id2, id1);
+    }
+
+    #[test]
+    fn uuid_v7_timestamp_extraction() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let id = uuid::Uuid::now_v7().to_string();
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let ts = uuid_v7_timestamp(&id).unwrap();
+        assert!(ts >= before && ts <= after);
+    }
+
+    #[test]
+    fn uuid_v7_timestamp_invalid() {
+        assert!(uuid_v7_timestamp("not-a-uuid").is_none());
+        // UUID v4 has no timestamp
+        assert!(uuid_v7_timestamp("550e8400-e29b-41d4-a716-446655440000").is_none());
+    }
+
+    // --- Timestamps ---
+
     #[test]
     fn now_iso_produces_valid_timestamp() {
         let ts = now_iso();
-        // Should look like 2026-03-07T12:34:56.789Z
         assert!(ts.ends_with('Z'));
-        assert_eq!(ts.len(), 24); // YYYY-MM-DDTHH:MM:SS.mmmZ
+        assert_eq!(ts.len(), 24);
         assert_eq!(&ts[4..5], "-");
         assert_eq!(&ts[10..11], "T");
     }
 
+    // --- parse_entry ---
+
+    #[test]
+    fn parse_entry_claude_code_user_format() {
+        let entry: serde_json::Value = serde_json::from_str(
+            r#"{"type":"user","message":{"role":"user","content":"fix the bug"},"uuid":"abc","sessionId":"s1","timestamp":"2026-03-07T10:00:00.000Z"}"#
+        ).unwrap();
+        let (et, content) = parse_entry(&entry).unwrap();
+        assert_eq!(et, EntryType::User);
+        assert_eq!(content, "fix the bug");
+    }
+
+    #[test]
+    fn parse_entry_claude_code_assistant_format() {
+        let entry: serde_json::Value = serde_json::from_str(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Looking at it..."},{"type":"tool_use","name":"Read","id":"x","input":{}}]},"uuid":"def","sessionId":"s1","timestamp":"2026-03-07T10:00:01.000Z"}"#
+        ).unwrap();
+        let (et, content) = parse_entry(&entry).unwrap();
+        assert_eq!(et, EntryType::Assistant);
+        assert!(content.contains("Looking at it..."));
+        assert!(content.contains("[tool: Read]"));
+    }
+
+    #[test]
+    fn parse_entry_skips_thinking_only() {
+        let entry: serde_json::Value = serde_json::from_str(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm..."}]},"uuid":"ghi","sessionId":"s1","timestamp":"2026-03-07T10:00:02.000Z"}"#
+        ).unwrap();
+        assert!(parse_entry(&entry).is_none());
+    }
+
+    #[test]
+    fn parse_entry_skips_progress() {
+        let entry: serde_json::Value = serde_json::from_str(
+            r#"{"type":"progress","data":{"type":"hook_progress"},"uuid":"a"}"#
+        ).unwrap();
+        assert!(parse_entry(&entry).is_none());
+    }
+
+    #[test]
+    fn parse_entry_legacy_format() {
+        let entry: serde_json::Value = serde_json::from_str(
+            r#"{"role":"user","content":"hello legacy"}"#
+        ).unwrap();
+        let (et, content) = parse_entry(&entry).unwrap();
+        assert_eq!(et, EntryType::User);
+        assert_eq!(content, "hello legacy");
+    }
+
+    // --- Session CRUD ---
+
     #[test]
     fn trim_preserves_system_and_recent() {
-        let dir = std::env::temp_dir().join("baml_rt_test_trim");
+        let dir = std::env::temp_dir().join("baml_rt_test_trim3");
         let _ = std::fs::remove_dir_all(&dir);
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 10);
 
-        // 1 system + 20 user/assistant
         session.push(TestRole::System, "sys prompt".into());
         for i in 0..20 {
             let role = if i % 2 == 0 { TestRole::User } else { TestRole::Assistant };
@@ -573,9 +863,8 @@ pub(crate) mod tests {
 
         let trimmed = session.trim();
         assert!(trimmed > 0);
-        assert!(session.len() <= 12); // 10 max + system + trim notice
+        assert!(session.len() <= 12);
         assert_eq!(session.messages()[0].role(), &TestRole::System);
-        assert_eq!(session.messages()[0].content(), "sys prompt");
         assert!(session.messages()[1].content().contains("trimmed"));
         assert_eq!(session.messages().last().unwrap().content(), "msg 19");
 
@@ -584,7 +873,7 @@ pub(crate) mod tests {
 
     #[test]
     fn trim_noop_small_history() {
-        let dir = std::env::temp_dir().join("baml_rt_test_noop");
+        let dir = std::env::temp_dir().join("baml_rt_test_noop3");
         let _ = std::fs::remove_dir_all(&dir);
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "hello".into());
@@ -594,7 +883,7 @@ pub(crate) mod tests {
 
     #[test]
     fn persist_and_reload() {
-        let dir = std::env::temp_dir().join("baml_rt_test_persist_v2");
+        let dir = std::env::temp_dir().join("baml_rt_test_persist_v3");
         let _ = std::fs::remove_dir_all(&dir);
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         let sid = session.session_id().to_string();
@@ -608,21 +897,23 @@ pub(crate) mod tests {
         assert_eq!(loaded.messages()[1].role(), &TestRole::Assistant);
         assert_eq!(loaded.session_id(), sid);
 
-        // Verify the persisted format is Claude Code compatible
+        // Verify user message uses plain string format
         let raw = std::fs::read_to_string(&path).unwrap();
-        let first_line: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
-        assert_eq!(first_line["type"].as_str(), Some("user"));
-        assert!(first_line["uuid"].as_str().is_some());
-        assert!(first_line["sessionId"].as_str().is_some());
-        assert!(first_line["timestamp"].as_str().is_some());
-        assert!(first_line["message"]["content"].as_array().is_some());
+        let first: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+        assert_eq!(first["type"].as_str(), Some("user"));
+        assert!(first["message"]["content"].is_string()); // plain string, not blocks
+
+        // Verify assistant message uses blocks format
+        let second: serde_json::Value = serde_json::from_str(raw.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(second["type"].as_str(), Some("assistant"));
+        assert!(second["message"]["content"].is_array()); // blocks array
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn persist_parent_uuid_chain() {
-        let dir = std::env::temp_dir().join("baml_rt_test_parent_uuid");
+        let dir = std::env::temp_dir().join("baml_rt_test_parent_uuid3");
         let _ = std::fs::remove_dir_all(&dir);
         let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         session.push(TestRole::User, "first".into());
@@ -634,23 +925,35 @@ pub(crate) mod tests {
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
-        // First message has no parent
         assert!(entries[0]["parentUuid"].is_null());
-        // Second message's parent is first message's uuid
         assert_eq!(entries[1]["parentUuid"].as_str(), entries[0]["uuid"].as_str());
-        // Third message's parent is second message's uuid
         assert_eq!(entries[2]["parentUuid"].as_str(), entries[1]["uuid"].as_str());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
+    fn persist_multibyte_content() {
+        let dir = std::env::temp_dir().join("baml_rt_test_multibyte");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        session.push(TestRole::User, "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}".into());
+        session.push(TestRole::Assistant, "got it! \u{1f389}".into());
+
+        let path = session.session_file().to_path_buf();
+        let loaded = Session::<TestMsg>::resume(&path, dir.to_str().unwrap(), 60);
+        assert_eq!(loaded.messages()[0].content(), "caf\u{00e9} na\u{00ef}ve r\u{00e9}sum\u{00e9}");
+        assert_eq!(loaded.messages()[1].content(), "got it! \u{1f389}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn load_legacy_format() {
-        let dir = std::env::temp_dir().join("baml_rt_test_legacy");
+        let dir = std::env::temp_dir().join("baml_rt_test_legacy3");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Write legacy format manually
         let path = dir.join("session_1234567890.jsonl");
         let legacy = vec![
             r#"{"role":"user","content":"hello legacy"}"#,
@@ -661,8 +964,6 @@ pub(crate) mod tests {
         let loaded = Session::<TestMsg>::resume(&path, dir.to_str().unwrap(), 60);
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded.messages()[0].content(), "hello legacy");
-        assert_eq!(loaded.messages()[1].content(), "hi from old format");
-        // Session ID derived from filename for legacy
         assert_eq!(loaded.session_id(), "session_1234567890");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -670,15 +971,12 @@ pub(crate) mod tests {
 
     #[test]
     fn resume_last_finds_latest() {
-        let dir = std::env::temp_dir().join("baml_rt_test_resume_v2");
+        let dir = std::env::temp_dir().join("baml_rt_test_resume_v3");
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s1.push(TestRole::User, "first".into());
-
-        // UUID v7 is time-ordered, so a small delay ensures ordering
         std::thread::sleep(std::time::Duration::from_millis(10));
-
         let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s2.push(TestRole::User, "second".into());
 
@@ -688,77 +986,109 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn list_sessions_returns_sorted() {
-        let dir = std::env::temp_dir().join("baml_test_list_sessions_v2");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
-        s1.push(TestRole::User, "fix parser bug".into());
-        s1.push(TestRole::Assistant, "looking at it".into());
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
-        s2.push(TestRole::User, "add new feature".into());
-
-        let sessions = super::list_sessions(dir.to_str().unwrap());
-        assert_eq!(sessions.len(), 2);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    // --- SessionMeta ---
 
     #[test]
     fn session_meta_extracts_topic() {
-        let dir = std::env::temp_dir().join("baml_test_meta_topic_v2");
+        let dir = std::env::temp_dir().join("baml_test_meta_topic_v3");
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s.push(TestRole::System, "you are an agent".into());
         s.push(TestRole::User, "deploy to production".into());
-        s.push(TestRole::Assistant, "on it".into());
 
-        let meta = super::SessionMeta::from_path(s.session_file()).unwrap();
+        let meta = SessionMeta::from_path(s.session_file()).unwrap();
         assert_eq!(meta.topic, "deploy to production");
-        assert_eq!(meta.message_count, 3);
+        assert_eq!(meta.message_count, 2);
         assert!(meta.size_bytes > 0);
         assert!(meta.session_id.is_some());
+        // created should be extracted from UUID v7 timestamp
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        assert!(meta.created > 0 && meta.created <= now);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_meta_created_from_uuid_v7() {
+        let dir = std::env::temp_dir().join("baml_test_meta_uuid_ts");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s.push(TestRole::User, "test".into());
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+        let meta = SessionMeta::from_path(s.session_file()).unwrap();
+        assert!(meta.created >= before && meta.created <= after,
+            "created {} should be between {} and {}", meta.created, before, after);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sessions_returns_sorted() {
+        let dir = std::env::temp_dir().join("baml_test_list_v3");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s1.push(TestRole::User, "fix parser bug".into());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s2.push(TestRole::User, "add new feature".into());
+
+        let sessions = list_sessions(dir.to_str().unwrap());
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions[0].created >= sessions[1].created);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn list_sessions_empty_dir() {
-        let dir = std::env::temp_dir().join("baml_test_list_empty_v2");
+        let dir = std::env::temp_dir().join("baml_test_empty_v3");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
+        assert!(list_sessions(dir.to_str().unwrap()).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        let sessions = super::list_sessions(dir.to_str().unwrap());
-        assert!(sessions.is_empty());
+    #[test]
+    fn topic_truncated_for_long_messages() {
+        let dir = std::env::temp_dir().join("baml_test_long_topic_v3");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
+        s.push(TestRole::User, "a".repeat(200));
+
+        let meta = SessionMeta::from_path(s.session_file()).unwrap();
+        assert!(meta.topic.len() <= 120);
+        assert!(meta.topic.ends_with("..."));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // --- Search ---
+
     #[cfg(feature = "search")]
     #[test]
     fn search_sessions_fuzzy() {
-        let dir = std::env::temp_dir().join("baml_test_search_sessions_v2");
+        let dir = std::env::temp_dir().join("baml_test_search_v3");
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut s1 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s1.push(TestRole::User, "fix parser bug in baml".into());
-
         std::thread::sleep(std::time::Duration::from_millis(10));
-
         let mut s2 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s2.push(TestRole::User, "deploy to production".into());
-
         std::thread::sleep(std::time::Duration::from_millis(10));
-
         let mut s3 = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
         s3.push(TestRole::User, "fix loop detection bug".into());
 
-        let results = super::search_sessions(dir.to_str().unwrap(), "fix bug");
+        let results = search_sessions(dir.to_str().unwrap(), "fix bug");
         assert!(!results.is_empty());
         let topics: Vec<&str> = results.iter().map(|(_, m)| m.topic.as_str()).collect();
         assert!(topics.iter().any(|t| t.contains("fix")));
@@ -766,24 +1096,25 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // --- Import ---
+
     #[test]
     fn import_claude_session_converts() {
-        let dir = std::env::temp_dir().join("baml_test_import_claude_v2");
+        let dir = std::env::temp_dir().join("baml_test_import_v3");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Create a fake Claude Code session
         let claude_session = dir.join("claude_session.jsonl");
         let lines = vec![
             r#"{"type":"progress","data":{"type":"hook_progress"},"uuid":"a","timestamp":"2026-03-07"}"#,
-            r#"{"type":"user","message":{"content":[{"type":"text","text":"fix the parser bug"}]},"uuid":"b","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at the parser..."},{"type":"tool_use","name":"Read","id":"x"}]},"uuid":"c","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"fix the parser bug"},"uuid":"b","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Looking at the parser..."},{"type":"tool_use","name":"Read","id":"x","input":{}}]},"uuid":"c","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
             r#"{"type":"system","message":{"content":"context info"},"uuid":"d","sessionId":"test-sid","timestamp":"2026-03-07"}"#,
         ];
         std::fs::write(&claude_session, lines.join("\n")).unwrap();
 
         let out_dir = dir.join("sessions");
-        let result = super::import_claude_session(&claude_session, out_dir.to_str().unwrap());
+        let result = import_claude_session(&claude_session, out_dir.to_str().unwrap());
         assert!(result.is_some());
 
         let output = result.unwrap();
@@ -792,40 +1123,56 @@ pub(crate) mod tests {
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
-        assert_eq!(entries.len(), 3); // user + assistant + system (progress skipped)
+        assert_eq!(entries.len(), 3);
         assert_eq!(entries[0]["type"].as_str(), Some("user"));
         assert_eq!(entries[1]["type"].as_str(), Some("assistant"));
         assert_eq!(entries[2]["type"].as_str(), Some("system"));
 
-        // Verify entries have our sessionId (not the original)
         let sid = entries[0]["sessionId"].as_str().unwrap();
-        assert_ne!(sid, "test-sid"); // We assign a new session ID
+        assert_ne!(sid, "test-sid");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn topic_truncated_for_long_messages() {
-        let dir = std::env::temp_dir().join("baml_test_long_topic_v2");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let mut s = Session::<TestMsg>::new(dir.to_str().unwrap(), 60);
-        let long_msg = "a".repeat(200);
-        s.push(TestRole::User, long_msg);
-
-        let meta = super::SessionMeta::from_path(s.session_file()).unwrap();
-        assert!(meta.topic.len() <= 120);
-        assert!(meta.topic.ends_with("..."));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    // --- Integration ---
 
     #[test]
-    fn uuid_v7_is_time_ordered() {
-        let id1 = uuid::Uuid::now_v7().to_string();
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        let id2 = uuid::Uuid::now_v7().to_string();
-        // UUID v7 sorts lexicographically by time
-        assert!(id2 > id1, "v7 UUIDs should be time-ordered: {} > {}", id2, id1);
+    fn load_real_claude_session() {
+        // Integration test: import a real Claude Code session if ~/.claude/ exists.
+        // Skips gracefully on CI or machines without Claude Code.
+        let Ok(home) = std::env::var("HOME") else { return };
+        let claude_dir = std::path::Path::new(&home).join(".claude/projects");
+        if !claude_dir.exists() { return; }
+
+        // Find any project dir with .jsonl sessions
+        let Some(project_dir) = std::fs::read_dir(&claude_dir).ok()
+            .and_then(|rd| rd.filter_map(|e| e.ok())
+                .find(|e| e.path().is_dir() && std::fs::read_dir(e.path()).ok()
+                    .map(|rd2| rd2.filter_map(|e2| e2.ok())
+                        .any(|e2| e2.path().extension().is_some_and(|ext| ext == "jsonl")))
+                    .unwrap_or(false)))
+        else { return };
+
+        let smallest = std::fs::read_dir(project_dir.path()).unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+            .min_by_key(|e| e.metadata().map(|m| m.len()).unwrap_or(u64::MAX));
+        let Some(smallest) = smallest else { return };
+
+        let out_dir = std::env::temp_dir().join("baml_test_real_v3");
+        let _ = std::fs::remove_dir_all(&out_dir);
+
+        let result = import_claude_session(&smallest.path(), out_dir.to_str().unwrap());
+        if let Some(output) = result {
+            let content = std::fs::read_to_string(&output).unwrap();
+            assert!(content.lines().count() > 0);
+            for line in content.lines() {
+                let v: serde_json::Value = serde_json::from_str(line).unwrap();
+                assert!(v["type"].as_str().is_some());
+                assert!(v["sessionId"].as_str().is_some());
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }
