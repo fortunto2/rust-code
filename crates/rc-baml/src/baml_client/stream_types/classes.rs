@@ -3,36 +3,22 @@
 //
 // Learn more at https://docs.boundaryml.com
 
-
 //! Generated streaming class types.
 //!
 //! These types are used during streaming to hold partial results.
 //! Field types are already wrapped appropriately (Option, StreamState, etc.)
 
-use baml::BamlDecode;
-use crate::baml_client::types;
 use super::*;
-
-
-
-
+use crate::baml_client::types;
+use baml::BamlDecode;
 
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct AskUserTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub question: Option<String>,
-
-
 }
-
-
 
 impl AsRef<AskUserTool> for AskUserTool {
     fn as_ref(&self) -> &AskUserTool {
@@ -40,29 +26,15 @@ impl AsRef<AskUserTool> for AskUserTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct BashBgTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub name: Option<String>,
 
-
-
     pub command: Option<String>,
-
-
 }
-
-
 
 impl AsRef<BashBgTool> for BashBgTool {
     fn as_ref(&self) -> &BashBgTool {
@@ -70,25 +42,17 @@ impl AsRef<BashBgTool> for BashBgTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct BashCommandTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub command: Option<String>,
 
+    pub description: Option<String>,
 
+    pub timeout: Option<i64>,
 }
-
-
 
 impl AsRef<BashCommandTool> for BashCommandTool {
     fn as_ref(&self) -> &BashCommandTool {
@@ -96,25 +60,13 @@ impl AsRef<BashCommandTool> for BashCommandTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct DependenciesTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub path: Option<String>,
-
-
 }
-
-
 
 impl AsRef<DependenciesTool> for DependenciesTool {
     fn as_ref(&self) -> &DependenciesTool {
@@ -122,33 +74,17 @@ impl AsRef<DependenciesTool> for DependenciesTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct EditFileTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub path: Option<String>,
 
-
-
     pub old_string: Option<String>,
 
-
-
     pub new_string: Option<String>,
-
-
 }
-
-
 
 impl AsRef<EditFileTool> for EditFileTool {
     fn as_ref(&self) -> &EditFileTool {
@@ -156,25 +92,13 @@ impl AsRef<EditFileTool> for EditFileTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct FinishTaskTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub summary: Option<String>,
-
-
 }
-
-
 
 impl AsRef<FinishTaskTool> for FinishTaskTool {
     fn as_ref(&self) -> &FinishTaskTool {
@@ -182,25 +106,13 @@ impl AsRef<FinishTaskTool> for FinishTaskTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitAddTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub paths: Vec<String>,
-
-
 }
-
-
 
 impl AsRef<GitAddTool> for GitAddTool {
     fn as_ref(&self) -> &GitAddTool {
@@ -208,25 +120,13 @@ impl AsRef<GitAddTool> for GitAddTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitCommitTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub message: Option<String>,
-
-
 }
-
-
 
 impl AsRef<GitCommitTool> for GitCommitTool {
     fn as_ref(&self) -> &GitCommitTool {
@@ -234,29 +134,15 @@ impl AsRef<GitCommitTool> for GitCommitTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitDiffTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub path: Option<String>,
 
-
-
     pub cached: Option<bool>,
-
-
 }
-
-
 
 impl AsRef<GitDiffTool> for GitDiffTool {
     fn as_ref(&self) -> &GitDiffTool {
@@ -264,25 +150,13 @@ impl AsRef<GitDiffTool> for GitDiffTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct GitStatusTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub dummy: Option<String>,
-
-
 }
-
-
 
 impl AsRef<GitStatusTool> for GitStatusTool {
     fn as_ref(&self) -> &GitStatusTool {
@@ -290,33 +164,17 @@ impl AsRef<GitStatusTool> for GitStatusTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct McpToolCall {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub server: Option<String>,
 
-
-
     pub tool: Option<String>,
 
-
-
     pub arguments: Option<String>,
-
-
 }
-
-
 
 impl AsRef<McpToolCall> for McpToolCall {
     fn as_ref(&self) -> &McpToolCall {
@@ -324,45 +182,23 @@ impl AsRef<McpToolCall> for McpToolCall {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct MemoryTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub operation: Option<types::Union2KforgetOrKsave>,
 
-
-
     pub category: Option<types::Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference>,
-
-
 
     pub section: Option<String>,
 
-
-
     pub content: Option<String>,
-
-
 
     pub context: Option<String>,
 
-
-
     pub confidence: Option<types::Union2KconfirmedOrKtentative>,
-
-
 }
-
-
 
 impl AsRef<MemoryTool> for MemoryTool {
     fn as_ref(&self) -> &MemoryTool {
@@ -370,34 +206,19 @@ impl AsRef<MemoryTool> for MemoryTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct Message {
-
-
-
     pub role: Option<String>,
 
-
-
     pub content: Option<String>,
-
-
 }
-
-
 
 impl AsRef<Message> for Message {
     fn as_ref(&self) -> &Message {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlDecode)]
 
@@ -413,12 +234,10 @@ pub struct NextStep {
 
 
 
-    pub actions: Vec<Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool>,
+    pub actions: Vec<Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool>,
 
 
 }
-
-
 
 impl AsRef<NextStep> for NextStep {
     fn as_ref(&self) -> &NextStep {
@@ -426,29 +245,15 @@ impl AsRef<NextStep> for NextStep {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct OpenEditorTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub path: Option<String>,
 
-
-
     pub line: Option<i64>,
-
-
 }
-
-
 
 impl AsRef<OpenEditorTool> for OpenEditorTool {
     fn as_ref(&self) -> &OpenEditorTool {
@@ -456,25 +261,13 @@ impl AsRef<OpenEditorTool> for OpenEditorTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct ProjectMapTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub path: Option<String>,
-
-
 }
-
-
 
 impl AsRef<ProjectMapTool> for ProjectMapTool {
     fn as_ref(&self) -> &ProjectMapTool {
@@ -482,33 +275,17 @@ impl AsRef<ProjectMapTool> for ProjectMapTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct ReadFileTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub path: Option<String>,
 
-
-
     pub offset: Option<i64>,
 
-
-
     pub limit: Option<i64>,
-
-
 }
-
-
 
 impl AsRef<ReadFileTool> for ReadFileTool {
     fn as_ref(&self) -> &ReadFileTool {
@@ -516,25 +293,13 @@ impl AsRef<ReadFileTool> for ReadFileTool {
     }
 }
 
-
-
-
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct SearchCodeTool {
-
-
-
     pub tool_name: Option<String>,
 
-
-
     pub query: Option<String>,
-
-
 }
-
-
 
 impl AsRef<SearchCodeTool> for SearchCodeTool {
     fn as_ref(&self) -> &SearchCodeTool {
@@ -542,33 +307,42 @@ impl AsRef<SearchCodeTool> for SearchCodeTool {
     }
 }
 
+#[derive(Debug, Clone, Default, BamlDecode)]
 
+pub struct TaskTool {
+    pub tool_name: Option<String>,
 
+    pub operation: Option<types::Union4KcreateOrKdoneOrKlistOrKupdate>,
+
+    pub title: Option<String>,
+
+    pub task_id: Option<i64>,
+
+    pub status: Option<types::Union4KblockedOrKdoneOrKin_progressOrKtodo>,
+
+    pub priority: Option<types::Union3KhighOrKlowOrKmedium>,
+
+    pub notes: Option<String>,
+}
+
+impl AsRef<TaskTool> for TaskTool {
+    fn as_ref(&self) -> &TaskTool {
+        self
+    }
+}
 
 #[derive(Debug, Clone, Default, BamlDecode)]
 
 pub struct WriteFileTool {
-
-
-
     pub tool_name: Option<String>,
-
-
 
     pub path: Option<String>,
 
-
-
     pub content: Option<String>,
-
-
 }
-
-
 
 impl AsRef<WriteFileTool> for WriteFileTool {
     fn as_ref(&self) -> &WriteFileTool {
         self
     }
 }
-

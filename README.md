@@ -49,7 +49,8 @@ rust-code --resume                                 # continue last session
 
 - **Interactive TUI** — chat UI built with `ratatui` and `crossterm`
 - **BAML agent loop** — typed tool execution with fallback chain (Gemini Pro → Flash → Flash Lite)
-- **14 built-in tools** — file read/write/edit, bash, search, git status/diff/add/commit, and more
+- **18 built-in tools** — file read/write/edit, bash, search, git status/diff/add/commit, and more
+- **Task Management** — persistent kanban board tracking via `.tasks/*.md` using the built-in `TaskTool`
 - **Fuzzy file search** (`Ctrl+P`) — fast file navigation with `nucleo` and live file preview
 - **Project symbol search** (`F6`) — browse functions, structs, enums with code preview
 - **Background tasks** (`F7`) — run long commands in `tmux` windows with realtime output preview
@@ -93,15 +94,26 @@ Connect external tool servers by adding `.mcp.json` in your project or home dire
 
 The agent discovers MCP tools at startup and can call them via `McpToolCall`.
 
-## Provider Setup
+## Setup & Providers
 
-The current build is configured for these LLM backends:
+On first launch, `rust-code` runs an interactive `setup` wizard to configure your preferred LLM backends and verifies authentication using `rust-code doctor`.
 
-- Google AI via `GEMINI_API_KEY`
-- Vertex AI via `GOOGLE_CLOUD_PROJECT`
-- OpenRouter via `OPENROUTER_API_KEY`
+You can also run these manually:
 
-At least one of them must be configured in your environment before launching `rust-code`.
+```bash
+rust-code setup
+rust-code doctor
+```
+
+Supported providers include:
+
+- **Google AI** via `GEMINI_API_KEY`
+- **Vertex AI** via `VERTEX_PROJECT` (uses Google Cloud ADC or service account)
+- **Anthropic** via `ANTHROPIC_API_KEY`
+- **OpenRouter** via `OPENROUTER_API_KEY`
+- **Ollama** (local via `OLLAMA_HOST`)
+
+At least one provider must be configured before launching `rust-code`.
 
 Examples:
 
@@ -216,13 +228,19 @@ Background tasks are backed by `tmux`, so having `tmux` installed is useful if y
 ## CLI
 
 ```text
-Usage: rust-code [OPTIONS]
+Usage: rust-code [COMMAND] [OPTIONS]
+
+Commands:
+  setup     Run interactive provider setup wizard
+  doctor    Check system dependencies and API authentication
+  skills    Manage installed agent skills (add, remove, search, list)
+  sessions  List or manage past chat sessions
 
 Options:
-  -p, --prompt <PROMPT>
-  -r, --resume
-  -h, --help
-  -V, --version
+  -p, --prompt <PROMPT>  Run in headless mode with a prompt
+  -r, --resume           Resume last session
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ## Development

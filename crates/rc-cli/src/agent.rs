@@ -6,12 +6,12 @@ use crate::tools::{
 use anyhow::Result;
 use baml_agent::{
     ActionKind, ActionResult, AgentMessage, HintContext, Intent, LoopDetector, MessageRole,
-    Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints, default_sources,
+    Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints,
 };
 use std::path::Path;
 
-/// Shorthand for the 15-variant BAML action union.
-pub use types::Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool as Action;
+/// Shorthand for the 18-variant BAML action union.
+pub use types::Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool as Action;
 
 // Implement baml-agent traits for BAML's generated Message type
 
@@ -74,6 +74,9 @@ pub struct Agent {
     pub intent: Intent,
     /// Pluggable hint sources.
     hint_sources: Vec<Box<dyn baml_agent::HintSource>>,
+    /// Persistent CWD for bash commands (tracks `cd` across steps).
+    /// Interior mutability: execute() takes &self but needs to update CWD.
+    cwd: std::sync::Mutex<std::path::PathBuf>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -103,7 +106,10 @@ impl Agent {
             last_input_chars: 0,
             client_override: None,
             intent: Intent::Auto,
-            hint_sources: default_sources(),
+            hint_sources: baml_agent::default_sources_with_tasks(Path::new(".")),
+            cwd: std::sync::Mutex::new(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            ),
         }
     }
 
@@ -234,7 +240,10 @@ impl Agent {
         self.last_input_chars = input_chars;
 
         let stream = if let Some(ref client) = self.client_override {
-            baml_client::async_client::B.GetNextStep.with_client(client).stream(&history)?
+            baml_client::async_client::B
+                .GetNextStep
+                .with_client(client)
+                .stream(&history)?
         } else {
             baml_client::async_client::B.GetNextStep.stream(&history)?
         };
@@ -296,11 +305,16 @@ impl Agent {
                 })
             }
             EditFileTool(cmd) => {
-                crate::tools::fs::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
+                crate::tools::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
                 // Show inline diff
                 let old_lines: Vec<&str> = cmd.old_string.lines().collect();
                 let new_lines: Vec<&str> = cmd.new_string.lines().collect();
-                let mut diff = format!("Edited {} ({}→{} lines)\n", cmd.path, old_lines.len(), new_lines.len());
+                let mut diff = format!(
+                    "Edited {} ({}→{} lines)\n",
+                    cmd.path,
+                    old_lines.len(),
+                    new_lines.len()
+                );
                 for l in &old_lines {
                     diff.push_str(&format!("- {}\n", l));
                 }
@@ -313,9 +327,18 @@ impl Agent {
                 })
             }
             BashCommandTool(cmd) => {
-                let output = run_command(&cmd.command).await?;
+                let timeout_ms = cmd.timeout.map(|t| (t as u64).min(600_000));
+                let current_cwd = self.cwd.lock().unwrap().clone();
+                let result =
+                    crate::tools::run_command_in(&cmd.command, &current_cwd, timeout_ms).await;
+                *self.cwd.lock().unwrap() = result.cwd;
+                let exit_info = if result.exit_code == 0 {
+                    String::new()
+                } else {
+                    format!("\n[exit code: {}]", result.exit_code)
+                };
                 Ok(ActionResult {
-                    output: format!("Command output:\n{}", output),
+                    output: format!("Command output:\n{}{}", result.output, exit_info),
                     done: false,
                 })
             }
@@ -546,6 +569,114 @@ impl Agent {
                     done: false,
                 })
             }
+            TaskTool(cmd) => {
+                let project_root = Path::new(".");
+                let op = baml_agent::norm(&format!("{:?}", cmd.operation));
+                match op.as_str() {
+                    "create" => {
+                        let title = cmd.title.as_deref().unwrap_or("Untitled");
+                        let priority = cmd
+                            .priority
+                            .as_ref()
+                            .and_then(|p| {
+                                baml_agent::Priority::parse(&baml_agent::norm(&format!("{:?}", p)))
+                            })
+                            .unwrap_or(baml_agent::Priority::Medium);
+                        let mut task = baml_agent::create_task(project_root, title, priority);
+                        if let Some(notes) = &cmd.notes {
+                            task.body = notes.clone();
+                            baml_agent::save_task(project_root, &task);
+                        }
+                        Ok(ActionResult {
+                            output: format!(
+                                "Created task #{} [{}] ({}): {}",
+                                task.id, task.status, task.priority, task.title
+                            ),
+                            done: false,
+                        })
+                    }
+                    "list" => {
+                        let tasks = baml_agent::load_tasks(project_root);
+                        if tasks.is_empty() {
+                            Ok(ActionResult {
+                                output: "No tasks found. Use TaskTool(operation='create') to create one.".into(),
+                                done: false,
+                            })
+                        } else {
+                            let mut output = format!("Tasks ({}):\n", tasks.len());
+                            for t in &tasks {
+                                output.push_str(&format!(
+                                    "  #{} [{}] ({}) {}\n",
+                                    t.id, t.status, t.priority, t.title
+                                ));
+                            }
+                            Ok(ActionResult {
+                                output,
+                                done: false,
+                            })
+                        }
+                    }
+                    "update" => {
+                        let Some(id) = cmd.task_id else {
+                            return Ok(ActionResult {
+                                output: "Error: task_id required for update".into(),
+                                done: false,
+                            });
+                        };
+                        let id = id as u16;
+                        if let Some(status_val) = &cmd.status {
+                            let status_str = baml_agent::norm(&format!("{:?}", status_val));
+                            if let Some(status) = baml_agent::TaskStatus::parse(&status_str) {
+                                baml_agent::update_status(project_root, id, status);
+                            }
+                        }
+                        if let Some(notes) = &cmd.notes {
+                            baml_agent::append_notes(project_root, id, notes);
+                        }
+                        let tasks = baml_agent::load_tasks(project_root);
+                        let task = tasks.iter().find(|t| t.id == id);
+                        match task {
+                            Some(t) => Ok(ActionResult {
+                                output: format!(
+                                    "Updated task #{} [{}] ({}): {}",
+                                    t.id, t.status, t.priority, t.title
+                                ),
+                                done: false,
+                            }),
+                            None => Ok(ActionResult {
+                                output: format!("Task #{} not found", id),
+                                done: false,
+                            }),
+                        }
+                    }
+                    "done" => {
+                        let Some(id) = cmd.task_id else {
+                            return Ok(ActionResult {
+                                output: "Error: task_id required for done".into(),
+                                done: false,
+                            });
+                        };
+                        match baml_agent::update_status(
+                            project_root,
+                            id as u16,
+                            baml_agent::TaskStatus::Done,
+                        ) {
+                            Some(t) => Ok(ActionResult {
+                                output: format!("Completed task #{}: {}", t.id, t.title),
+                                done: false,
+                            }),
+                            None => Ok(ActionResult {
+                                output: format!("Task #{} not found", id),
+                                done: false,
+                            }),
+                        }
+                    }
+                    _ => Ok(ActionResult {
+                        output: format!("Unknown task operation: {}", op),
+                        done: false,
+                    }),
+                }
+            }
             DependenciesTool(cmd) => {
                 let path = if let Some(p) = &cmd.path {
                     std::path::PathBuf::from(p)
@@ -600,9 +731,16 @@ impl SgrAgent for Agent {
         let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
 
         let step = if let Some(ref client) = self.client_override {
-            baml_client::async_client::B.GetNextStep.with_client(client).call(&history).await?
+            baml_client::async_client::B
+                .GetNextStep
+                .with_client(client)
+                .call(&history)
+                .await?
         } else {
-            baml_client::async_client::B.GetNextStep.call(&history).await?
+            baml_client::async_client::B
+                .GetNextStep
+                .call(&history)
+                .await?
         };
 
         // Track cost: estimate output from response fields
@@ -617,7 +755,11 @@ impl SgrAgent for Agent {
             .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
         let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
-        let mcp_names: Vec<&str> = self.mcp.as_ref().map(|m| m.server_names()).unwrap_or_default();
+        let mcp_names: Vec<&str> = self
+            .mcp
+            .as_ref()
+            .map(|m| m.server_names())
+            .unwrap_or_default();
 
         let ctx = HintContext {
             intent: self.intent,
@@ -661,6 +803,7 @@ impl SgrAgent for Agent {
             McpToolCall(c) => format!("mcp:{}:{}", c.server, c.tool),
             ProjectMapTool(c) => format!("project_map:{:?}", c.path),
             DependenciesTool(c) => format!("deps:{:?}", c.path),
+            TaskTool(c) => format!("task:{:?}:{:?}", c.operation, c.task_id),
         }
     }
 }
@@ -674,7 +817,7 @@ pub fn action_kind(action: &Action) -> ActionKind {
         WriteFileTool(_) | EditFileTool(_) | OpenEditorTool(_) => ActionKind::Write,
         BashCommandTool(_) | BashBgTool(_) => ActionKind::Execute,
         GitAddTool(_) | GitCommitTool(_) => ActionKind::GitMutate,
-        AskUserTool(_) | FinishTaskTool(_) | MemoryTool(_) => ActionKind::Plan,
+        AskUserTool(_) | FinishTaskTool(_) | MemoryTool(_) | TaskTool(_) => ActionKind::Plan,
         McpToolCall(_) => ActionKind::External,
     }
 }
@@ -693,7 +836,10 @@ impl SgrAgentStream for Agent {
         let client_override = self.client_override.clone();
         async move {
             let mut stream = if let Some(ref client) = client_override {
-                baml_client::async_client::B.GetNextStep.with_client(client).stream(&history)?
+                baml_client::async_client::B
+                    .GetNextStep
+                    .with_client(client)
+                    .stream(&history)?
             } else {
                 baml_client::async_client::B.GetNextStep.stream(&history)?
             };
@@ -726,7 +872,11 @@ impl SgrAgentStream for Agent {
                 .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
 
             let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
-            let mcp_names: Vec<&str> = self.mcp.as_ref().map(|m| m.server_names()).unwrap_or_default();
+            let mcp_names: Vec<&str> = self
+                .mcp
+                .as_ref()
+                .map(|m| m.server_names())
+                .unwrap_or_default();
 
             let ctx = HintContext {
                 intent: self.intent,

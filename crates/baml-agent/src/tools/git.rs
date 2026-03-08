@@ -1,3 +1,5 @@
+//! Git tools: status, diff, add, commit.
+
 use anyhow::{Context, Result};
 use std::process::Command;
 
@@ -11,7 +13,6 @@ pub struct GitStatus {
 }
 
 pub fn git_status() -> Result<Option<GitStatus>> {
-    // Check if we're in a git repo
     let check = Command::new("git")
         .args(["rev-parse", "--git-dir"])
         .stdout(std::process::Stdio::null())
@@ -24,7 +25,6 @@ pub fn git_status() -> Result<Option<GitStatus>> {
         return Ok(None);
     }
 
-    // Get branch
     let branch_output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -34,7 +34,6 @@ pub fn git_status() -> Result<Option<GitStatus>> {
         .trim()
         .to_string();
 
-    // Get status
     let status_output = Command::new("git")
         .args(["status", "--porcelain"])
         .output()
@@ -46,14 +45,12 @@ pub fn git_status() -> Result<Option<GitStatus>> {
     let mut untracked = Vec::new();
 
     for line in status_str.lines() {
-        if line.len() >= 2 {
-            let status = &line[0..2];
-            let file = line[3..].to_string();
-
+        if let (Some(status), Some(file)) = (line.get(0..2), line.get(3..)) {
+            let file = file.to_string();
             match status {
-                " M" | "M " | "MM" => modified.push(file.clone()),
-                "A " => staged.push(file.clone()),
-                "??" => untracked.push(file.clone()),
+                " M" | "M " | "MM" => modified.push(file),
+                "A " => staged.push(file),
+                "??" => untracked.push(file),
                 _ => {}
             }
         }

@@ -27,6 +27,7 @@ pub enum AppMode {
     BgTasksSearch,
     BashHistorySearch,
     SkillsSearch,
+    TasksSearch,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -465,6 +466,72 @@ impl<'a> BashHistoryState<'a> {
     }
 }
 
+/// Task search state — fuzzy search over project tasks.
+pub struct TasksSearchState<'a> {
+    pub input: TextArea<'a>,
+    pub all_items: Vec<baml_agent::Task>,
+    pub filtered_items: Vec<baml_agent::Task>,
+    pub list_state: ListState,
+    pub searcher: FuzzySearcher,
+}
+
+impl<'a> TasksSearchState<'a> {
+    pub fn new() -> Self {
+        let mut input = TextArea::default();
+        input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Filter Tasks "),
+        );
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+        Self {
+            input,
+            all_items: Vec::new(),
+            filtered_items: Vec::new(),
+            list_state,
+            searcher: FuzzySearcher::new(),
+        }
+    }
+
+    pub fn refresh(&mut self) {
+        self.all_items = baml_agent::load_tasks(std::path::Path::new("."));
+        self.update_search();
+    }
+
+    pub fn update_search(&mut self) {
+        let query = self.input.lines().join("");
+        if query.trim().is_empty() {
+            self.filtered_items = self.all_items.clone();
+        } else {
+            use nucleo_matcher::{
+                Utf32Str,
+                pattern::{CaseMatching, Normalization, Pattern},
+            };
+            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+            let mut scored: Vec<(u32, baml_agent::Task)> = self
+                .all_items
+                .iter()
+                .filter_map(|t| {
+                    let search_text = format!("{} {} {}", t.title, t.status, t.priority);
+                    let score = pattern.score(
+                        Utf32Str::Ascii(search_text.as_bytes()),
+                        &mut self.searcher.matcher,
+                    )?;
+                    Some((score, t.clone()))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            self.filtered_items = scored.into_iter().map(|(_, t)| t).collect();
+        }
+        if self.filtered_items.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SkillEntry {
     pub name: String,
@@ -681,6 +748,7 @@ pub struct App<'a> {
     pub bg_tasks: BgTasksState<'a>,
     pub bash_history_state: BashHistoryState<'a>,
     pub skills_state: SkillsState<'a>,
+    pub tasks_search_state: TasksSearchState<'a>,
     pub git_sidebar: GitSidebarState,
     pub git_history: GitHistoryState<'a>,
     pub focus_ring: FocusRing,
@@ -840,6 +908,7 @@ impl<'a> App<'a> {
             bg_tasks: BgTasksState::new(),
             bash_history_state: BashHistoryState::new(),
             skills_state: SkillsState::new(),
+            tasks_search_state: TasksSearchState::new(),
             git_sidebar: GitSidebarState::new(),
             git_history: GitHistoryState::new(),
             focus_ring: FocusRing::new(&["input", "chat", "plan", "channels"]),
@@ -852,6 +921,7 @@ impl<'a> App<'a> {
                 "BG Tasks".to_string(),
                 "Bash History".to_string(),
                 "Skills".to_string(),
+                "Tasks".to_string(),
             ],
             channel_state,
             ui_regions: None,
@@ -985,7 +1055,9 @@ impl<'a> App<'a> {
                         if self.command_palette.on_mouse(mouse_event).consumed() {
                             if let Some(action) = self.command_palette.take_applied() {
                                 match action {
-                                    PaletteAction::Execute(cmd) => { self.handle_slash_command(cmd); }
+                                    PaletteAction::Execute(cmd) => {
+                                        self.handle_slash_command(cmd);
+                                    }
                                     PaletteAction::Insert(cmd) => self.set_input_text(cmd),
                                 }
                             }
@@ -1321,9 +1393,7 @@ impl<'a> App<'a> {
 
         // Auto-scroll to bottom when pinned
         if self.chat_pinned {
-            self.chat_scroll = self
-                .chat_total_lines
-                .saturating_sub(visible_height);
+            self.chat_scroll = self.chat_total_lines.saturating_sub(visible_height);
         }
 
         // Scrollbar indicator
@@ -1382,7 +1452,9 @@ impl<'a> App<'a> {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray))
+                        .border_style(
+                            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+                        )
                         .title(" / output (any key to dismiss) "),
                 )
                 .style(ratatui::style::Style::default().fg(ratatui::style::Color::Gray));
@@ -1391,12 +1463,24 @@ impl<'a> App<'a> {
         }
 
         // Sidebar Rendering
+        let tasks = baml_agent::load_tasks(std::path::Path::new("."));
+        let active_tasks: Vec<_> = tasks
+            .iter()
+            .filter(|t| t.status != baml_agent::TaskStatus::Done)
+            .collect();
+        let tasks_height = if active_tasks.is_empty() {
+            3
+        } else {
+            (active_tasks.len() as u16 + 2).min(10)
+        };
+
         let sidebar_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(14), // Plan (bigger)
-                Constraint::Length(10), // Channels
-                Constraint::Length(3),  // Context map
+                Constraint::Length(12),           // Plan
+                Constraint::Length(tasks_height), // Tasks
+                Constraint::Min(8),               // Channels
+                Constraint::Length(3),            // Context map
             ])
             .split(horizontal_chunks[1]);
 
@@ -1405,12 +1489,12 @@ impl<'a> App<'a> {
             chat: left_chunks[0],
             input: left_chunks[1],
             plan: sidebar_chunks[0],
-            channels: sidebar_chunks[1],
+            channels: sidebar_chunks[2],
         });
         self.focus_ring.set_rect("chat", left_chunks[0]);
         self.focus_ring.set_rect("input", left_chunks[1]);
         self.focus_ring.set_rect("plan", sidebar_chunks[0]);
-        self.focus_ring.set_rect("channels", sidebar_chunks[1]);
+        self.focus_ring.set_rect("channels", sidebar_chunks[2]);
 
         // Plan Panel
         let mut plan_lines = vec![Line::from(Span::styled(
@@ -1434,6 +1518,47 @@ impl<'a> App<'a> {
                 .title(" SGR Plan "),
         );
         frame.render_widget(plan_widget, sidebar_chunks[0]);
+
+        // Tasks panel — always-visible kanban
+        let done_count = tasks
+            .iter()
+            .filter(|t| t.status == baml_agent::TaskStatus::Done)
+            .count();
+        let tasks_title = format!(" Tasks [{}/{}] (F11) ", done_count, tasks.len());
+        let mut task_lines: Vec<Line<'_>> = Vec::new();
+        if active_tasks.is_empty() {
+            task_lines
+                .push(Line::from("No active tasks").style(Style::default().fg(Color::DarkGray)));
+        } else {
+            for t in &active_tasks {
+                let (marker, color) = match t.status {
+                    baml_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
+                    baml_agent::TaskStatus::Blocked => ("✗", Color::Red),
+                    _ => ("·", Color::DarkGray),
+                };
+                let priority_marker = match t.priority {
+                    baml_agent::Priority::High => "!",
+                    baml_agent::Priority::Medium => "",
+                    baml_agent::Priority::Low => "",
+                };
+                task_lines.push(Line::from(vec![
+                    Span::styled(format!("{} ", marker), Style::default().fg(color)),
+                    Span::styled(format!("#{} ", t.id), Style::default().fg(Color::DarkGray)),
+                    Span::styled(&*t.title, Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!(" {}", priority_marker),
+                        Style::default().fg(Color::Red),
+                    ),
+                ]));
+            }
+        }
+        let tasks_widget = Paragraph::new(task_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(tasks_title),
+        );
+        frame.render_widget(tasks_widget, sidebar_chunks[1]);
 
         // Channels panel
         let channels_title = if self.focus_ring.is_focused("channels") {
@@ -1463,6 +1588,14 @@ impl<'a> App<'a> {
                         let total = self.skills_state.all_items.len();
                         format!(" ({}/{})", installed, total)
                     }
+                    8 => {
+                        let t = baml_agent::load_tasks(std::path::Path::new("."));
+                        let done = t
+                            .iter()
+                            .filter(|t| t.status == baml_agent::TaskStatus::Done)
+                            .count();
+                        format!(" ({}/{})", done, t.len())
+                    }
                     _ => String::new(),
                 };
                 ListItem::new(format!("{}{}", name, suffix))
@@ -1482,14 +1615,14 @@ impl<'a> App<'a> {
                     .bg(Color::DarkGray),
             )
             .highlight_symbol("> ");
-        frame.render_stateful_widget(channels_list, sidebar_chunks[1], &mut self.channel_state);
+        frame.render_stateful_widget(channels_list, sidebar_chunks[2], &mut self.channel_state);
 
         // Context Map — grid of small colored blocks, each = one message
         self.context_map.rebuild(&self.messages);
         let ctx = &self.context_map;
         let total = ctx.total_chars();
-        let inner_w = sidebar_chunks[2].width.saturating_sub(2) as usize;
-        let inner_h = sidebar_chunks[2].height.saturating_sub(2) as usize;
+        let inner_w = sidebar_chunks[3].width.saturating_sub(2) as usize;
+        let inner_h = sidebar_chunks[3].height.saturating_sub(2) as usize;
         let grid_cells = inner_w.max(1) * inner_h.max(1);
 
         let mut ctx_lines: Vec<Line> = Vec::new();
@@ -1531,7 +1664,7 @@ impl<'a> App<'a> {
                     .border_style(Style::default().fg(Color::DarkGray))
                     .title(ctx_title),
             ),
-            sidebar_chunks[2],
+            sidebar_chunks[3],
         );
 
         // Bottom status bars (Norton Commander inspired)
@@ -1545,6 +1678,7 @@ impl<'a> App<'a> {
             AppMode::BgTasksSearch => "MODE: BG TASKS",
             AppMode::BashHistorySearch => "MODE: BASH HISTORY",
             AppMode::SkillsSearch => "MODE: SKILLS",
+            AppMode::TasksSearch => "MODE: TASKS",
         };
         let focus_text = format!("FOCUS: {}", self.focus_ring.focused().to_uppercase());
         let cost = crate::tools::cost::session_stats();
@@ -1567,7 +1701,7 @@ impl<'a> App<'a> {
             root_chunks[1],
         );
 
-        let hotkeys_line = " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 Refresh  F6 Symbols  F7 BG  F8 BashHist  F9 Skills  Shift+Tab TaskMode  Up/Down InputHist  Ctrl+R BashHist  F10 Channels  F12 Quit ";
+        let hotkeys_line = " F1 Diff  F2 History  F3 Files  F4 Sessions  F5 Refresh  F6 Symbols  F7 BG  F8 BashHist  F9 Skills  F10 Channels  F11 Tasks  F12 Quit ";
         frame.render_widget(
             Paragraph::new(hotkeys_line).style(
                 Style::default()
@@ -1587,6 +1721,7 @@ impl<'a> App<'a> {
             AppMode::BgTasksSearch => self.draw_bg_tasks_popup(frame, area),
             AppMode::BashHistorySearch => self.draw_bash_history_popup(frame, area),
             AppMode::SkillsSearch => self.draw_skills_popup(frame, area),
+            AppMode::TasksSearch => self.draw_tasks_popup(frame, area),
             AppMode::Chat => {}
         }
     }
@@ -1795,6 +1930,118 @@ impl<'a> App<'a> {
                 .borders(Borders::ALL)
                 .title(" Skill Details "),
         );
+        frame.render_widget(preview, body[1]);
+    }
+
+    fn draw_tasks_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let popup_width = (area.width * 80) / 100;
+        let popup_height = (area.height * 75) / 100;
+        let popup_x = area.x + (area.width - popup_width) / 2;
+        let popup_y = area.y + (area.height - popup_height) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+        frame.render_widget(Clear, popup_area);
+
+        let popup_block = Block::default()
+            .title(" Tasks (Esc close, Enter toggle status, Ctrl+N new, Ctrl+D done) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        frame.render_widget(popup_block, popup_area);
+
+        let inner_area = popup_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(inner_area);
+
+        frame.render_widget(self.tasks_search_state.input.widget(), chunks[0]);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(chunks[1]);
+
+        let items: Vec<ListItem> = if self.tasks_search_state.filtered_items.is_empty() {
+            vec![ListItem::new("No tasks (Ctrl+N to create)")]
+        } else {
+            self.tasks_search_state
+                .filtered_items
+                .iter()
+                .map(|t| {
+                    let (marker, color) = match t.status {
+                        baml_agent::TaskStatus::Done => ("✓", Color::Green),
+                        baml_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
+                        baml_agent::TaskStatus::Blocked => ("✗", Color::Red),
+                        baml_agent::TaskStatus::Todo => ("·", Color::DarkGray),
+                    };
+                    let priority_icon = match t.priority {
+                        baml_agent::Priority::High => " !!",
+                        baml_agent::Priority::Medium => "",
+                        baml_agent::Priority::Low => "",
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{} ", marker), Style::default().fg(color)),
+                        Span::styled(
+                            format!("#{:03} ", t.id),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::raw(&*t.title),
+                        Span::styled(priority_icon, Style::default().fg(Color::Red)),
+                    ]))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" Task list "))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::DarkGray),
+            )
+            .highlight_symbol("> ");
+        frame.render_stateful_widget(list, body[0], &mut self.tasks_search_state.list_state);
+
+        // Preview: task details
+        let preview_lines: Vec<Line> =
+            if let Some(selected) = self.tasks_search_state.list_state.selected() {
+                if let Some(task) = self.tasks_search_state.filtered_items.get(selected) {
+                    let mut lines = vec![
+                        Line::from(Span::styled(
+                            format!("#{:03} {}", task.id, task.title),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(format!("Status:   {}", task.status)),
+                        Line::from(format!("Priority: {}", task.priority)),
+                        Line::from(format!("File:     {}", task.path.display())),
+                    ];
+                    if !task.blocked_by.is_empty() {
+                        lines.push(Line::from(format!("Blocked:  {:?}", task.blocked_by)));
+                    }
+                    if !task.body.is_empty() {
+                        lines.push(Line::from(""));
+                        for body_line in task.body.lines() {
+                            lines.push(
+                                Line::from(body_line.to_string())
+                                    .style(Style::default().fg(Color::Gray)),
+                            );
+                        }
+                    }
+                    lines
+                } else {
+                    vec![Line::from("No task selected")]
+                }
+            } else {
+                vec![Line::from("No task selected")]
+            };
+
+        let preview = Paragraph::new(preview_lines)
+            .block(Block::default().borders(Borders::ALL).title(" Details "))
+            .wrap(ratatui::widgets::Wrap { trim: false });
         frame.render_widget(preview, body[1]);
     }
 
@@ -3088,6 +3335,7 @@ impl<'a> App<'a> {
             AppMode::BgTasksSearch => self.handle_bg_tasks_key_event(key_event, tx).await,
             AppMode::BashHistorySearch => self.handle_bash_history_key_event(key_event).await,
             AppMode::SkillsSearch => self.handle_skills_key_event(key_event, tx).await,
+            AppMode::TasksSearch => self.handle_tasks_key_event(key_event).await,
         }
     }
 
@@ -3188,6 +3436,89 @@ impl<'a> App<'a> {
                     self.bg_tasks.update_search();
                     self.load_bg_task_preview();
                 }
+            }
+        }
+    }
+
+    async fn handle_tasks_key_event(&mut self, key_event: event::KeyEvent) {
+        match key_event.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::Chat;
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.tasks_search_state.list_state.selected() {
+                    let next = if selected + 1 < self.tasks_search_state.filtered_items.len() {
+                        selected + 1
+                    } else {
+                        0
+                    };
+                    self.tasks_search_state.list_state.select(Some(next));
+                }
+            }
+            KeyCode::Up => {
+                if let Some(selected) = self.tasks_search_state.list_state.selected() {
+                    let prev = if selected > 0 {
+                        selected - 1
+                    } else {
+                        self.tasks_search_state
+                            .filtered_items
+                            .len()
+                            .saturating_sub(1)
+                    };
+                    self.tasks_search_state.list_state.select(Some(prev));
+                }
+            }
+            KeyCode::Enter => {
+                // Toggle status: todo → in_progress → done → todo
+                if let Some(selected) = self.tasks_search_state.list_state.selected() {
+                    if let Some(task) = self.tasks_search_state.filtered_items.get(selected) {
+                        let next_status = match task.status {
+                            baml_agent::TaskStatus::Todo => baml_agent::TaskStatus::InProgress,
+                            baml_agent::TaskStatus::InProgress => baml_agent::TaskStatus::Done,
+                            baml_agent::TaskStatus::Blocked => baml_agent::TaskStatus::InProgress,
+                            baml_agent::TaskStatus::Done => baml_agent::TaskStatus::Todo,
+                        };
+                        baml_agent::update_status(std::path::Path::new("."), task.id, next_status);
+                        self.tasks_search_state.refresh();
+                    }
+                }
+            }
+            KeyCode::Char('d') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Mark done
+                if let Some(selected) = self.tasks_search_state.list_state.selected() {
+                    if let Some(task) = self.tasks_search_state.filtered_items.get(selected) {
+                        baml_agent::update_status(
+                            std::path::Path::new("."),
+                            task.id,
+                            baml_agent::TaskStatus::Done,
+                        );
+                        self.tasks_search_state.refresh();
+                    }
+                }
+            }
+            KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Create new task from search input
+                let title = self.tasks_search_state.input.lines().join("");
+                if !title.trim().is_empty() {
+                    baml_agent::create_task(
+                        std::path::Path::new("."),
+                        title.trim(),
+                        baml_agent::Priority::Medium,
+                    );
+                    self.tasks_search_state.input = TextArea::default();
+                    self.tasks_search_state.input.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Filter Tasks "),
+                    );
+                    self.tasks_search_state.refresh();
+                }
+            }
+            _ => {
+                self.tasks_search_state
+                    .input
+                    .input(Input::from(key_event.clone()));
+                self.tasks_search_state.update_search();
             }
         }
     }
@@ -3885,6 +4216,10 @@ impl<'a> App<'a> {
                                 self.refresh_skills();
                                 self.maybe_request_skill_preview(tx.clone());
                             }
+                            8 => {
+                                self.mode = AppMode::TasksSearch;
+                                self.tasks_search_state.refresh();
+                            }
                             _ => {}
                         }
                     }
@@ -3902,7 +4237,9 @@ impl<'a> App<'a> {
         if self.command_palette.is_active() && self.command_palette.on_key(key_event).consumed() {
             if let Some(action) = self.command_palette.take_applied() {
                 match action {
-                    PaletteAction::Execute(cmd) => { self.handle_slash_command(cmd); }
+                    PaletteAction::Execute(cmd) => {
+                        self.handle_slash_command(cmd);
+                    }
                     PaletteAction::Insert(cmd) => self.set_input_text(cmd),
                 }
             }
@@ -4028,6 +4365,10 @@ impl<'a> App<'a> {
             }
             KeyCode::F(10) => {
                 self.focus_ring.focus("channels");
+            }
+            KeyCode::F(11) => {
+                self.mode = AppMode::TasksSearch;
+                self.tasks_search_state.refresh();
             }
             KeyCode::F(12) => {
                 self.exit = true;
@@ -4204,8 +4545,7 @@ impl<'a> App<'a> {
                         let agent_tx = tx.clone();
                         let cwd = self.bash_cwd.clone();
                         tokio::spawn(async move {
-                            let result =
-                                tools::bash::run_interactive(&command, &cwd).await;
+                            let result = tools::bash::run_interactive(&command, &cwd).await;
                             let exit_suffix = if result.exit_code != 0 {
                                 format!(" [exit {}]", result.exit_code)
                             } else {
@@ -4218,9 +4558,7 @@ impl<'a> App<'a> {
                             };
                             let _ = agent_tx.send(AppEvent::AgentResponse(msg)).await;
                             // Send CWD update
-                            let _ = agent_tx
-                                .send(AppEvent::BashCwdChanged(result.cwd))
-                                .await;
+                            let _ = agent_tx.send(AppEvent::BashCwdChanged(result.cwd)).await;
                             let _ = agent_tx.send(AppEvent::AgentDone).await;
                         });
                         return;
@@ -4529,7 +4867,6 @@ impl<'a> App<'a> {
         ("/quit", "Exit rust-code"),
     ];
 
-
     /// Mark chat as pinned to bottom (auto-scroll on new messages).
     fn chat_pin_bottom(&mut self) {
         self.chat_pinned = true;
@@ -4555,7 +4892,8 @@ impl<'a> App<'a> {
             let cwd = self.bash_cwd.display();
             format!(" {cwd} $ (Enter run, ↑↓ history, Ctrl+R search, Shift+Tab mode) ")
         } else {
-            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) ".to_string()
+            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "
+                .to_string()
         }
     }
 
@@ -4730,8 +5068,7 @@ impl<'a> App<'a> {
         match cmd.as_str() {
             "/help" => {
                 self.command_output = Some(
-                    "/help  /clear  /reset  /status  /model  /skills  /mcp  /quit"
-                        .to_string(),
+                    "/help  /clear  /reset  /status  /model  /skills  /mcp  /quit".to_string(),
                 );
                 true
             }
@@ -4776,9 +5113,8 @@ impl<'a> App<'a> {
                 true
             }
             "/model" => {
-                self.command_output = Some(
-                    "Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string(),
-                );
+                self.command_output =
+                    Some("Model: AgentFallback (Gemini 3.1 Pro → Flash → Flash Lite)".to_string());
                 true
             }
             "/skills" => {
@@ -4795,9 +5131,7 @@ impl<'a> App<'a> {
                 true
             }
             "/mcp" => {
-                self.command_output = Some(
-                    "MCP servers configured in .mcp.json".to_string(),
-                );
+                self.command_output = Some("MCP servers configured in .mcp.json".to_string());
                 true
             }
             "/quit" | "/exit" => {
@@ -4805,10 +5139,7 @@ impl<'a> App<'a> {
                 true
             }
             _ => {
-                self.command_output = Some(format!(
-                    "Unknown command: {}. Type /help",
-                    cmd
-                ));
+                self.command_output = Some(format!("Unknown command: {}. Type /help", cmd));
                 true
             }
         }

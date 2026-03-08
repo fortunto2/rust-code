@@ -2,12 +2,16 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-fn truncate_output(output: String, max_len: usize) -> String {
-    if output.len() > max_len {
-        let truncated: String = output.chars().take(max_len).collect();
+fn truncate_output(output: String, max_bytes: usize) -> String {
+    if output.len() > max_bytes {
+        // Find a valid char boundary at or before max_bytes
+        let mut end = max_bytes;
+        while end > 0 && !output.is_char_boundary(end) {
+            end -= 1;
+        }
         format!(
-            "{}\n\n...[Output truncated due to size. Total chars: {}]...",
-            truncated,
+            "{}\n\n...[Output truncated. Total bytes: {}]...",
+            &output[..end],
             output.len()
         )
     } else {
@@ -15,7 +19,7 @@ fn truncate_output(output: String, max_len: usize) -> String {
     }
 }
 
-// Exec tool — run and wait for result
+// Exec tool — run and wait for result (legacy, used by SearchCodeTool)
 pub async fn run_command(command: &str) -> Result<String> {
     let output = Command::new("sh").arg("-c").arg(command).output().await?;
 
@@ -30,6 +34,34 @@ pub async fn run_command(command: &str) -> Result<String> {
             truncate_output(stdout, 5000),
             truncate_output(stderr, 5000)
         )
+    }
+}
+
+/// Default timeout: 2 minutes.
+const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+/// Max timeout: 10 minutes.
+const MAX_TIMEOUT_MS: u64 = 600_000;
+
+/// Run a command with persistent CWD and optional timeout.
+/// Always returns output + exit code — never errors on non-zero exit.
+/// CWD is tracked: if the command contains `cd`, the new CWD is returned.
+pub async fn run_command_in(command: &str, cwd: &Path, timeout_ms: Option<u64>) -> BashResult {
+    let timeout = std::time::Duration::from_millis(
+        timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS),
+    );
+
+    let result = tokio::time::timeout(timeout, run_interactive(command, cwd)).await;
+
+    match result {
+        Ok(bash_result) => bash_result,
+        Err(_) => BashResult {
+            output: format!(
+                "Command timed out after {}s. Consider using bash_bg for long-running commands.",
+                timeout.as_secs()
+            ),
+            exit_code: 124, // standard timeout exit code
+            cwd: cwd.to_path_buf(),
+        },
     }
 }
 
@@ -56,7 +88,10 @@ pub async fn run_interactive(command: &str, cwd: &Path) -> BashResult {
         .current_dir(cwd)
         .env("HOME", std::env::var("HOME").unwrap_or_default())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("TERM", std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()))
+        .env(
+            "TERM",
+            std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()),
+        )
         .output()
         .await;
 
@@ -261,11 +296,7 @@ mod tests {
         let r = run_interactive("cd /tmp", &cwd).await;
         assert_eq!(r.exit_code, 0);
         // CWD should be /tmp (or /private/tmp on macOS)
-        assert!(
-            r.cwd.ends_with("tmp"),
-            "expected /tmp, got {:?}",
-            r.cwd
-        );
+        assert!(r.cwd.ends_with("tmp"), "expected /tmp, got {:?}", r.cwd);
     }
 
     #[tokio::test]
@@ -273,6 +304,30 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         let r = run_interactive("false", &cwd).await;
         assert_eq!(r.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn run_command_in_timeout() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_command_in("sleep 10", &cwd, Some(500)).await;
+        assert_eq!(r.exit_code, 124);
+        assert!(r.output.contains("timed out"), "got: {}", r.output);
+    }
+
+    #[tokio::test]
+    async fn run_command_in_preserves_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_command_in("cd /tmp && echo ok", &cwd, None).await;
+        assert_eq!(r.exit_code, 0);
+        assert!(r.cwd.ends_with("tmp"), "cwd: {:?}", r.cwd);
+        assert!(r.output.contains("ok"));
+    }
+
+    #[tokio::test]
+    async fn run_command_in_nonzero_no_error() {
+        let cwd = std::env::current_dir().unwrap();
+        let r = run_command_in("exit 42", &cwd, None).await;
+        assert_eq!(r.exit_code, 42);
     }
 
     #[tokio::test]

@@ -74,6 +74,11 @@ enum Commands {
     },
     /// Interactive provider setup wizard
     Setup,
+    /// Manage project tasks (.tasks/*.md)
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -142,6 +147,41 @@ enum SkillsAction {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum TaskAction {
+    /// List all tasks
+    List {
+        /// Filter by status: todo, in_progress, blocked, done
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Show task details
+    Show {
+        /// Task ID
+        id: u16,
+    },
+    /// Create a new task
+    Create {
+        /// Task title
+        title: String,
+        /// Priority: low, medium, high
+        #[arg(short, long, default_value = "medium")]
+        priority: String,
+    },
+    /// Mark a task as done
+    Done {
+        /// Task ID
+        id: u16,
+    },
+    /// Update task status
+    Update {
+        /// Task ID
+        id: u16,
+        /// New status: todo, in_progress, blocked, done
+        #[arg(short, long)]
+        status: String,
+    },
+}
 
 /// Resolved provider ready to apply to agent.
 struct ProviderSetup {
@@ -190,7 +230,12 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
             unsafe { std::env::set_var("CLI_PROXY_URL", &proxy_url) };
             let client = model_override.unwrap_or_else(|| "CliProxy".into());
             ProviderSetup {
-                label: Some(format!("{} proxy (:{}, {})", provider.display_name(), port, client)),
+                label: Some(format!(
+                    "{} proxy (:{}, {})",
+                    provider.display_name(),
+                    port,
+                    client
+                )),
                 client: Some(client),
                 _proxy_handle: Some(handle),
             }
@@ -260,7 +305,9 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                         }
                         Err(e) => {
                             eprintln!("Claude auth failed: {}", e);
-                            eprintln!("Run `claude` first to authenticate, or use `config set anthropic` with ANTHROPIC_API_KEY");
+                            eprintln!(
+                                "Run `claude` first to authenticate, or use `config set anthropic` with ANTHROPIC_API_KEY"
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -276,7 +323,11 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     }
 
     // Default: no override (uses BAML default client)
-    ProviderSetup { client: None, label: None, _proxy_handle: None }
+    ProviderSetup {
+        client: None,
+        label: None,
+        _proxy_handle: None,
+    }
 }
 
 /// Apply resolved provider to agent.
@@ -300,12 +351,16 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
             println!("Provider: {}", provider);
             println!("Model:    {}", model);
             println!("\nConfig: ~/.rust-code/config.toml");
-            println!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
+            println!(
+                "Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli"
+            );
         }
         ConfigAction::Set { provider, model } => {
             if providers::resolve_provider(&provider).is_none() {
                 eprintln!("Unknown provider: {}", provider);
-                eprintln!("Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli");
+                eprintln!(
+                    "Available: gemini, claude, codex, openai, anthropic, ollama, gemini-cli, codex-cli, claude-cli"
+                );
                 std::process::exit(1);
             }
             let cfg = providers::UserConfig {
@@ -508,7 +563,9 @@ async fn run_setup() -> Result<()> {
                     if provider_name == "vertex" {
                         eprintln!("\n\x1b[33mWarning:\x1b[0m No Google Cloud auth found.");
                         eprintln!("  Option 1: gcloud auth application-default login");
-                        eprintln!("  Option 2: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json");
+                        eprintln!(
+                            "  Option 2: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json"
+                        );
                         eprintln!("  Option 3: export VERTEX_PROJECT=your-project-id");
                     } else {
                         eprintln!(
@@ -937,6 +994,107 @@ fn run_sessions_command(query: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn run_task_command(action: TaskAction) -> Result<()> {
+    let root = std::path::Path::new(".");
+
+    match action {
+        TaskAction::List { status } => {
+            let tasks = baml_agent::load_tasks(root);
+            let filtered: Vec<_> = if let Some(ref s) = status {
+                let target = baml_agent::TaskStatus::parse(s);
+                if target.is_none() {
+                    eprintln!(
+                        "Unknown status: {}. Use: todo, in_progress, blocked, done",
+                        s
+                    );
+                    std::process::exit(1);
+                }
+                tasks
+                    .into_iter()
+                    .filter(|t| Some(t.status) == target)
+                    .collect()
+            } else {
+                tasks
+            };
+
+            if filtered.is_empty() {
+                println!("No tasks found.");
+                return Ok(());
+            }
+
+            println!("Tasks ({}):\n", filtered.len());
+            for t in &filtered {
+                let marker = match t.status {
+                    baml_agent::TaskStatus::Done => "\x1b[32m✓\x1b[0m",
+                    baml_agent::TaskStatus::InProgress => "\x1b[33m▶\x1b[0m",
+                    baml_agent::TaskStatus::Blocked => "\x1b[31m✗\x1b[0m",
+                    baml_agent::TaskStatus::Todo => "\x1b[2m·\x1b[0m",
+                };
+                println!(
+                    "  {} #{:03} [{}] ({}) {}",
+                    marker, t.id, t.status, t.priority, t.title
+                );
+            }
+        }
+        TaskAction::Show { id } => {
+            let tasks = baml_agent::load_tasks(root);
+            match tasks.iter().find(|t| t.id == id) {
+                Some(t) => {
+                    println!("#{:03} {}", t.id, t.title);
+                    println!("Status:   {}", t.status);
+                    println!("Priority: {}", t.priority);
+                    if !t.blocked_by.is_empty() {
+                        println!("Blocked:  {:?}", t.blocked_by);
+                    }
+                    println!("File:     {}", t.path.display());
+                    if !t.body.is_empty() {
+                        println!("\n{}", t.body);
+                    }
+                }
+                None => {
+                    eprintln!("Task #{} not found", id);
+                    std::process::exit(1);
+                }
+            }
+        }
+        TaskAction::Create { title, priority } => {
+            let p = baml_agent::Priority::parse(&priority).unwrap_or(baml_agent::Priority::Medium);
+            let task = baml_agent::create_task(root, &title, p);
+            println!(
+                "\x1b[32m✓\x1b[0m Created #{:03}: {} [{}]",
+                task.id, task.title, task.priority
+            );
+            println!("  {}", task.path.display());
+        }
+        TaskAction::Done { id } => {
+            match baml_agent::update_status(root, id, baml_agent::TaskStatus::Done) {
+                Some(t) => println!("\x1b[32m✓\x1b[0m Completed #{:03}: {}", t.id, t.title),
+                None => {
+                    eprintln!("Task #{} not found", id);
+                    std::process::exit(1);
+                }
+            }
+        }
+        TaskAction::Update { id, status } => {
+            let Some(s) = baml_agent::TaskStatus::parse(&status) else {
+                eprintln!(
+                    "Unknown status: {}. Use: todo, in_progress, blocked, done",
+                    status
+                );
+                std::process::exit(1);
+            };
+            match baml_agent::update_status(root, id, s) {
+                Some(t) => println!("Updated #{:03}: {} → {}", t.id, t.title, t.status),
+                None => {
+                    eprintln!("Task #{} not found", id);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -953,22 +1111,12 @@ async fn main() -> Result<()> {
             Commands::Config { action } => run_config_command(action),
             Commands::Doctor { fix } => run_doctor(fix).await,
             Commands::Setup => run_setup().await,
+            Commands::Task { action } => run_task_command(action),
         };
     }
 
-    // Initialize OTEL-aware structured telemetry (JSONL + span context)
-    // TUI mode redirects stderr to file (prevents BAML output from corrupting ratatui)
-    let is_headless = args.prompt.is_some();
-    let _telemetry: Box<dyn std::any::Any> = if is_headless {
-        Box::new(init_telemetry_headless())
-    } else {
-        Box::new(init_telemetry_tui())
-    };
-
-    // Initialize BAML runtime
-    baml_client::init();
-
     // Auto-setup on first run if no config and no CLI flags
+    // Runs BEFORE telemetry init so eprintln! is visible to user
     if !args.codex && !args.local && args.model.is_none() {
         let cfg = baml_agent::providers::load_config(".rust-code");
         if cfg.provider.is_none() && std::env::var("GEMINI_API_KEY").is_err() {
@@ -983,8 +1131,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Resolve provider: CLI flags override config file
+    // Resolve provider BEFORE stderr redirect — auth errors must be visible
     let provider_setup = resolve_provider_setup(&args).await;
+
+    // Initialize OTEL-aware structured telemetry (JSONL + span context)
+    // TUI mode redirects stderr to file (prevents BAML output from corrupting ratatui)
+    let is_headless = args.prompt.is_some();
+    let _telemetry: Box<dyn std::any::Any> = if is_headless {
+        Box::new(init_telemetry_headless())
+    } else {
+        Box::new(init_telemetry_tui())
+    };
+
+    // Initialize BAML runtime
+    baml_client::init();
 
     if let Some(prompt) = args.prompt {
         // Single prompt headless mode — fresh session by default

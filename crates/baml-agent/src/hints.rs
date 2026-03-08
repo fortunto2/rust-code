@@ -23,6 +23,8 @@
 //! ```
 
 use crate::intent_guard::{self, ActionKind, Intent};
+use crate::tasks::{self, TaskStatus};
+use std::path::PathBuf;
 
 /// Context available to hint sources for a single step.
 pub struct HintContext<'a> {
@@ -51,6 +53,18 @@ pub struct PatternHints;
 pub struct ToolHints;
 /// Built-in: TDD reminders, git discipline.
 pub struct WorkflowHints;
+/// Built-in: show active tasks from `.tasks/` directory.
+pub struct TaskHints {
+    pub tasks_dir: PathBuf,
+}
+
+impl TaskHints {
+    pub fn new(project_root: &std::path::Path) -> Self {
+        Self {
+            tasks_dir: project_root.to_path_buf(),
+        }
+    }
+}
 
 impl HintSource for PatternHints {
     fn hints(&self, ctx: &HintContext) -> Vec<String> {
@@ -70,12 +84,52 @@ impl HintSource for WorkflowHints {
     }
 }
 
+impl HintSource for TaskHints {
+    fn hints(&self, _ctx: &HintContext) -> Vec<String> {
+        let all_tasks = tasks::load_tasks(&self.tasks_dir);
+        let active: Vec<_> = all_tasks
+            .iter()
+            .filter(|t| matches!(t.status, TaskStatus::InProgress | TaskStatus::Blocked))
+            .collect();
+
+        if active.is_empty() {
+            return vec![];
+        }
+
+        let total = all_tasks.len();
+        let done = all_tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Done)
+            .count();
+        vec![format!(
+            "TASKS [{}/{}]: {}",
+            done,
+            total,
+            active
+                .iter()
+                .map(|t| format!("#{} {}", t.id, t.title))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )]
+    }
+}
+
 /// Default hint sources (all built-ins).
 pub fn default_sources() -> Vec<Box<dyn HintSource>> {
     vec![
         Box::new(PatternHints),
         Box::new(ToolHints),
         Box::new(WorkflowHints),
+    ]
+}
+
+/// Default hint sources with task tracking from project root.
+pub fn default_sources_with_tasks(project_root: &std::path::Path) -> Vec<Box<dyn HintSource>> {
+    vec![
+        Box::new(PatternHints),
+        Box::new(ToolHints),
+        Box::new(WorkflowHints),
+        Box::new(TaskHints::new(project_root)),
     ]
 }
 

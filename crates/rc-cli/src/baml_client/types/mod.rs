@@ -7,13 +7,13 @@
 
 mod classes;
 mod enums;
-mod unions;
 mod type_aliases;
+mod unions;
 
 pub use classes::*;
 pub use enums::*;
-pub use unions::*;
 pub use type_aliases::*;
+pub use unions::*;
 
 // Re-export types from baml runtime
 pub use baml::{Audio, Image, Pdf, Video};
@@ -23,7 +23,6 @@ pub use baml::{Checked, StreamState};
 /// Serves as the compile-time type registry for BamlValue.
 #[derive(Debug, Clone)]
 pub enum Types {
-
     AskUserTool(AskUserTool),
 
     BashBgTool(BashBgTool),
@@ -60,15 +59,23 @@ pub enum Types {
 
     SearchCodeTool(SearchCodeTool),
 
+    TaskTool(TaskTool),
+
     WriteFileTool(WriteFileTool),
 
 
 
-    Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool),
+    Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool(Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool),
 
     Union2KconfirmedOrKtentative(Union2KconfirmedOrKtentative),
 
     Union2KforgetOrKsave(Union2KforgetOrKsave),
+
+    Union3KhighOrKlowOrKmedium(Union3KhighOrKlowOrKmedium),
+
+    Union4KblockedOrKdoneOrKin_progressOrKtodo(Union4KblockedOrKdoneOrKin_progressOrKtodo),
+
+    Union4KcreateOrKdoneOrKlistOrKupdate(Union4KcreateOrKdoneOrKlistOrKupdate),
 
     Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference(Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference),
 
@@ -118,15 +125,23 @@ impl baml::KnownTypes for Types {
 
             Types::SearchCodeTool(_) => "SearchCodeTool",
 
+            Types::TaskTool(_) => "TaskTool",
+
             Types::WriteFileTool(_) => "WriteFileTool",
 
 
 
-            Types::Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool(_) => "Union17AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrWriteFileTool",
+            Types::Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool(_) => "Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool",
 
             Types::Union2KconfirmedOrKtentative(_) => "Union2KconfirmedOrKtentative",
 
             Types::Union2KforgetOrKsave(_) => "Union2KforgetOrKsave",
+
+            Types::Union3KhighOrKlowOrKmedium(_) => "Union3KhighOrKlowOrKmedium",
+
+            Types::Union4KblockedOrKdoneOrKin_progressOrKtodo(_) => "Union4KblockedOrKdoneOrKin_progressOrKtodo",
+
+            Types::Union4KcreateOrKdoneOrKlistOrKupdate(_) => "Union4KcreateOrKdoneOrKlistOrKupdate",
 
             Types::Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference(_) => "Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference",
 

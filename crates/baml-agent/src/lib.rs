@@ -12,8 +12,11 @@ pub mod prompt;
 #[cfg(feature = "providers")]
 pub mod providers;
 pub mod session;
+pub mod tasks;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
+#[cfg(feature = "tools")]
+pub mod tools;
 
 pub use agent_loop::{
     process_step, run_loop, run_loop_stream, ActionResult, LoopConfig, LoopEvent, SgrAgent,
@@ -31,7 +34,8 @@ pub use helpers::{
     load_manifesto_from, norm, norm_owned, truncate_json_array, AgentContext,
 };
 pub use hints::{
-    collect_hints, default_sources, HintContext, HintSource, PatternHints, ToolHints, WorkflowHints,
+    collect_hints, default_sources, default_sources_with_tasks, HintContext, HintSource,
+    PatternHints, TaskHints, ToolHints, WorkflowHints,
 };
 pub use intent_guard::{guard_step, intent_allows, ActionKind, Intent, IntentCheck};
 #[cfg(feature = "logging")]
@@ -43,6 +47,10 @@ pub use session::search_sessions;
 pub use session::{
     import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
     SessionMeta,
+};
+pub use tasks::{
+    append_notes, create_task, load_tasks, save_task, tasks_context, tasks_dir, tasks_summary,
+    update_status, Priority, Task, TaskStatus,
 };
 #[cfg(feature = "telemetry")]
 pub use telemetry::{init_telemetry, TelemetryGuard};

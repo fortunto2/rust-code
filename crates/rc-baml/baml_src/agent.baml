@@ -21,8 +21,10 @@ class EditFileTool {
 }
 
 class BashCommandTool {
-  tool_name "bash" @description("Use this tool to run a shell command that blocks until completion.")
-  command string @description("Shell command to execute (blocks until done)")
+  tool_name "bash" @description("Use this tool to run a shell command. CWD persists between calls. Always returns output — use exit code to decide next step.")
+  command string @description("Shell command to execute")
+  description string? @description("Short description of what this command does (for audit trail)")
+  timeout int? @description("Timeout in milliseconds (default 120000 = 2 min, max 600000 = 10 min)")
 }
 
 class BashBgTool {
@@ -90,12 +92,22 @@ class DependenciesTool {
   path string? @description("Path to manifest file. If not provided, auto-detects in current directory.")
 }
 
+class TaskTool {
+  tool_name "task" @description("Use this tool to manage project tasks — create, list, update status, or mark done. Tasks persist as .tasks/*.md files.")
+  operation "create" | "list" | "update" | "done" @description("create = new task, list = show all, update = change status, done = mark complete")
+  title string? @description("Title for create operation")
+  task_id int? @description("Task ID for update/done operations")
+  status "todo" | "in_progress" | "blocked" | "done" | null @description("New status for update operation")
+  priority "low" | "medium" | "high" | null @description("Priority for create (default: medium)")
+  notes string? @description("Add notes to task body")
+}
+
 // MemoryTool defined in memory.baml
 
 class NextStep {
   situation string @description("SITUATION: What is the current state? What phase are we in, what's done, what's blocking? Scan history — never re-ask what's already known.")
   task string[] @description("TASK: 1-5 remaining steps. First item = what we're doing RIGHT NOW. Must advance toward completion.")
-  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool | ProjectMapTool | DependenciesTool)[] @stream.not_null @description("ACTION: Tools to execute the first task step. Use multiple for independent ops (e.g. read 3 files). Use single when steps depend on each other.")
+  actions (ReadFileTool | WriteFileTool | EditFileTool | BashCommandTool | BashBgTool | SearchCodeTool | GitStatusTool | GitDiffTool | GitAddTool | GitCommitTool | OpenEditorTool | AskUserTool | FinishTaskTool | McpToolCall | MemoryTool | ProjectMapTool | DependenciesTool | TaskTool)[] @stream.not_null @description("ACTION: Tools to execute the first task step. Use multiple for independent ops (e.g. read 3 files). Use single when steps depend on each other.")
 }
 
 // History message format for the prompt
@@ -125,6 +137,9 @@ function GetNextStep(history: Message[]) -> NextStep {
     ### Code Intelligence Tools (tree-sitter, local)
     ProjectMapTool (scan project: files, languages, LOC, public symbols — fast, no network),
     DependenciesTool (parse Cargo.toml / package.json / pyproject.toml).
+
+    ### Task Management
+    TaskTool (create/list/update/done — persistent .tasks/*.md kanban).
 
     ### MCP Tools (via McpToolCall)
     MCP servers are connected and their tools listed in system messages above.
