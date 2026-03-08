@@ -1,0 +1,455 @@
+//! Gemini API client — structured output + function calling.
+//!
+//! Supports both Google AI Studio (API key) and Vertex AI (ADC).
+//!
+//! Two modes combined:
+//! - **Structured output**: `generationConfig.responseMimeType = "application/json"`
+//!   + `responseSchema` — forces model to return JSON matching the SGR envelope.
+//! - **Function calling**: `tools[].functionDeclarations` — model emits `functionCall`
+//!   parts that map to your Rust tool structs.
+//!
+//! The model can return BOTH structured text AND function calls in one response.
+
+use crate::schema::response_schema_for;
+use crate::tool::ToolDef;
+use crate::types::*;
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
+
+/// Gemini API client.
+pub struct GeminiClient {
+    config: ProviderConfig,
+    http: reqwest::Client,
+}
+
+impl GeminiClient {
+    pub fn new(config: ProviderConfig) -> Self {
+        Self {
+            config,
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Quick constructor for Google AI Studio (API key auth).
+    pub fn from_api_key(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::new(ProviderConfig::gemini(api_key, model))
+    }
+
+    /// SGR call: structured output (typed response) + function calling (tools).
+    ///
+    /// Returns `SgrResponse<T>` where:
+    /// - `output`: parsed structured response (if model returned text)
+    /// - `tool_calls`: function calls (if model used tools)
+    ///
+    /// The model may return either or both.
+    pub async fn call<T: JsonSchema + DeserializeOwned>(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<SgrResponse<T>, SgrError> {
+        let body = self.build_request::<T>(messages, tools)?;
+        let url = self.build_url();
+
+        tracing::debug!(url = %url, model = %self.config.model, "gemini_request");
+
+        let mut req = self.http.post(&url).json(&body);
+        if self.config.project_id.is_some() && !self.config.api_key.is_empty() {
+            req = req.bearer_auth(&self.config.api_key);
+        }
+        let response = req.send().await?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(SgrError::Api { status, body });
+        }
+
+        let response_body: Value = response.json().await?;
+        self.parse_response(&response_body)
+    }
+
+    /// SGR call with structured output only (no tools).
+    ///
+    /// Shorthand for `call::<T>(messages, &[])`.
+    pub async fn structured<T: JsonSchema + DeserializeOwned>(
+        &self,
+        messages: &[Message],
+    ) -> Result<T, SgrError> {
+        let resp = self.call::<T>(messages, &[]).await?;
+        resp.output.ok_or(SgrError::EmptyResponse)
+    }
+
+    /// Tool-only call: no structured output schema, just function calling.
+    ///
+    /// Returns raw tool calls.
+    pub async fn tools_call(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<Vec<ToolCall>, SgrError> {
+        let body = self.build_tools_only_request(messages, tools)?;
+        let url = self.build_url();
+
+        let mut req = self.http.post(&url).json(&body);
+        if self.config.project_id.is_some() && !self.config.api_key.is_empty() {
+            req = req.bearer_auth(&self.config.api_key);
+        }
+        let response = req.send().await?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(SgrError::Api { status, body });
+        }
+
+        let response_body: Value = response.json().await?;
+        Ok(self.extract_tool_calls(&response_body))
+    }
+
+    // --- Private ---
+
+    fn build_url(&self) -> String {
+        if let Some(project_id) = &self.config.project_id {
+            // Vertex AI
+            let location = self.config.location.as_deref().unwrap_or("global");
+            format!(
+                "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/{}:generateContent",
+                self.config.model
+            )
+        } else {
+            // Google AI Studio
+            format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                self.config.model, self.config.api_key
+            )
+        }
+    }
+
+    fn build_request<T: JsonSchema>(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<Value, SgrError> {
+        let contents = self.messages_to_contents(messages);
+        let system_instruction = self.extract_system(messages);
+
+        let mut gen_config = json!({
+            "temperature": self.config.temperature,
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema_for::<T>(),
+        });
+
+        if let Some(max_tokens) = self.config.max_tokens {
+            gen_config["maxOutputTokens"] = json!(max_tokens);
+        }
+
+        let mut body = json!({
+            "contents": contents,
+            "generationConfig": gen_config,
+        });
+
+        if let Some(system) = system_instruction {
+            body["systemInstruction"] = json!({
+                "parts": [{"text": system}]
+            });
+        }
+
+        if !tools.is_empty() {
+            let function_declarations: Vec<Value> =
+                tools.iter().map(|t| t.to_gemini()).collect();
+            body["tools"] = json!([{
+                "functionDeclarations": function_declarations,
+            }]);
+        }
+
+        Ok(body)
+    }
+
+    fn build_tools_only_request(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<Value, SgrError> {
+        let contents = self.messages_to_contents(messages);
+        let system_instruction = self.extract_system(messages);
+
+        let mut gen_config = json!({
+            "temperature": self.config.temperature,
+        });
+        if let Some(max_tokens) = self.config.max_tokens {
+            gen_config["maxOutputTokens"] = json!(max_tokens);
+        }
+
+        let function_declarations: Vec<Value> =
+            tools.iter().map(|t| t.to_gemini()).collect();
+
+        let mut body = json!({
+            "contents": contents,
+            "generationConfig": gen_config,
+            "tools": [{
+                "functionDeclarations": function_declarations,
+            }],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY"
+                }
+            }
+        });
+
+        if let Some(system) = system_instruction {
+            body["systemInstruction"] = json!({
+                "parts": [{"text": system}]
+            });
+        }
+
+        Ok(body)
+    }
+
+    fn messages_to_contents(&self, messages: &[Message]) -> Vec<Value> {
+        let mut contents = Vec::new();
+
+        for msg in messages {
+            match msg.role {
+                Role::System => {} // handled separately via systemInstruction
+                Role::User => {
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": [{"text": msg.content}]
+                    }));
+                }
+                Role::Assistant => {
+                    contents.push(json!({
+                        "role": "model",
+                        "parts": [{"text": msg.content}]
+                    }));
+                }
+                Role::Tool => {
+                    // Tool results go as function response parts
+                    let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                    contents.push(json!({
+                        "role": "function",
+                        "parts": [{
+                            "functionResponse": {
+                                "name": call_id,
+                                "response": {
+                                    "content": msg.content,
+                                }
+                            }
+                        }]
+                    }));
+                }
+            }
+        }
+
+        contents
+    }
+
+    fn extract_system(&self, messages: &[Message]) -> Option<String> {
+        let system_parts: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .map(|m| m.content.as_str())
+            .collect();
+
+        if system_parts.is_empty() {
+            None
+        } else {
+            Some(system_parts.join("\n\n"))
+        }
+    }
+
+    fn parse_response<T: DeserializeOwned>(
+        &self,
+        body: &Value,
+    ) -> Result<SgrResponse<T>, SgrError> {
+        let mut output: Option<T> = None;
+        let mut tool_calls = Vec::new();
+        let mut raw_text = String::new();
+
+        // Parse usage
+        let usage = body.get("usageMetadata").and_then(|u| {
+            Some(Usage {
+                prompt_tokens: u.get("promptTokenCount")?.as_u64()? as u32,
+                completion_tokens: u.get("candidatesTokenCount")?.as_u64()? as u32,
+                total_tokens: u.get("totalTokenCount")?.as_u64()? as u32,
+            })
+        });
+
+        // Extract from candidates
+        let candidates = body
+            .get("candidates")
+            .and_then(|c| c.as_array())
+            .ok_or(SgrError::EmptyResponse)?;
+
+        for candidate in candidates {
+            let parts = candidate
+                .get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array());
+
+            if let Some(parts) = parts {
+                for part in parts {
+                    // Text part → structured output
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        raw_text.push_str(text);
+                        if output.is_none() {
+                            match serde_json::from_str::<T>(text) {
+                                Ok(parsed) => output = Some(parsed),
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "failed to parse structured output");
+                                }
+                            }
+                        }
+                    }
+
+                    // Function call part → tool call
+                    if let Some(fc) = part.get("functionCall") {
+                        let name = fc
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let args = fc.get("args").cloned().unwrap_or(json!({}));
+                        tool_calls.push(ToolCall {
+                            id: name.clone(), // Gemini doesn't have separate IDs
+                            name,
+                            arguments: args,
+                        });
+                    }
+                }
+            }
+        }
+
+        if output.is_none() && tool_calls.is_empty() {
+            return Err(SgrError::EmptyResponse);
+        }
+
+        Ok(SgrResponse {
+            output,
+            tool_calls,
+            raw_text,
+            usage,
+        })
+    }
+
+    fn extract_tool_calls(&self, body: &Value) -> Vec<ToolCall> {
+        let mut calls = Vec::new();
+
+        if let Some(candidates) = body.get("candidates").and_then(|c| c.as_array()) {
+            for candidate in candidates {
+                if let Some(parts) = candidate
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        if let Some(fc) = part.get("functionCall") {
+                            let name = fc
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let args = fc.get("args").cloned().unwrap_or(json!({}));
+                            calls.push(ToolCall {
+                                id: name.clone(),
+                                name,
+                                arguments: args,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        calls
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    struct TestResponse {
+        answer: String,
+        confidence: f64,
+    }
+
+    #[test]
+    fn builds_request_with_schema_and_tools() {
+        let client = GeminiClient::from_api_key("test-key", "gemini-2.5-flash");
+        let messages = vec![
+            Message::system("You are a helper."),
+            Message::user("Hello"),
+        ];
+        let tools = vec![crate::tool::tool::<TestResponse>("test_tool", "A test")];
+
+        let body = client.build_request::<TestResponse>(&messages, &tools).unwrap();
+
+        // Has structured output schema
+        assert!(body["generationConfig"]["responseSchema"].is_object());
+        assert_eq!(body["generationConfig"]["responseMimeType"], "application/json");
+
+        // Has tools
+        assert!(body["tools"][0]["functionDeclarations"].is_array());
+
+        // Has system instruction
+        assert!(body["systemInstruction"]["parts"][0]["text"].is_string());
+
+        // Contents only has user (system extracted)
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+    }
+
+    #[test]
+    fn parses_text_response() {
+        let client = GeminiClient::from_api_key("test", "test");
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": "{\"answer\": \"42\", \"confidence\": 0.95}"
+                    }]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 20,
+                "totalTokenCount": 30,
+            }
+        });
+
+        let result: SgrResponse<TestResponse> = client.parse_response(&body).unwrap();
+        let output = result.output.unwrap();
+        assert_eq!(output.answer, "42");
+        assert_eq!(output.confidence, 0.95);
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.usage.unwrap().total_tokens, 30);
+    }
+
+    #[test]
+    fn parses_function_call_response() {
+        let client = GeminiClient::from_api_key("test", "test");
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "test_tool",
+                            "args": {"input": "/video.mp4"}
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result: SgrResponse<TestResponse> = client.parse_response(&body).unwrap();
+        assert!(result.output.is_none());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "test_tool");
+        assert_eq!(result.tool_calls[0].arguments["input"], "/video.mp4");
+    }
+}
