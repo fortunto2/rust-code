@@ -62,10 +62,17 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
             .add_directive("reqwest=off".parse().unwrap())
     });
 
+    // Layer 3: compact stderr output for Xcode console / `log stream --device`
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_target(false)
+        .with_writer(std::io::stderr);
+
     tracing_subscriber::registry()
         .with(filter)
         .with(otel_layer)
         .with(json_layer)
+        .with(stderr_layer)
         .init();
 
     // Bridge log crate → tracing (captures library log::info!/warn!/etc)
