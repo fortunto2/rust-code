@@ -5,6 +5,7 @@ members = [
     "crates/baml-agent",
     "crates/baml-agent-tui",
     "crates/solograph",
+    "crates/sgr-agent",
 ]
 default-members = ["crates/rc-cli"]
 resolver = "2"

@@ -1,0 +1,29 @@
+[package]
+name = "sgr-agent"
+version = "0.1.0"
+edition = "2021"
+description = "SGR (Schema-Guided Reasoning) LLM client — structured output + function calling, no dlopen"
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-code"
+keywords = ["llm", "structured-output", "function-calling", "sgr", "gemini"]
+categories = ["development-tools"]
+
+[features]
+default = ["gemini", "openai"]
+gemini = []
+openai = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+thiserror = "2"
+tracing = "0.1"
+
+# Uniffi for iOS/Android Swift/Kotlin bindings (optional)
+# uniffi = { version = "0.31", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
