@@ -69,6 +69,9 @@ pub mod compaction;
 #[cfg(feature = "agent")]
 pub mod union_schema;
 
+#[cfg(feature = "genai")]
+pub mod genai_client;
+
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};

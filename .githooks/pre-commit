@@ -11,4 +11,14 @@ cargo clippy -p baml-agent -p baml-agent-tui -p solograph --all-targets -- -D wa
 echo "Checking format..."
 cargo fmt -p baml-agent -p baml-agent-tui -p solograph -- --check
 
+# Check genai submodule formatting (uses its own rustfmt.toml with hard_tabs)
+# Only check files we modified (upstream has its own fmt issues)
+if [ -d "crates/genai/src" ]; then
+    GENAI_CHANGED=$(cd crates/genai && git diff --name-only HEAD~1 -- '*.rs' 2>/dev/null || true)
+    if [ -n "$GENAI_CHANGED" ]; then
+        echo "Checking genai submodule format..."
+        (cd crates/genai && echo "$GENAI_CHANGED" | xargs rustfmt --check)
+    fi
+fi
+
 echo "All checks passed."

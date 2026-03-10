@@ -68,7 +68,7 @@ pub async fn edit_file(path: impl AsRef<Path>, old_string: &str, new_string: &st
     // Single-pass: find first occurrence, then check for a second
     let Some(pos) = content.find(old_string) else {
         anyhow::bail!(
-            "Error: old_string not found in the file. Ensure the string matches exactly (including spaces/indentation)."
+            "Error: old_string not found in the file. Ensure the string matches exactly (including spaces/indentation). Try using read_file first to see the current file contents before editing."
         );
     };
 

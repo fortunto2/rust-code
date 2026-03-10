@@ -13,6 +13,7 @@ default = ["gemini", "openai"]
 gemini = []
 openai = []
 agent = ["async-trait", "indexmap", "futures", "tokio-util"]
+genai = ["dep:genai", "async-trait"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -27,6 +28,7 @@ async-trait = { version = "0.1", optional = true }
 indexmap = { version = "2", optional = true }
 futures = { version = "0.3", optional = true }
 tokio-util = { version = "0.7", optional = true }
+genai = { path = "../genai", optional = true }
 
 # Uniffi for iOS/Android Swift/Kotlin bindings (optional)
 # uniffi = { version = "0.31", optional = true }

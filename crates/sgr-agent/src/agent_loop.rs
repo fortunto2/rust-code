@@ -148,10 +148,23 @@ pub async fn run_loop(
 
         // Loop detection
         let sig: Vec<String> = decision.tool_calls.iter().map(|tc| tc.name.clone()).collect();
-        if detector.check(&sig) {
-            ctx.state = AgentState::Failed;
-            on_event(LoopEvent::LoopDetected { count: detector.consecutive });
-            return Err(AgentError::LoopDetected(detector.consecutive));
+        match detector.check(&sig) {
+            LoopCheckResult::Abort => {
+                ctx.state = AgentState::Failed;
+                on_event(LoopEvent::LoopDetected { count: detector.consecutive });
+                return Err(AgentError::LoopDetected(detector.consecutive));
+            }
+            LoopCheckResult::Tier2Warning(dominant_tool) => {
+                // Inject a system hint: give the agent one more chance to change approach
+                let hint = format!(
+                    "LOOP WARNING: You are repeatedly using '{}' without making progress. \
+                     Try a different approach: re-read the file with read_file to see current contents, \
+                     use write_file instead of edit_file, or break the problem into smaller steps.",
+                    dominant_tool
+                );
+                messages.push(Message::system(&hint));
+            }
+            LoopCheckResult::Ok => {}
         }
 
         // Add assistant message with tool calls (Gemini requires model turn before function responses)
@@ -375,10 +388,22 @@ where
         }
 
         let sig: Vec<String> = decision.tool_calls.iter().map(|tc| tc.name.clone()).collect();
-        if detector.check(&sig) {
-            ctx.state = AgentState::Failed;
-            on_event(LoopEvent::LoopDetected { count: detector.consecutive });
-            return Err(AgentError::LoopDetected(detector.consecutive));
+        match detector.check(&sig) {
+            LoopCheckResult::Abort => {
+                ctx.state = AgentState::Failed;
+                on_event(LoopEvent::LoopDetected { count: detector.consecutive });
+                return Err(AgentError::LoopDetected(detector.consecutive));
+            }
+            LoopCheckResult::Tier2Warning(dominant_tool) => {
+                let hint = format!(
+                    "LOOP WARNING: You are repeatedly using '{}' without making progress. \
+                     Try a different approach: re-read the file with read_file to see current contents, \
+                     use write_file instead of edit_file, or break the problem into smaller steps.",
+                    dominant_tool
+                );
+                messages.push(Message::system(&hint));
+            }
+            LoopCheckResult::Ok => {}
         }
 
         // Add assistant message with tool calls (Gemini requires model turn before function responses)
@@ -516,9 +541,21 @@ where
     Err(AgentError::MaxSteps(config.max_steps))
 }
 
+/// Result of loop detection check.
+#[derive(Debug, PartialEq)]
+enum LoopCheckResult {
+    /// No loop detected.
+    Ok,
+    /// Tier 2 warning: a single tool category dominates. Contains the dominant tool name.
+    /// Agent gets one more chance with a hint injected.
+    Tier2Warning(String),
+    /// Hard loop detected (tier 1 exact repeat, or tier 2 after warning).
+    Abort,
+}
+
 /// 3-tier loop detection:
 /// - Tier 1: exact action signature repeats N times consecutively
-/// - Tier 2: single tool dominates >90% of all calls
+/// - Tier 2: single tool dominates >90% of all calls (warns first, aborts on second trigger)
 /// - Tier 3: tool output stagnation — same results repeating
 struct LoopDetector {
     threshold: usize,
@@ -529,6 +566,8 @@ struct LoopDetector {
     /// Tier 3: hash of last tool outputs to detect stagnation
     last_output_hash: u64,
     output_repeat_count: usize,
+    /// Whether tier 2 warning has already been issued (next trigger aborts).
+    tier2_warned: bool,
 }
 
 impl LoopDetector {
@@ -541,11 +580,14 @@ impl LoopDetector {
             total_calls: 0,
             last_output_hash: 0,
             output_repeat_count: 0,
+            tier2_warned: false,
         }
     }
 
-    /// Check action signature for loop. Returns true if a loop is detected.
-    fn check(&mut self, sig: &[String]) -> bool {
+    /// Check action signature for loop.
+    /// Returns `Abort` for tier 1 (exact repeat) or tier 2 after warning.
+    /// Returns `Tier2Warning` on first tier 2 trigger (dominant tool detected).
+    fn check(&mut self, sig: &[String]) -> LoopCheckResult {
         self.total_calls += 1;
 
         // Tier 1: exact signature match
@@ -556,7 +598,7 @@ impl LoopDetector {
             self.last_sig = sig.to_vec();
         }
         if self.consecutive >= self.threshold {
-            return true;
+            return LoopCheckResult::Abort;
         }
 
         // Tier 2: tool name frequency (single tool dominates)
@@ -564,14 +606,18 @@ impl LoopDetector {
             *self.tool_freq.entry(name.clone()).or_insert(0) += 1;
         }
         if self.total_calls >= self.threshold {
-            for count in self.tool_freq.values() {
+            for (name, count) in &self.tool_freq {
                 if *count >= self.threshold && *count as f64 / self.total_calls as f64 > 0.9 {
-                    return true;
+                    if self.tier2_warned {
+                        return LoopCheckResult::Abort;
+                    }
+                    self.tier2_warned = true;
+                    return LoopCheckResult::Tier2Warning(name.clone());
                 }
             }
         }
 
-        false
+        LoopCheckResult::Ok
     }
 
     /// Check tool outputs for stagnation (tier 3). Call after executing tools each step.
@@ -831,18 +877,36 @@ mod tests {
     fn loop_detector_exact_sig() {
         let mut d = LoopDetector::new(3);
         let sig = vec!["bash".to_string()];
-        assert!(!d.check(&sig));
-        assert!(!d.check(&sig));
-        assert!(d.check(&sig)); // 3rd consecutive
+        assert_eq!(d.check(&sig), LoopCheckResult::Ok);
+        assert_eq!(d.check(&sig), LoopCheckResult::Ok);
+        assert_eq!(d.check(&sig), LoopCheckResult::Abort); // 3rd consecutive
     }
 
     #[test]
     fn loop_detector_different_sigs_reset() {
         let mut d = LoopDetector::new(3);
-        assert!(!d.check(&["bash".into()]));
-        assert!(!d.check(&["bash".into()]));
-        assert!(!d.check(&["read".into()])); // different → resets
-        assert!(!d.check(&["bash".into()]));
+        assert_eq!(d.check(&["bash".into()]), LoopCheckResult::Ok);
+        assert_eq!(d.check(&["bash".into()]), LoopCheckResult::Ok);
+        assert_eq!(d.check(&["read".into()]), LoopCheckResult::Ok); // different → resets
+        assert_eq!(d.check(&["bash".into()]), LoopCheckResult::Ok);
+    }
+
+    #[test]
+    fn loop_detector_tier2_warning_then_abort() {
+        // Tier 2 requires: count >= threshold AND count/total > 0.9
+        // Use threshold=3. To avoid tier 1 (exact consecutive), alternate sigs.
+        let mut d = LoopDetector::new(3);
+        // Calls 1-2: build up frequency, total_calls < threshold so tier 2 not checked
+        assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=1, edit=1, cons=1
+        assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=2, edit=2, cons=2
+        // Call 3: break consecutive (different sig) but edit_file still in sig
+        // total=3, edit=3, cons=1 → tier 2: 3/3=1.0 > 0.9 → first warning
+        assert_eq!(
+            d.check(&["edit_file".into(), "read_file".into()]),
+            LoopCheckResult::Tier2Warning("edit_file".into())
+        );
+        // Call 4: tier 2 already warned → abort
+        assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Abort);
     }
 
     #[test]
