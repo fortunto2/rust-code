@@ -233,4 +233,36 @@ mod tests {
         let (_, calls) = parse_action(raw, &mock_tools()).unwrap();
         assert_eq!(calls[0].arguments["command"], "ls");
     }
+
+    #[test]
+    fn parse_action_skips_non_object_and_missing_tool_name() {
+        // Non-objects and missing tool_name are silently skipped
+        let raw = r#"{"situation": "ok", "task": [], "actions": [
+            "just a string",
+            42,
+            null,
+            {"no_tool_name": true},
+            {"tool_name": "bash", "command": "ls"}
+        ]}"#;
+        let (_, calls) = parse_action(raw, &mock_tools()).unwrap();
+        // Only the valid one should survive
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+    }
+
+    #[test]
+    fn parse_action_missing_situation_defaults_empty() {
+        let raw = r#"{"actions": [{"tool_name": "bash", "command": "ls"}]}"#;
+        let (situation, calls) = parse_action(raw, &mock_tools()).unwrap();
+        assert_eq!(situation, "");
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn parse_action_missing_actions_returns_empty() {
+        let raw = r#"{"situation": "thinking"}"#;
+        let (situation, calls) = parse_action(raw, &mock_tools()).unwrap();
+        assert_eq!(situation, "thinking");
+        assert!(calls.is_empty());
+    }
 }

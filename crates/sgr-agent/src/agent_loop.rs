@@ -72,7 +72,8 @@ pub async fn run_loop(
             return Err(AgentError::LoopDetected(detector.consecutive));
         }
 
-        // Execute tool calls
+        // Execute tool calls, collect outputs for stagnation check
+        let mut step_outputs: Vec<String> = Vec::new();
         for tc in &decision.tool_calls {
             if let Some(tool) = tools.get(&tc.name) {
                 match tool.execute(tc.arguments.clone(), ctx).await {
@@ -81,6 +82,7 @@ pub async fn run_loop(
                             name: tc.name.clone(),
                             output: output.content.clone(),
                         });
+                        step_outputs.push(output.content.clone());
                         messages.push(Message::tool(&tc.id, &output.content));
 
                         if output.done {
@@ -91,6 +93,7 @@ pub async fn run_loop(
                     }
                     Err(e) => {
                         let err_msg = format!("Tool error: {}", e);
+                        step_outputs.push(err_msg.clone());
                         messages.push(Message::tool(&tc.id, &err_msg));
                         on_event(LoopEvent::ToolResult {
                             name: tc.name.clone(),
@@ -100,6 +103,7 @@ pub async fn run_loop(
                 }
             } else {
                 let err_msg = format!("Unknown tool: {}", tc.name);
+                step_outputs.push(err_msg.clone());
                 messages.push(Message::tool(&tc.id, &err_msg));
                 on_event(LoopEvent::ToolResult {
                     name: tc.name.clone(),
@@ -107,19 +111,32 @@ pub async fn run_loop(
                 });
             }
         }
+
+        // Tier 3: output stagnation
+        if detector.check_outputs(&step_outputs) {
+            ctx.state = AgentState::Failed;
+            on_event(LoopEvent::LoopDetected { count: detector.output_repeat_count });
+            return Err(AgentError::LoopDetected(detector.output_repeat_count));
+        }
     }
 
     ctx.state = AgentState::Failed;
     Err(AgentError::MaxSteps(config.max_steps))
 }
 
-/// 3-tier loop detection.
+/// 3-tier loop detection:
+/// - Tier 1: exact action signature repeats N times consecutively
+/// - Tier 2: single tool dominates >90% of all calls
+/// - Tier 3: tool output stagnation — same results repeating
 struct LoopDetector {
     threshold: usize,
     consecutive: usize,
     last_sig: Vec<String>,
     tool_freq: HashMap<String, usize>,
     total_calls: usize,
+    /// Tier 3: hash of last tool outputs to detect stagnation
+    last_output_hash: u64,
+    output_repeat_count: usize,
 }
 
 impl LoopDetector {
@@ -130,10 +147,12 @@ impl LoopDetector {
             last_sig: vec![],
             tool_freq: HashMap::new(),
             total_calls: 0,
+            last_output_hash: 0,
+            output_repeat_count: 0,
         }
     }
 
-    /// Returns true if a loop is detected.
+    /// Check action signature for loop. Returns true if a loop is detected.
     fn check(&mut self, sig: &[String]) -> bool {
         self.total_calls += 1;
 
@@ -162,6 +181,25 @@ impl LoopDetector {
 
         false
     }
+
+    /// Check tool outputs for stagnation (tier 3). Call after executing tools each step.
+    fn check_outputs(&mut self, outputs: &[String]) -> bool {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        outputs.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if hash == self.last_output_hash && self.last_output_hash != 0 {
+            self.output_repeat_count += 1;
+        } else {
+            self.output_repeat_count = 1;
+            self.last_output_hash = hash;
+        }
+
+        self.output_repeat_count >= self.threshold
+    }
 }
 
 #[cfg(test)]
@@ -171,7 +209,7 @@ mod tests {
     use crate::agent_tool::{Tool, ToolError, ToolOutput};
     use crate::context::AgentContext;
     use crate::registry::ToolRegistry;
-    use crate::types::{Message, ToolCall};
+    use crate::types::{Message, SgrError, ToolCall};
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -322,5 +360,111 @@ mod tests {
         let c = LoopConfig::default();
         assert_eq!(c.max_steps, 50);
         assert_eq!(c.loop_abort_threshold, 6);
+    }
+
+    #[test]
+    fn loop_detector_output_stagnation() {
+        let mut d = LoopDetector::new(3);
+        let outputs = vec!["same result".to_string()];
+        assert!(!d.check_outputs(&outputs));
+        assert!(!d.check_outputs(&outputs));
+        assert!(d.check_outputs(&outputs)); // 3rd repeat
+    }
+
+    #[test]
+    fn loop_detector_output_stagnation_resets_on_change() {
+        let mut d = LoopDetector::new(3);
+        let a = vec!["result A".to_string()];
+        let b = vec!["result B".to_string()];
+        assert!(!d.check_outputs(&a));
+        assert!(!d.check_outputs(&a));
+        assert!(!d.check_outputs(&b)); // different → resets
+        assert!(!d.check_outputs(&a));
+    }
+
+    #[tokio::test]
+    async fn loop_handles_llm_error() {
+        struct FailingAgent;
+        #[async_trait::async_trait]
+        impl Agent for FailingAgent {
+            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+                Err(AgentError::Llm(SgrError::EmptyResponse))
+            }
+        }
+
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+
+        let result = run_loop(&FailingAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        assert!(matches!(result, Err(AgentError::Llm(SgrError::EmptyResponse))));
+    }
+
+    #[tokio::test]
+    async fn loop_feeds_tool_errors_back() {
+        // Agent calls unknown tool → error fed back → agent completes
+        struct ErrorRecoveryAgent {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Agent for ErrorRecoveryAgent {
+            async fn decide(&self, msgs: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First: call unknown tool
+                    Ok(Decision {
+                        situation: "trying".into(),
+                        task: vec![],
+                        tool_calls: vec![ToolCall {
+                            id: "1".into(),
+                            name: "nonexistent_tool".into(),
+                            arguments: serde_json::json!({}),
+                        }],
+                        completed: false,
+                    })
+                } else {
+                    // Second: should see error in messages, complete
+                    let last = msgs.last().unwrap();
+                    assert!(last.content.contains("Unknown tool"));
+                    Ok(Decision {
+                        situation: "recovered".into(),
+                        task: vec![],
+                        tool_calls: vec![],
+                        completed: true,
+                    })
+                }
+            }
+        }
+
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+        let agent = ErrorRecoveryAgent { call_count: Arc::new(AtomicUsize::new(0)) };
+
+        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
+        assert_eq!(steps, 2);
+        assert_eq!(ctx.state, AgentState::Completed);
+    }
+
+    #[tokio::test]
+    async fn loop_events_are_emitted() {
+        let agent = CountingAgent {
+            max_calls: 1,
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+
+        let mut events = Vec::new();
+        run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |e| {
+            events.push(format!("{:?}", std::mem::discriminant(&e)));
+        }).await.unwrap();
+
+        // Should have: StepStart, Decision, ToolResult, StepStart, Decision, Completed
+        assert!(events.len() >= 4);
     }
 }

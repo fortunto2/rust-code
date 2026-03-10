@@ -1,7 +1,11 @@
 //! Progressive discovery — filter tools by relevance to current query.
 //!
-//! System tools are always included. Non-system tools are ranked by
-//! keyword overlap + fuzzy matching (strsim).
+//! Use `ToolFilter` when your registry has many tools (20+) and you want to
+//! limit what the LLM sees per step. System tools are always included.
+//! Non-system tools are ranked by keyword overlap + fuzzy matching (strsim).
+//!
+//! Usage: call `filter.select(user_query, &registry)` to get a subset of tools,
+//! then pass those to your agent's `decide()` via a filtered registry.
 
 use crate::agent_tool::Tool;
 use crate::registry::ToolRegistry;

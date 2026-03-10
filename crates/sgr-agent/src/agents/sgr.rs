@@ -10,6 +10,9 @@ use crate::types::Message;
 use crate::union_schema;
 
 /// Agent that uses structured output (JSON Schema) for tool selection.
+///
+/// System prompt precedence: if `messages` already contains a `Role::System`
+/// message, the agent's `system_prompt` is NOT injected (user's takes priority).
 pub struct SgrAgent<C: LlmClient> {
     client: C,
     system_prompt: String,
