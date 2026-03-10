@@ -51,6 +51,8 @@ pub mod factory;
 #[cfg(feature = "agent")]
 pub mod registry;
 #[cfg(feature = "agent")]
+pub mod retry;
+#[cfg(feature = "agent")]
 pub mod router;
 #[cfg(feature = "agent")]
 pub mod schema_simplifier;

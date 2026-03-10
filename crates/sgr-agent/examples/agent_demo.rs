@@ -834,7 +834,7 @@ async fn main() {
     // Context
     let mut ctx = AgentContext::new();
     let mut messages = vec![Message::user(&prompt)];
-    let loop_config = LoopConfig { max_steps: 15, loop_abort_threshold: 4 };
+    let loop_config = LoopConfig { max_steps: 15, loop_abort_threshold: 4, ..Default::default() };
 
     // Run!
     let result = run_loop(&agent, &tools, &mut ctx, &mut messages, &loop_config, |event| {

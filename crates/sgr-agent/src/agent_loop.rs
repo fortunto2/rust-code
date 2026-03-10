@@ -15,11 +15,21 @@ pub struct LoopConfig {
     pub max_steps: usize,
     /// Consecutive repeated tool calls before loop detection triggers.
     pub loop_abort_threshold: usize,
+    /// Max messages to keep in context (0 = unlimited).
+    /// Keeps first 2 (system + user prompt) + last N messages.
+    pub max_messages: usize,
+    /// Auto-complete if agent returns same situation text N times.
+    pub auto_complete_threshold: usize,
 }
 
 impl Default for LoopConfig {
     fn default() -> Self {
-        Self { max_steps: 50, loop_abort_threshold: 6 }
+        Self {
+            max_steps: 50,
+            loop_abort_threshold: 6,
+            max_messages: 80,
+            auto_complete_threshold: 3,
+        }
     }
 }
 
@@ -46,8 +56,13 @@ pub async fn run_loop(
     mut on_event: impl FnMut(LoopEvent),
 ) -> Result<usize, AgentError> {
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
 
     for step in 1..=config.max_steps {
+        // Sliding window: trim messages if over limit
+        if config.max_messages > 0 && messages.len() > config.max_messages {
+            trim_messages(messages, config.max_messages);
+        }
         ctx.iteration = step;
         on_event(LoopEvent::StepStart { step });
 
@@ -71,6 +86,16 @@ pub async fn run_loop(
 
         let decision = agent.decide(messages, effective_tools).await?;
         on_event(LoopEvent::Decision(decision.clone()));
+
+        // Auto-completion: detect when agent is done but forgot to call finish_task
+        if completion_detector.check(&decision) {
+            ctx.state = AgentState::Completed;
+            if !decision.situation.is_empty() {
+                messages.push(Message::assistant(&decision.situation));
+            }
+            on_event(LoopEvent::Completed { steps: step });
+            return Ok(step);
+        }
 
         if decision.completed || decision.tool_calls.is_empty() {
             ctx.state = AgentState::Completed;
@@ -225,6 +250,85 @@ impl LoopDetector {
     }
 }
 
+/// Auto-completion detector — catches when agent is done but doesn't call finish_task.
+///
+/// Signals completion when:
+/// - Agent returns same situation text N times (stuck describing same state)
+/// - Situation contains completion keywords ("complete", "finished", "done", "no more")
+struct CompletionDetector {
+    threshold: usize,
+    last_situation: String,
+    repeat_count: usize,
+}
+
+/// Keywords in situation text that suggest task is complete.
+const COMPLETION_KEYWORDS: &[&str] = &[
+    "task is complete",
+    "task is done",
+    "task is finished",
+    "all done",
+    "successfully completed",
+    "nothing more",
+    "no further action",
+    "no more steps",
+];
+
+impl CompletionDetector {
+    fn new(threshold: usize) -> Self {
+        Self {
+            threshold: threshold.max(2),
+            last_situation: String::new(),
+            repeat_count: 0,
+        }
+    }
+
+    /// Check if the decision indicates implicit completion.
+    fn check(&mut self, decision: &Decision) -> bool {
+        // Don't interfere with explicit completion
+        if decision.completed || decision.tool_calls.is_empty() {
+            return false;
+        }
+
+        // Check for completion keywords in situation
+        let sit_lower = decision.situation.to_lowercase();
+        for keyword in COMPLETION_KEYWORDS {
+            if sit_lower.contains(keyword) {
+                return true;
+            }
+        }
+
+        // Check for repeated situation text (agent stuck describing same state)
+        if !decision.situation.is_empty() && decision.situation == self.last_situation {
+            self.repeat_count += 1;
+        } else {
+            self.repeat_count = 1;
+            self.last_situation = decision.situation.clone();
+        }
+
+        self.repeat_count >= self.threshold
+    }
+}
+
+/// Trim messages to fit within max_messages limit.
+/// Keeps: first 2 messages (system + initial user) + last (max - 2) messages.
+fn trim_messages(messages: &mut Vec<Message>, max: usize) {
+    if messages.len() <= max || max < 4 {
+        return;
+    }
+    let keep_start = 2; // system + user prompt
+    // Account for the summary message we'll insert (+1)
+    let remove_count = messages.len() - max + 1;
+    let removed_range = keep_start..keep_start + remove_count;
+
+    let summary = format!(
+        "[{} messages trimmed from context to stay within {} message limit]",
+        remove_count, max
+    );
+
+    messages.drain(removed_range);
+    messages.insert(keep_start, Message::system(&summary));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,7 +425,12 @@ mod tests {
         let tools = ToolRegistry::new().register(EchoTool);
         let mut ctx = AgentContext::new();
         let mut messages = vec![Message::user("go")];
-        let config = LoopConfig { max_steps: 50, loop_abort_threshold: 3 };
+        let config = LoopConfig {
+            max_steps: 50,
+            loop_abort_threshold: 3,
+            auto_complete_threshold: 100, // disable auto-complete for this test
+            ..Default::default()
+        };
 
         let result = run_loop(&LoopingAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
         assert!(matches!(result, Err(AgentError::LoopDetected(3))));
@@ -354,7 +463,7 @@ mod tests {
         let tools = ToolRegistry::new().register(EchoTool);
         let mut ctx = AgentContext::new();
         let mut messages = vec![Message::user("go")];
-        let config = LoopConfig { max_steps: 5, loop_abort_threshold: 100 };
+        let config = LoopConfig { max_steps: 5, loop_abort_threshold: 100, ..Default::default() };
 
         let result = run_loop(&NeverDoneAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
         assert!(matches!(result, Err(AgentError::MaxSteps(5))));
@@ -392,6 +501,61 @@ mod tests {
         assert!(!d.check_outputs(&outputs));
         assert!(!d.check_outputs(&outputs));
         assert!(d.check_outputs(&outputs)); // 3rd repeat
+    }
+
+    #[test]
+    fn completion_detector_keyword() {
+        let mut cd = CompletionDetector::new(3);
+        let d = Decision {
+            situation: "The task is complete, all files written.".into(),
+            task: vec![],
+            tool_calls: vec![ToolCall { id: "1".into(), name: "echo".into(), arguments: serde_json::json!({}) }],
+            completed: false,
+        };
+        assert!(cd.check(&d));
+    }
+
+    #[test]
+    fn completion_detector_repeated_situation() {
+        let mut cd = CompletionDetector::new(3);
+        let d = Decision {
+            situation: "working on it".into(),
+            task: vec![],
+            tool_calls: vec![ToolCall { id: "1".into(), name: "echo".into(), arguments: serde_json::json!({}) }],
+            completed: false,
+        };
+        assert!(!cd.check(&d));
+        assert!(!cd.check(&d));
+        assert!(cd.check(&d)); // 3rd repeat
+    }
+
+    #[test]
+    fn completion_detector_ignores_explicit_completion() {
+        let mut cd = CompletionDetector::new(2);
+        let d = Decision {
+            situation: "task is complete".into(),
+            task: vec![],
+            tool_calls: vec![],
+            completed: true,
+        };
+        // Should return false — let normal completion handling take over
+        assert!(!cd.check(&d));
+    }
+
+    #[test]
+    fn trim_messages_basic() {
+        let mut msgs: Vec<Message> = (0..10).map(|i| Message::user(&format!("msg {i}"))).collect();
+        trim_messages(&mut msgs, 6);
+        // first 2 + summary + last 3 = 6
+        assert_eq!(msgs.len(), 6);
+        assert!(msgs[2].content.contains("trimmed"));
+    }
+
+    #[test]
+    fn trim_messages_no_op_when_under_limit() {
+        let mut msgs = vec![Message::user("a"), Message::user("b")];
+        trim_messages(&mut msgs, 10);
+        assert_eq!(msgs.len(), 2);
     }
 
     #[test]
