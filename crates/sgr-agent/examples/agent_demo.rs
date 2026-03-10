@@ -11,6 +11,7 @@ use sgr_agent::agents::sgr::SgrAgent;
 use sgr_agent::context::AgentContext;
 use sgr_agent::gemini::GeminiClient;
 use sgr_agent::registry::ToolRegistry;
+use sgr_agent::router::{ModelRouter, RouterConfig};
 use sgr_agent::types::Message;
 use sgr_agent::ProviderConfig;
 use serde_json::Value;
@@ -763,8 +764,8 @@ AVAILABLE TOOLS:
 
 #[tokio::main]
 async fn main() {
-    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY required");
-    let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".into());
+    let smart_model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.1-pro-preview".into());
+    let fast_model = std::env::var("GEMINI_FAST_MODEL").unwrap_or_else(|_| "gemini-3.1-flash-lite-preview".into());
 
     let prompt = std::env::args().nth(1).unwrap_or_else(|| {
         "Explore this project: show the project map, read the main Cargo.toml, then list all crates with a one-line description of each.".into()
@@ -773,13 +774,10 @@ async fn main() {
     println!("╔══════════════════════════════════════════════════════╗");
     println!("║  sgr-agent framework demo — 16 tools                ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!("║  Model: {:<44} ║", model);
+    println!("║  Smart: {:<44} ║", smart_model);
+    println!("║  Fast:  {:<44} ║", fast_model);
     println!("║  Prompt: {:<43} ║",
         if prompt.len() > 43 { format!("{}...", &prompt[..40]) } else { prompt.clone() });
-    println!("║  Tools: read_file write_file edit_file bash          ║");
-    println!("║         bash_bg search_code git_status git_diff      ║");
-    println!("║         git_add git_commit project_map dependencies  ║");
-    println!("║         memory task ask_user finish_task              ║");
     println!("╚══════════════════════════════════════════════════════╝");
     println!();
 
@@ -804,10 +802,34 @@ async fn main() {
 
     println!("Registered {} tools\n", tools.len());
 
-    // Build agent
-    let config = ProviderConfig::gemini(&api_key, &model);
-    let client = GeminiClient::new(config);
-    let agent = SgrAgent::new(client, SYSTEM_PROMPT);
+    // Build dual-model router — Vertex AI or Google AI
+    let (smart_config, fast_config) = if let Ok(project_id) = std::env::var("GOOGLE_CLOUD_PROJECT") {
+        let access_token = String::from_utf8(
+            Command::new("gcloud").args(["auth", "print-access-token"])
+                .output().expect("gcloud not found").stdout
+        ).unwrap().trim().to_string();
+        println!("  Backend: Vertex AI (project: {})", project_id);
+        (
+            ProviderConfig::vertex(&access_token, &project_id, &smart_model),
+            ProviderConfig::vertex(&access_token, &project_id, &fast_model),
+        )
+    } else {
+        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT required");
+        println!("  Backend: Google AI (API key)");
+        (
+            ProviderConfig::gemini(&api_key, &smart_model),
+            ProviderConfig::gemini(&api_key, &fast_model),
+        )
+    };
+    let smart_client = GeminiClient::new(smart_config);
+    let fast_client = GeminiClient::new(fast_config);
+    let router = ModelRouter::new(smart_client, fast_client)
+        .with_config(RouterConfig {
+            message_threshold: 10,
+            tool_threshold: 8,
+            always_smart: false,
+        });
+    let agent = SgrAgent::new(router, SYSTEM_PROMPT);
 
     // Context
     let mut ctx = AgentContext::new();

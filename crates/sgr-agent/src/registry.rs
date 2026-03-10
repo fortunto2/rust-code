@@ -4,6 +4,40 @@ use crate::agent_tool::Tool;
 use crate::tool::ToolDef;
 use indexmap::IndexMap;
 
+/// Lightweight proxy tool for filtered registries.
+/// Only used for schema generation (to_defs/list), not execution.
+struct ProxyTool {
+    def: ToolDef,
+}
+
+impl ProxyTool {
+    fn from_def(def: ToolDef) -> Self {
+        Self { def }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for ProxyTool {
+    fn name(&self) -> &str {
+        &self.def.name
+    }
+    fn description(&self) -> &str {
+        &self.def.description
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.def.parameters.clone()
+    }
+    async fn execute(
+        &self,
+        _: serde_json::Value,
+        _: &mut crate::context::AgentContext,
+    ) -> Result<crate::agent_tool::ToolOutput, crate::agent_tool::ToolError> {
+        Err(crate::agent_tool::ToolError::Execution(
+            "ProxyTool cannot execute — use the original registry".into(),
+        ))
+    }
+}
+
 /// Ordered registry of tools. Builder pattern for registration.
 pub struct ToolRegistry {
     tools: IndexMap<String, Box<dyn Tool>>,
@@ -76,6 +110,38 @@ impl ToolRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Create a filtered view containing only tools with the given names.
+    /// Preserves insertion order of the original registry.
+    pub fn filter(&self, names: &[String]) -> ToolRegistry {
+        // We can't move tools, so we create a registry that references
+        // the same tools by name. Since ToolRegistry owns Box<dyn Tool>,
+        // we need to create a new registry with references.
+        // Instead, we return a ToolRegistry with only matching defs.
+        // For agent_loop usage, we construct a lightweight proxy.
+        self.clone_filtered(names)
+    }
+
+    /// Clone registry keeping only named tools (via wrapper structs).
+    fn clone_filtered(&self, names: &[String]) -> ToolRegistry {
+        let mut new_tools = IndexMap::new();
+        for name in names {
+            let lower = name.to_lowercase();
+            for (k, v) in &self.tools {
+                if k.to_lowercase() == lower {
+                    // We can't clone Box<dyn Tool> generically, so we wrap
+                    // the tool def as a passthrough. For the agent loop's
+                    // tool execution, we always use the original registry.
+                    new_tools.insert(k.clone(), ProxyTool::from_def(v.to_def()));
+                }
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        for (_, tool) in new_tools {
+            reg.tools.insert(tool.def.name.clone(), Box::new(tool));
+        }
+        reg
     }
 }
 

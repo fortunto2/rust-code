@@ -256,8 +256,13 @@ impl GeminiClient {
         if let Some(project_id) = &self.config.project_id {
             // Vertex AI
             let location = self.config.location.as_deref().unwrap_or("global");
+            let host = if location == "global" {
+                "aiplatform.googleapis.com".to_string()
+            } else {
+                format!("{location}-aiplatform.googleapis.com")
+            };
             format!(
-                "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/{}:generateContent",
+                "https://{host}/v1/projects/{project_id}/locations/{location}/publishers/google/models/{}:generateContent",
                 self.config.model
             )
         } else {

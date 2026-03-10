@@ -47,7 +47,15 @@ pub mod context;
 #[cfg(feature = "agent")]
 pub mod discovery;
 #[cfg(feature = "agent")]
+pub mod factory;
+#[cfg(feature = "agent")]
 pub mod registry;
+#[cfg(feature = "agent")]
+pub mod router;
+#[cfg(feature = "agent")]
+pub mod schema_simplifier;
+#[cfg(feature = "agent")]
+pub mod streaming;
 #[cfg(feature = "agent")]
 pub mod union_schema;
 

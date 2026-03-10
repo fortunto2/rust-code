@@ -236,7 +236,7 @@ impl ProviderConfig {
             model: model.into(),
             base_url: None,
             project_id: Some(project_id.into()),
-            location: Some("us-central1".to_string()),
+            location: Some("global".to_string()),
             temperature: 0.3,
             max_tokens: None,
         }

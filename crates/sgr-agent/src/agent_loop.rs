@@ -51,7 +51,25 @@ pub async fn run_loop(
         ctx.iteration = step;
         on_event(LoopEvent::StepStart { step });
 
-        let decision = agent.decide(messages, tools).await?;
+        // Lifecycle hook: prepare context
+        agent.prepare_context(ctx, messages);
+
+        // Lifecycle hook: prepare tools (filter/reorder)
+        let active_tool_names = agent.prepare_tools(ctx, tools);
+        let filtered_tools = if active_tool_names.len() == tools.list().len() {
+            None // no filtering needed
+        } else {
+            Some(active_tool_names)
+        };
+
+        // Use filtered registry if hooks modified the tool set
+        let effective_tools = if let Some(ref names) = filtered_tools {
+            &tools.filter(names)
+        } else {
+            tools
+        };
+
+        let decision = agent.decide(messages, effective_tools).await?;
         on_event(LoopEvent::Decision(decision.clone()));
 
         if decision.completed || decision.tool_calls.is_empty() {
@@ -85,6 +103,9 @@ pub async fn run_loop(
                         step_outputs.push(output.content.clone());
                         messages.push(Message::tool(&tc.id, &output.content));
 
+                        // Lifecycle hook: after action
+                        agent.after_action(ctx, &tc.name, &output.content);
+
                         if output.done {
                             ctx.state = AgentState::Completed;
                             on_event(LoopEvent::Completed { steps: step });
@@ -95,6 +116,8 @@ pub async fn run_loop(
                         let err_msg = format!("Tool error: {}", e);
                         step_outputs.push(err_msg.clone());
                         messages.push(Message::tool(&tc.id, &err_msg));
+                        // Lifecycle hook: after action (with error)
+                        agent.after_action(ctx, &tc.name, &err_msg);
                         on_event(LoopEvent::ToolResult {
                             name: tc.name.clone(),
                             output: err_msg,

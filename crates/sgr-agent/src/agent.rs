@@ -31,6 +31,11 @@ pub enum AgentError {
 }
 
 /// An agent that decides what tools to call given conversation history.
+///
+/// Lifecycle hooks (all have default no-op implementations):
+/// - `prepare_context` — called before each step to modify context
+/// - `prepare_tools` — called before each step to filter/modify tool set
+/// - `after_action` — called after tool execution with results
 #[async_trait::async_trait]
 pub trait Agent: Send + Sync {
     /// Given messages and available tools, decide what to do next.
@@ -39,6 +44,34 @@ pub trait Agent: Send + Sync {
         messages: &[crate::types::Message],
         tools: &crate::registry::ToolRegistry,
     ) -> Result<Decision, AgentError>;
+
+    /// Hook: modify context before each step. Default: no-op.
+    fn prepare_context(
+        &self,
+        _ctx: &mut crate::context::AgentContext,
+        _messages: &[crate::types::Message],
+    ) {
+    }
+
+    /// Hook: filter or reorder tools before each step.
+    /// Returns tool names to include. Default: all tools.
+    fn prepare_tools(
+        &self,
+        _ctx: &crate::context::AgentContext,
+        tools: &crate::registry::ToolRegistry,
+    ) -> Vec<String> {
+        tools.list().iter().map(|t| t.name().to_string()).collect()
+    }
+
+    /// Hook: called after tool execution with the tool name and output.
+    /// Can modify context or messages. Default: no-op.
+    fn after_action(
+        &self,
+        _ctx: &mut crate::context::AgentContext,
+        _tool_name: &str,
+        _output: &str,
+    ) {
+    }
 }
 
 #[cfg(test)]
