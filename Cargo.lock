@@ -2002,14 +2002,17 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
+ "futures",
  "indexmap",
  "reqwest",
  "schemars 0.8.22",
  "serde",
  "serde_json",
  "strsim",
+ "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

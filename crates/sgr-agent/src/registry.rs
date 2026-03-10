@@ -94,10 +94,10 @@ impl ToolRegistry {
         let mut best: Option<(&str, f64)> = None;
         for key in self.tools.keys() {
             let score = strsim::normalized_levenshtein(&lower, &key.to_lowercase());
-            if score > 0.6 {
-                if best.is_none() || score > best.unwrap().1 {
-                    best = Some((key.as_str(), score));
-                }
+            if score > 0.6
+                && (best.is_none() || score > best.unwrap().1)
+            {
+                best = Some((key.as_str(), score));
             }
         }
         best.and_then(|(k, _)| self.tools.get(k).map(|t| t.as_ref()))

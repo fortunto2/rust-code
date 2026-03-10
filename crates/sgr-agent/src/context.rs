@@ -28,6 +28,9 @@ pub struct AgentContext {
     /// Per-tool configuration overrides.
     /// Key: tool name, Value: tool-specific config merged at execution time.
     pub tool_configs: HashMap<String, Value>,
+    /// Directories the agent is allowed to write to (sandbox).
+    /// Empty = no restriction.
+    pub writable_roots: Vec<PathBuf>,
 }
 
 impl AgentContext {
@@ -38,12 +41,50 @@ impl AgentContext {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             custom: HashMap::new(),
             tool_configs: HashMap::new(),
+            writable_roots: Vec::new(),
         }
     }
 
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = cwd.into();
         self
+    }
+
+    pub fn with_writable_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.writable_roots = roots;
+        self
+    }
+
+    /// Check if a path is writable under sandbox rules.
+    /// Returns true if writable_roots is empty (no sandbox) or path is under any root.
+    /// Canonicalizes paths to prevent traversal attacks (../ and symlinks).
+    pub fn is_writable(&self, path: &std::path::Path) -> bool {
+        if self.writable_roots.is_empty() {
+            return true;
+        }
+        let abs_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        // Canonicalize to resolve ".." and symlinks.
+        // If the path doesn't exist yet (new file), canonicalize the parent.
+        let resolved = std::fs::canonicalize(&abs_path).unwrap_or_else(|_| {
+            // File doesn't exist — canonicalize parent, then append filename
+            if let Some(parent) = abs_path.parent() {
+                if let Ok(canon_parent) = std::fs::canonicalize(parent) {
+                    if let Some(name) = abs_path.file_name() {
+                        return canon_parent.join(name);
+                    }
+                }
+            }
+            abs_path.clone()
+        });
+        self.writable_roots.iter().any(|root| {
+            // Canonicalize the root too (resolve symlinks in root paths)
+            let canon_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            resolved.starts_with(&canon_root)
+        })
     }
 
     /// Set a custom value.
@@ -141,5 +182,28 @@ mod tests {
         let base = serde_json::json!({"timeout": 30});
         let merged = ctx.merged_tool_config("bash", &base);
         assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn writable_roots_empty_allows_all() {
+        let ctx = AgentContext::new();
+        assert!(ctx.is_writable(std::path::Path::new("/any/path")));
+    }
+
+    #[test]
+    fn writable_roots_restricts() {
+        let ctx = AgentContext::new()
+            .with_writable_roots(vec![PathBuf::from("/home/user/project")]);
+        assert!(ctx.is_writable(std::path::Path::new("/home/user/project/src/main.rs")));
+        assert!(!ctx.is_writable(std::path::Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn writable_roots_relative_path() {
+        let ctx = AgentContext::new()
+            .with_cwd("/home/user/project")
+            .with_writable_roots(vec![PathBuf::from("/home/user/project")]);
+        assert!(ctx.is_writable(std::path::Path::new("src/main.rs")));
+        assert!(!ctx.is_writable(std::path::Path::new("/etc/passwd")));
     }
 }

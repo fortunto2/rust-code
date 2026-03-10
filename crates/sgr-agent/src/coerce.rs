@@ -143,7 +143,7 @@ fn coerce_array(value: &mut Value, schema: &Value) {
 /// - missing array → `[]`
 /// - missing string → `""`
 /// - missing object → `{}`
-/// This matches BAML's behavior for streaming/truncated partial responses.
+///   This matches BAML's behavior for streaming/truncated partial responses.
 fn coerce_object(value: &mut Value, schema: &Value) {
     if let Value::Object(map) = value {
         if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {

@@ -6,6 +6,7 @@ use crate::agent::{Agent, AgentError, Decision};
 use crate::context::{AgentContext, AgentState};
 use crate::registry::ToolRegistry;
 use crate::types::Message;
+use futures::future::join_all;
 use std::collections::HashMap;
 
 /// Loop configuration.
@@ -120,9 +121,75 @@ pub async fn run_loop(
             return Err(AgentError::LoopDetected(detector.consecutive));
         }
 
-        // Execute tool calls, collect outputs for stagnation check
+        // Execute tool calls: read-only in parallel, write sequentially
         let mut step_outputs: Vec<String> = Vec::new();
-        for tc in &decision.tool_calls {
+        let mut early_done = false;
+
+        // Partition into read-only (parallel) and write (sequential) tool calls
+        let (ro_calls, rw_calls): (Vec<_>, Vec<_>) = decision
+            .tool_calls
+            .iter()
+            .partition(|tc| tools.get(&tc.name).is_some_and(|t| t.is_read_only()));
+
+        // Phase 1: read-only tools in parallel
+        if !ro_calls.is_empty() {
+            let futs: Vec<_> = ro_calls
+                .iter()
+                .map(|tc| {
+                    let tool = tools.get(&tc.name).unwrap();
+                    let args = tc.arguments.clone();
+                    let name = tc.name.clone();
+                    let id = tc.id.clone();
+                    async move { (id, name, tool.execute_readonly(args).await) }
+                })
+                .collect();
+
+            for (id, name, result) in join_all(futs).await {
+                match result {
+                    Ok(output) => {
+                        on_event(LoopEvent::ToolResult {
+                            name: name.clone(),
+                            output: output.content.clone(),
+                        });
+                        step_outputs.push(output.content.clone());
+                        agent.after_action(ctx, &name, &output.content);
+                        if output.waiting {
+                            ctx.state = AgentState::WaitingInput;
+                            on_event(LoopEvent::WaitingForInput {
+                                question: output.content.clone(),
+                                tool_call_id: id.clone(),
+                            });
+                            messages.push(Message::tool(&id, "[waiting for user input]"));
+                            ctx.state = AgentState::Running;
+                        } else {
+                            messages.push(Message::tool(&id, &output.content));
+                        }
+                        if output.done {
+                            early_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Tool error: {}", e);
+                        step_outputs.push(err_msg.clone());
+                        messages.push(Message::tool(&id, &err_msg));
+                        agent.after_action(ctx, &name, &err_msg);
+                        on_event(LoopEvent::ToolResult {
+                            name,
+                            output: err_msg,
+                        });
+                    }
+                }
+            }
+            if early_done && rw_calls.is_empty() {
+                // Only honor early done from read-only tools if no write tools pending
+                ctx.state = AgentState::Completed;
+                on_event(LoopEvent::Completed { steps: step });
+                return Ok(step);
+            }
+        }
+
+        // Phase 2: write tools sequentially (need &mut ctx)
+        for tc in &rw_calls {
             if let Some(tool) = tools.get(&tc.name) {
                 match tool.execute(tc.arguments.clone(), ctx).await {
                     Ok(output) => {
@@ -131,12 +198,8 @@ pub async fn run_loop(
                             output: output.content.clone(),
                         });
                         step_outputs.push(output.content.clone());
-
-                        // Lifecycle hook: after action
                         agent.after_action(ctx, &tc.name, &output.content);
-
                         if output.waiting {
-                            // Non-interactive loop: emit event, add placeholder, continue
                             ctx.state = AgentState::WaitingInput;
                             on_event(LoopEvent::WaitingForInput {
                                 question: output.content.clone(),
@@ -147,7 +210,6 @@ pub async fn run_loop(
                         } else {
                             messages.push(Message::tool(&tc.id, &output.content));
                         }
-
                         if output.done {
                             ctx.state = AgentState::Completed;
                             on_event(LoopEvent::Completed { steps: step });
@@ -158,7 +220,6 @@ pub async fn run_loop(
                         let err_msg = format!("Tool error: {}", e);
                         step_outputs.push(err_msg.clone());
                         messages.push(Message::tool(&tc.id, &err_msg));
-                        // Lifecycle hook: after action (with error)
                         agent.after_action(ctx, &tc.name, &err_msg);
                         on_event(LoopEvent::ToolResult {
                             name: tc.name.clone(),
@@ -262,7 +323,74 @@ where
         }
 
         let mut step_outputs: Vec<String> = Vec::new();
-        for tc in &decision.tool_calls {
+        let mut early_done = false;
+
+        // Partition into read-only (parallel) and write (sequential) tool calls
+        let (ro_calls, rw_calls): (Vec<_>, Vec<_>) = decision
+            .tool_calls
+            .iter()
+            .partition(|tc| tools.get(&tc.name).is_some_and(|t| t.is_read_only()));
+
+        // Phase 1: read-only tools in parallel
+        if !ro_calls.is_empty() {
+            let futs: Vec<_> = ro_calls
+                .iter()
+                .map(|tc| {
+                    let tool = tools.get(&tc.name).unwrap();
+                    let args = tc.arguments.clone();
+                    let name = tc.name.clone();
+                    let id = tc.id.clone();
+                    async move { (id, name, tool.execute_readonly(args).await) }
+                })
+                .collect();
+
+            for (id, name, result) in join_all(futs).await {
+                match result {
+                    Ok(output) => {
+                        on_event(LoopEvent::ToolResult {
+                            name: name.clone(),
+                            output: output.content.clone(),
+                        });
+                        step_outputs.push(output.content.clone());
+                        agent.after_action(ctx, &name, &output.content);
+                        if output.waiting {
+                            ctx.state = AgentState::WaitingInput;
+                            on_event(LoopEvent::WaitingForInput {
+                                question: output.content.clone(),
+                                tool_call_id: id.clone(),
+                            });
+                            let response = on_input(output.content).await;
+                            ctx.state = AgentState::Running;
+                            messages.push(Message::tool(&id, &response));
+                        } else {
+                            messages.push(Message::tool(&id, &output.content));
+                        }
+                        if output.done {
+                            early_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Tool error: {}", e);
+                        step_outputs.push(err_msg.clone());
+                        messages.push(Message::tool(&id, &err_msg));
+                        agent.after_action(ctx, &name, &err_msg);
+                        on_event(LoopEvent::ToolResult {
+                            name,
+                            output: err_msg,
+                        });
+                    }
+                }
+            }
+            if early_done && rw_calls.is_empty() {
+                // Only honor early done from read-only tools if no write tools pending
+                ctx.state = AgentState::Completed;
+                on_event(LoopEvent::Completed { steps: step });
+                return Ok(step);
+            }
+        }
+
+        // Phase 2: write tools sequentially (need &mut ctx)
+        for tc in &rw_calls {
             if let Some(tool) = tools.get(&tc.name) {
                 match tool.execute(tc.arguments.clone(), ctx).await {
                     Ok(output) => {
@@ -272,21 +400,18 @@ where
                         });
                         step_outputs.push(output.content.clone());
                         agent.after_action(ctx, &tc.name, &output.content);
-
                         if output.waiting {
-                            // Pause: ask user via callback, inject response
                             ctx.state = AgentState::WaitingInput;
                             on_event(LoopEvent::WaitingForInput {
                                 question: output.content.clone(),
                                 tool_call_id: tc.id.clone(),
                             });
-                            let response = on_input(output.content).await;
+                            let response = on_input(output.content.clone()).await;
                             ctx.state = AgentState::Running;
                             messages.push(Message::tool(&tc.id, &response));
                         } else {
                             messages.push(Message::tool(&tc.id, &output.content));
                         }
-
                         if output.done {
                             ctx.state = AgentState::Completed;
                             on_event(LoopEvent::Completed { steps: step });
@@ -374,7 +499,7 @@ impl LoopDetector {
             *self.tool_freq.entry(name.clone()).or_insert(0) += 1;
         }
         if self.total_calls >= self.threshold {
-            for (_, count) in &self.tool_freq {
+            for count in self.tool_freq.values() {
                 if *count >= self.threshold && *count as f64 / self.total_calls as f64 > 0.9 {
                     return true;
                 }
@@ -786,6 +911,95 @@ mod tests {
 
         let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
         assert_eq!(steps, 2);
+        assert_eq!(ctx.state, AgentState::Completed);
+    }
+
+    #[tokio::test]
+    async fn parallel_readonly_tools() {
+        struct ReadOnlyTool {
+            name: &'static str,
+        }
+
+        #[async_trait::async_trait]
+        impl Tool for ReadOnlyTool {
+            fn name(&self) -> &str {
+                self.name
+            }
+            fn description(&self) -> &str {
+                "read-only tool"
+            }
+            fn is_read_only(&self) -> bool {
+                true
+            }
+            fn parameters_schema(&self) -> Value {
+                serde_json::json!({"type": "object"})
+            }
+            async fn execute(
+                &self,
+                _: Value,
+                _: &mut AgentContext,
+            ) -> Result<ToolOutput, ToolError> {
+                Ok(ToolOutput::text(format!("{} result", self.name)))
+            }
+            async fn execute_readonly(&self, _: Value) -> Result<ToolOutput, ToolError> {
+                Ok(ToolOutput::text(format!("{} result", self.name)))
+            }
+        }
+
+        struct ParallelAgent;
+        #[async_trait::async_trait]
+        impl Agent for ParallelAgent {
+            async fn decide(
+                &self,
+                msgs: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
+                if msgs.len() > 3 {
+                    return Ok(Decision {
+                        situation: "done".into(),
+                        task: vec![],
+                        tool_calls: vec![],
+                        completed: true,
+                    });
+                }
+                Ok(Decision {
+                    situation: "reading".into(),
+                    task: vec![],
+                    tool_calls: vec![
+                        ToolCall {
+                            id: "1".into(),
+                            name: "reader_a".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        ToolCall {
+                            id: "2".into(),
+                            name: "reader_b".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                    ],
+                    completed: false,
+                })
+            }
+        }
+
+        let tools = ToolRegistry::new()
+            .register(ReadOnlyTool { name: "reader_a" })
+            .register(ReadOnlyTool { name: "reader_b" });
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("read stuff")];
+        let config = LoopConfig::default();
+
+        let steps = run_loop(
+            &ParallelAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(steps > 0);
         assert_eq!(ctx.state, AgentState::Completed);
     }
 

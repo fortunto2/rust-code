@@ -80,7 +80,7 @@ impl<C: LlmClient> Agent for FlexibleAgent<C> {
         for attempt in 0..self.max_retries {
             // On retry, add error feedback
             if attempt > 0 && !errors.is_empty() {
-                msgs.push(Message::user(&format_error_prompt(&errors)));
+                msgs.push(Message::user(format_error_prompt(&errors)));
             }
 
             let raw = self.client.complete(&msgs).await?;

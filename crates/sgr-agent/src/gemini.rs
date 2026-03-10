@@ -404,12 +404,17 @@ impl GeminiClient {
                 Role::Tool => {
                     if use_function_response {
                         // Native function calling mode — functionResponse parts
+                        // call_id format: "call#name#counter" — extract the function name
                         let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                        let func_name = match call_id.split('#').collect::<Vec<_>>().as_slice() {
+                            ["call", name, _counter] => *name,
+                            _ => call_id, // fallback: old format or plain tool name
+                        };
                         contents.push(json!({
                             "role": "function",
                             "parts": [{
                                 "functionResponse": {
-                                    "name": call_id,
+                                    "name": func_name,
                                     "response": {
                                         "content": msg.content,
                                     }
@@ -453,6 +458,7 @@ impl GeminiClient {
         let mut output: Option<T> = None;
         let mut tool_calls = Vec::new();
         let mut raw_text = String::new();
+        let mut call_counter: u32 = 0;
 
         // Parse usage
         let usage = body.get("usageMetadata").and_then(|u| {
@@ -498,8 +504,9 @@ impl GeminiClient {
                             .unwrap_or("unknown")
                             .to_string();
                         let args = fc.get("args").cloned().unwrap_or(json!({}));
+                        call_counter += 1;
                         tool_calls.push(ToolCall {
-                            id: name.clone(), // Gemini doesn't have separate IDs
+                            id: format!("call#{}#{}", name, call_counter),
                             name,
                             arguments: args,
                         });
@@ -552,6 +559,7 @@ impl GeminiClient {
                     .and_then(|c| c.get("parts"))
                     .and_then(|p| p.as_array())
                 {
+                    let mut call_counter = 0u32;
                     for part in parts {
                         if let Some(fc) = part.get("functionCall") {
                             let name = fc
@@ -560,8 +568,9 @@ impl GeminiClient {
                                 .unwrap_or("unknown")
                                 .to_string();
                             let args = fc.get("args").cloned().unwrap_or(json!({}));
+                            call_counter += 1;
                             calls.push(ToolCall {
-                                id: name.clone(),
+                                id: format!("call#{}#{}", name, call_counter),
                                 name,
                                 arguments: args,
                             });
@@ -719,5 +728,58 @@ mod tests {
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].name, "test_tool");
         assert_eq!(result.tool_calls[0].arguments["input"], "/video.mp4");
+        // ID should be unique, not just the tool name
+        assert_eq!(result.tool_calls[0].id, "call#test_tool#1");
+    }
+
+    #[test]
+    fn multiple_function_calls_get_unique_ids() {
+        let client = GeminiClient::from_api_key("test", "test");
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"functionCall": {"name": "read_file", "args": {"path": "a.rs"}}},
+                        {"functionCall": {"name": "read_file", "args": {"path": "b.rs"}}},
+                        {"functionCall": {"name": "write_file", "args": {"path": "c.rs"}}},
+                    ]
+                }
+            }]
+        });
+
+        let result: SgrResponse<TestResponse> = client.parse_response(&body, None).unwrap();
+        assert_eq!(result.tool_calls.len(), 3);
+        assert_eq!(result.tool_calls[0].id, "call#read_file#1");
+        assert_eq!(result.tool_calls[1].id, "call#read_file#2");
+        assert_eq!(result.tool_calls[2].id, "call#write_file#3");
+        // All IDs unique
+        let ids: std::collections::HashSet<_> = result.tool_calls.iter().map(|tc| &tc.id).collect();
+        assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn func_name_extraction_from_call_id() {
+        let client = GeminiClient::from_api_key("test", "test");
+
+        // Build messages with tool results using our call ID format
+        let messages = vec![
+            Message::user("test"),
+            Message::tool("call#write_file#1", "Wrote file"),
+            Message::tool("call#bash#2", "Output"),
+            Message::tool("call#my_custom_tool#10", "Result"),
+            Message::tool("old_format_id", "Legacy"),  // fallback
+        ];
+
+        let contents = client.messages_to_contents(&messages);
+        // Index 0 = user, 1-4 = tool results
+        let fr1 = &contents[1]["parts"][0]["functionResponse"];
+        assert_eq!(fr1["name"], "write_file");
+        let fr2 = &contents[2]["parts"][0]["functionResponse"];
+        assert_eq!(fr2["name"], "bash");
+        let fr3 = &contents[3]["parts"][0]["functionResponse"];
+        assert_eq!(fr3["name"], "my_custom_tool");
+        // Fallback: old format without call# prefix
+        let fr4 = &contents[4]["parts"][0]["functionResponse"];
+        assert_eq!(fr4["name"], "old_format_id");
     }
 }

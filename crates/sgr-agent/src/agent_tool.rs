@@ -63,6 +63,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Whether this tool only reads state (no side effects).
+    /// Read-only tools can be executed in parallel.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     /// JSON Schema for the tool's parameters.
     fn parameters_schema(&self) -> Value;
 
@@ -72,6 +78,13 @@ pub trait Tool: Send + Sync {
         args: Value,
         ctx: &mut super::context::AgentContext,
     ) -> Result<ToolOutput, ToolError>;
+
+    /// Execute without mutable context access. Used for parallel execution of read-only tools.
+    /// Default implementation panics — override if is_read_only() returns true.
+    async fn execute_readonly(&self, args: Value) -> Result<ToolOutput, ToolError> {
+        let _ = args;
+        panic!("execute_readonly called on tool that doesn't implement it")
+    }
 
     /// Convert to a `ToolDef` for LLM API submission.
     fn to_def(&self) -> ToolDef {

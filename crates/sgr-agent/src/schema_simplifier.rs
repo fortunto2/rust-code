@@ -102,9 +102,9 @@ fn format_constraints(prop: &Value) -> String {
     if let Some(Value::Array(variants)) = prop.get("enum") {
         let vals: Vec<String> = variants
             .iter()
-            .filter_map(|v| match v {
-                Value::String(s) => Some(format!("\"{}\"", s)),
-                _ => Some(v.to_string()),
+            .map(|v| match v {
+                Value::String(s) => format!("\"{}\"", s),
+                _ => v.to_string(),
             })
             .collect();
         parts.push(format!("one of: {}", vals.join(" | ")));

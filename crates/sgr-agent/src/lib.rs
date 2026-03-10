@@ -59,6 +59,14 @@ pub mod schema_simplifier;
 #[cfg(feature = "agent")]
 pub mod streaming;
 #[cfg(feature = "agent")]
+pub mod prompt_loader;
+#[cfg(feature = "agent")]
+pub mod swarm;
+#[cfg(feature = "agent")]
+pub mod swarm_tools;
+#[cfg(feature = "agent")]
+pub mod compaction;
+#[cfg(feature = "agent")]
 pub mod union_schema;
 
 pub use coerce::coerce_value;
