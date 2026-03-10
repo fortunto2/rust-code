@@ -5,9 +5,22 @@
 use crate::agent::{Agent, AgentError, Decision};
 use crate::context::{AgentContext, AgentState};
 use crate::registry::ToolRegistry;
-use crate::types::Message;
+use crate::types::{Message, SgrError};
 use futures::future::join_all;
 use std::collections::HashMap;
+
+/// Max consecutive parsing errors before aborting the loop.
+const MAX_PARSE_RETRIES: usize = 3;
+
+/// Check if an agent error is recoverable (parsing/empty response).
+fn is_recoverable_error(e: &AgentError) -> bool {
+    matches!(
+        e,
+        AgentError::Llm(SgrError::Json(_))
+            | AgentError::Llm(SgrError::EmptyResponse)
+            | AgentError::Llm(SgrError::Schema(_))
+    )
+}
 
 /// Loop configuration.
 #[derive(Debug, Clone)]
@@ -63,6 +76,7 @@ pub async fn run_loop(
 ) -> Result<usize, AgentError> {
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
     let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
+    let mut parse_retries: usize = 0;
 
     for step in 1..=config.max_steps {
         // Sliding window: trim messages if over limit
@@ -90,7 +104,26 @@ pub async fn run_loop(
             tools
         };
 
-        let decision = agent.decide(messages, effective_tools).await?;
+        let decision = match agent.decide(messages, effective_tools).await {
+            Ok(d) => {
+                parse_retries = 0;
+                d
+            }
+            Err(e) if is_recoverable_error(&e) => {
+                parse_retries += 1;
+                if parse_retries > MAX_PARSE_RETRIES {
+                    return Err(e);
+                }
+                let err_msg = format!(
+                    "Parse error (attempt {}/{}): {}. Please respond with valid JSON matching the schema.",
+                    parse_retries, MAX_PARSE_RETRIES, e
+                );
+                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(err_msg.clone()))));
+                messages.push(Message::user(&err_msg));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         on_event(LoopEvent::Decision(decision.clone()));
 
         // Auto-completion: detect when agent is done but forgot to call finish_task
@@ -272,6 +305,7 @@ where
 {
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
     let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
+    let mut parse_retries: usize = 0;
 
     for step in 1..=config.max_steps {
         if config.max_messages > 0 && messages.len() > config.max_messages {
@@ -294,7 +328,26 @@ where
             tools
         };
 
-        let decision = agent.decide(messages, effective_tools).await?;
+        let decision = match agent.decide(messages, effective_tools).await {
+            Ok(d) => {
+                parse_retries = 0;
+                d
+            }
+            Err(e) if is_recoverable_error(&e) => {
+                parse_retries += 1;
+                if parse_retries > MAX_PARSE_RETRIES {
+                    return Err(e);
+                }
+                let err_msg = format!(
+                    "Parse error (attempt {}/{}): {}. Please respond with valid JSON matching the schema.",
+                    parse_retries, MAX_PARSE_RETRIES, e
+                );
+                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(err_msg.clone()))));
+                messages.push(Message::user(&err_msg));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         on_event(LoopEvent::Decision(decision.clone()));
 
         if completion_detector.check(&decision) {
@@ -849,12 +902,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loop_handles_llm_error() {
+    async fn loop_handles_non_recoverable_llm_error() {
         struct FailingAgent;
         #[async_trait::async_trait]
         impl Agent for FailingAgent {
             async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
-                Err(AgentError::Llm(SgrError::EmptyResponse))
+                Err(AgentError::Llm(SgrError::Api {
+                    status: 500,
+                    body: "internal server error".into(),
+                }))
             }
         }
 
@@ -864,7 +920,69 @@ mod tests {
         let config = LoopConfig::default();
 
         let result = run_loop(&FailingAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
-        assert!(matches!(result, Err(AgentError::Llm(SgrError::EmptyResponse))));
+        // Non-recoverable: should fail immediately, no retries
+        assert!(result.is_err());
+        assert_eq!(messages.len(), 1); // no feedback messages added
+    }
+
+    #[tokio::test]
+    async fn loop_recovers_from_parse_error() {
+        // Agent fails with parse error on first call, succeeds on retry
+        struct ParseRetryAgent {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Agent for ParseRetryAgent {
+            async fn decide(&self, msgs: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First call: simulate parse error
+                    Err(AgentError::Llm(SgrError::Schema("Missing required field: situation".into())))
+                } else {
+                    // Second call: should see error feedback in messages
+                    let last = msgs.last().unwrap();
+                    assert!(last.content.contains("Parse error"), "expected parse error feedback, got: {}", last.content);
+                    Ok(Decision {
+                        situation: "recovered from parse error".into(),
+                        task: vec![],
+                        tool_calls: vec![],
+                        completed: true,
+                    })
+                }
+            }
+        }
+
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+        let agent = ParseRetryAgent { call_count: Arc::new(AtomicUsize::new(0)) };
+
+        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
+        assert_eq!(steps, 2); // step 1 failed parse, step 2 succeeded
+        assert_eq!(ctx.state, AgentState::Completed);
+    }
+
+    #[tokio::test]
+    async fn loop_aborts_after_max_parse_retries() {
+        struct AlwaysFailParseAgent;
+        #[async_trait::async_trait]
+        impl Agent for AlwaysFailParseAgent {
+            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+                Err(AgentError::Llm(SgrError::Schema("bad json".into())))
+            }
+        }
+
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+
+        let result = run_loop(&AlwaysFailParseAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        assert!(result.is_err());
+        // Should have added MAX_PARSE_RETRIES feedback messages
+        let feedback_count = messages.iter().filter(|m| m.content.contains("Parse error")).count();
+        assert_eq!(feedback_count, MAX_PARSE_RETRIES);
     }
 
     #[tokio::test]
