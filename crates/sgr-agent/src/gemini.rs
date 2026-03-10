@@ -162,6 +162,10 @@ impl GeminiClient {
             })
         });
 
+        // Extract native function calls (Gemini may use functionCall parts
+        // even without explicit functionDeclarations — especially newer models).
+        let tool_calls = self.extract_tool_calls(&response_body);
+
         // Flexible parse with coercion.
         // If parsing fails, return output=None with raw_text preserved
         // so callers can implement fallback logic (e.g. wrap in finish tool).
@@ -169,13 +173,13 @@ impl GeminiClient {
             .map(|r| r.value)
             .ok();
 
-        if output.is_none() && raw_text.trim().is_empty() {
+        if output.is_none() && raw_text.trim().is_empty() && tool_calls.is_empty() {
             return Err(SgrError::Schema("Empty response from model".into()));
         }
 
         Ok(SgrResponse {
             output,
-            tool_calls: vec![],
+            tool_calls,
             raw_text,
             usage,
             rate_limit,

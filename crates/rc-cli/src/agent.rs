@@ -88,7 +88,7 @@ const MAX_HISTORY: usize = 60;
 const SGR_SYSTEM_PROMPT: &str = r#"You are rust-code, an expert AI coding agent in a Terminal UI.
 
 ## Output Format — CRITICAL
-You MUST respond with valid JSON only. NEVER respond with plain text, markdown, or prose.
+You MUST respond with ONLY valid JSON. No markdown. No prose. No code blocks. No explanation. Just raw JSON.
 Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]}
 
 ## Tools (use via "tool_name" field in actions array)

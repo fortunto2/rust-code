@@ -41,6 +41,12 @@ struct Args {
     #[arg(long)]
     sgr: bool,
 
+    /// Use Gemini CLI as LLM backend (subscription, no API key needed)
+    /// Note: Gemini CLI adds its own system prompt, best for simple tasks.
+    /// For multi-step agent work, prefer --sgr with GEMINI_API_KEY.
+    #[arg(long)]
+    gemini_cli: bool,
+
     /// Intent mode: auto, ask, build, plan (affects which tools the agent uses)
     #[arg(long, default_value = "auto")]
     intent: String,
@@ -261,8 +267,8 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     use baml_agent::providers::{self, ProviderAuth};
 
     // --sgr flag: use SGR pure Rust backend (bypasses BAML runtime)
-    if args.sgr {
-        let provider = resolve_sgr_provider(args);
+    if args.sgr || args.gemini_cli {
+        let (provider, proxy_handle) = resolve_sgr_provider(args).await;
         let label = match &provider {
             backend::SgrProvider::Gemini { model, .. } => format!("SGR/Gemini ({})", model),
             backend::SgrProvider::OpenAI { model, base_url, .. } => {
@@ -272,12 +278,23 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                     format!("SGR/OpenAI ({})", model)
                 }
             }
+            backend::SgrProvider::Vertex { model, project_id, .. } => {
+                format!("SGR/Vertex ({}, {})", model, project_id)
+            }
+            backend::SgrProvider::GeminiCli { model, sandbox } => {
+                let m = model.as_deref().unwrap_or("default");
+                if *sandbox {
+                    format!("SGR/Gemini CLI ({}, sandbox)", m)
+                } else {
+                    format!("SGR/Gemini CLI ({})", m)
+                }
+            }
         };
         return ProviderSetup {
             label: Some(label),
             client: None,
             sgr_backend: Some(provider),
-            _proxy_handle: None,
+            _proxy_handle: proxy_handle,
         };
     }
 
@@ -365,14 +382,23 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
 }
 
 /// Resolve SGR provider from env vars and CLI args.
-fn resolve_sgr_provider(args: &Args) -> backend::SgrProvider {
+async fn resolve_sgr_provider(
+    args: &Args,
+) -> (backend::SgrProvider, Option<tokio::task::JoinHandle<()>>) {
+    // --gemini-cli flag: force CLI proxy (subscription, no API key)
+    if args.gemini_cli {
+        return start_sgr_gemini_cli(args).await;
+    }
+
     // Check GEMINI_API_KEY first (default SGR provider)
     if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
-        let model = args
-            .model
-            .clone()
-            .unwrap_or_else(|| "gemini-2.5-flash".into());
-        return backend::SgrProvider::Gemini { api_key, model };
+        if !api_key.is_empty() {
+            let model = args
+                .model
+                .clone()
+                .unwrap_or_else(|| "gemini-2.5-flash".into());
+            return (backend::SgrProvider::Gemini { api_key, model }, None);
+        }
     }
 
     // OpenAI / OpenRouter
@@ -381,11 +407,14 @@ fn resolve_sgr_provider(args: &Args) -> backend::SgrProvider {
             .model
             .clone()
             .unwrap_or_else(|| "gpt-4o".into());
-        return backend::SgrProvider::OpenAI {
-            api_key,
-            model,
-            base_url: std::env::var("OPENAI_BASE_URL").ok(),
-        };
+        return (
+            backend::SgrProvider::OpenAI {
+                api_key,
+                model,
+                base_url: std::env::var("OPENAI_BASE_URL").ok(),
+            },
+            None,
+        );
     }
 
     if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
@@ -393,15 +422,90 @@ fn resolve_sgr_provider(args: &Args) -> backend::SgrProvider {
             .model
             .clone()
             .unwrap_or_else(|| "google/gemini-2.5-flash".into());
-        return backend::SgrProvider::OpenAI {
-            api_key,
-            model,
-            base_url: Some("https://openrouter.ai/api/v1".into()),
-        };
+        return (
+            backend::SgrProvider::OpenAI {
+                api_key,
+                model,
+                base_url: Some("https://openrouter.ai/api/v1".into()),
+            },
+            None,
+        );
     }
 
-    eprintln!("--sgr requires GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY");
-    std::process::exit(1);
+    // Try Vertex AI via gcloud ADC (no API key, uses Google Cloud auth)
+    if let Some(project_id) = detect_gcloud_project() {
+        let model = args
+            .model
+            .clone()
+            .unwrap_or_else(|| "gemini-2.5-flash".into());
+        let location = match std::env::var("VERTEX_LOCATION").ok() {
+            Some(loc) if loc != "global" && !loc.is_empty() => loc,
+            _ => "us-central1".into(),
+        };
+        return (
+            backend::SgrProvider::Vertex {
+                project_id,
+                model,
+                location,
+            },
+            None,
+        );
+    }
+
+    // Last resort: Gemini CLI direct subprocess
+    start_sgr_gemini_cli(args).await
+}
+
+/// Detect GCP project from env or gcloud config.
+fn detect_gcloud_project() -> Option<String> {
+    // Explicit env var first
+    if let Ok(p) = std::env::var("VERTEX_PROJECT") {
+        if !p.is_empty() {
+            return Some(p);
+        }
+    }
+    // Check if ADC credentials file exists
+    let home = std::env::var("HOME").ok()?;
+    let adc_path = std::path::PathBuf::from(&home)
+        .join(".config/gcloud/application_default_credentials.json");
+    if !adc_path.exists() {
+        return None;
+    }
+    // Get project from gcloud config (sync, but only at startup)
+    let output = std::process::Command::new("gcloud")
+        .args(["config", "get-value", "project"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let project = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !project.is_empty() && !project.contains("unset") {
+            return Some(project);
+        }
+    }
+    None
+}
+
+async fn start_sgr_gemini_cli(
+    args: &Args,
+) -> (backend::SgrProvider, Option<tokio::task::JoinHandle<()>>) {
+    // Verify gemini CLI exists
+    let check = tokio::process::Command::new("which")
+        .arg("gemini")
+        .output()
+        .await;
+    if check.is_err() || !check.unwrap().status.success() {
+        eprintln!("--gemini-cli requires `gemini` CLI installed");
+        eprintln!("Install: https://github.com/google-gemini/gemini-cli");
+        std::process::exit(1);
+    }
+
+    (
+        backend::SgrProvider::GeminiCli {
+            model: args.model.clone(),
+            sandbox: true,
+        },
+        None,
+    )
 }
 
 /// Apply resolved provider to agent.

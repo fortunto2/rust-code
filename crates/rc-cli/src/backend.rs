@@ -43,6 +43,19 @@ pub enum SgrProvider {
         model: String,
         base_url: Option<String>,
     },
+    /// Vertex AI — uses gcloud ADC (Application Default Credentials).
+    /// No API key needed, uses `gcloud auth application-default print-access-token`.
+    Vertex {
+        project_id: String,
+        model: String,
+        location: String,
+    },
+    /// Gemini CLI subprocess — direct `gemini -p` call, read stdout.
+    /// Uses CLI subscription (no API key needed).
+    GeminiCli {
+        model: Option<String>,
+        sandbox: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +432,30 @@ impl SgrProvider {
                 client.flexible::<SgrNextStep>(messages).await
                     .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?
             }
+            SgrProvider::Vertex { project_id, model, location } => {
+                let access_token = get_gcloud_access_token().await?;
+                let mut config = sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
+                config.location = Some(location.clone());
+                config.max_tokens = Some(4096);
+                let client = sgr_agent::gemini::GeminiClient::new(config);
+                client.flexible::<SgrNextStep>(messages).await
+                    .map_err(|e| anyhow::anyhow!("SGR Vertex error: {}", e))?
+            }
+            SgrProvider::GeminiCli { model, sandbox } => {
+                let raw_text = run_gemini_cli(messages, model.as_deref(), *sandbox).await?;
+                // Normalize CLI output: fix common LLM deviations before parsing
+                let normalized = normalize_cli_json(&raw_text);
+                let output = sgr_agent::flexible_parser::parse_flexible_coerced::<SgrNextStep>(&normalized)
+                    .map(|r| r.value)
+                    .ok();
+                sgr_agent::SgrResponse {
+                    output,
+                    tool_calls: vec![],
+                    raw_text,
+                    usage: None,
+                    rate_limit: None,
+                }
+            }
         };
 
         // If structured parsing succeeded, return it
@@ -426,8 +463,29 @@ impl SgrProvider {
             return Ok(step);
         }
 
+        // Native function call fallback: model used Gemini functionCall parts
+        // instead of text JSON. Convert tool_calls → SgrAction.
+        if !resp.tool_calls.is_empty() {
+            tracing::info!(
+                n = resp.tool_calls.len(),
+                "SGR native function call fallback"
+            );
+            let actions: Vec<SgrAction> = resp
+                .tool_calls
+                .iter()
+                .filter_map(|tc| tool_call_to_sgr_action(tc))
+                .collect();
+            if !actions.is_empty() {
+                return Ok(SgrNextStep {
+                    situation: "Executing tool calls from native function calling.".into(),
+                    task: vec!["Execute the requested actions.".into()],
+                    actions,
+                });
+            }
+        }
+
         // Text fallback: model responded with prose instead of JSON.
-        // Wrap in a finish action so the agent loop completes gracefully.
+        // Wrap in a finish action so the agent loop doesn't crash.
         let text = resp.raw_text.trim();
         if !text.is_empty() {
             tracing::warn!("SGR text fallback: model returned prose, wrapping in finish");
@@ -442,6 +500,286 @@ impl SgrProvider {
             Err(anyhow::anyhow!("SGR: empty response from model"))
         }
     }
+}
+
+/// Convert a native Gemini function call to an SgrAction.
+/// Maps tool_name → SgrAction variant, extracting args from JSON.
+fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
+    let args = &tc.arguments;
+    let s = |key: &str| args.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let s_opt = |key: &str| args.get(key).and_then(|v| v.as_str()).map(String::from);
+    let i_opt = |key: &str| args.get(key).and_then(|v| v.as_i64());
+
+    match tc.name.as_str() {
+        "read_file" => Some(SgrAction::ReadFile {
+            path: s("path"),
+            offset: i_opt("offset"),
+            limit: i_opt("limit"),
+        }),
+        "write_file" => Some(SgrAction::WriteFile {
+            path: s("path"),
+            content: s("content"),
+        }),
+        "edit_file" => Some(SgrAction::EditFile {
+            path: s("path"),
+            old_string: s("old_string"),
+            new_string: s("new_string"),
+        }),
+        "bash" => Some(SgrAction::Bash {
+            command: s("command"),
+            description: s_opt("description"),
+            timeout: i_opt("timeout"),
+        }),
+        "search_code" => Some(SgrAction::SearchCode { query: s("query") }),
+        "git_status" => Some(SgrAction::GitStatus { dummy: None }),
+        "git_diff" => Some(SgrAction::GitDiff {
+            path: s_opt("path"),
+            cached: args.get("cached").and_then(|v| v.as_bool()),
+        }),
+        "git_add" => Some(SgrAction::GitAdd {
+            paths: args
+                .get("paths")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+        }),
+        "git_commit" => Some(SgrAction::GitCommit { message: s("message") }),
+        "finish" => Some(SgrAction::Finish { summary: s("summary") }),
+        "ask_user" => Some(SgrAction::AskUser { question: s("question") }),
+        "memory" => Some(SgrAction::Memory {
+            operation: s("operation"),
+            category: s_opt("category"),
+            section: s_opt("section"),
+            content: s_opt("content"),
+            context: s_opt("context"),
+            confidence: s_opt("confidence"),
+        }),
+        "mcp_call" => Some(SgrAction::McpCall {
+            server: s("server"),
+            tool: s("tool"),
+            arguments: s_opt("arguments"),
+        }),
+        _ => {
+            tracing::warn!(tool = %tc.name, "unknown native function call, skipping");
+            None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gemini CLI subprocess
+// ---------------------------------------------------------------------------
+
+/// Get a fresh access token from gcloud.
+/// Tries ADC first, falls back to user credentials.
+/// Token is short-lived (~1h), so we get a new one per LLM call.
+async fn get_gcloud_access_token() -> Result<String> {
+    // Try ADC first
+    let output = tokio::process::Command::new("gcloud")
+        .args(["auth", "application-default", "print-access-token"])
+        .output()
+        .await;
+
+    if let Ok(ref out) = output {
+        if out.status.success() {
+            let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !token.is_empty() {
+                return Ok(token);
+            }
+        }
+    }
+
+    // Fall back to user credentials
+    let output = tokio::process::Command::new("gcloud")
+        .args(["auth", "print-access-token"])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to run gcloud: {}. Is it installed?", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "gcloud auth failed: {}. Run: gcloud auth login",
+            stderr.trim()
+        ));
+    }
+
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if token.is_empty() {
+        return Err(anyhow::anyhow!("Empty gcloud token. Run: gcloud auth login"));
+    }
+    Ok(token)
+}
+
+/// Normalize LLM JSON output to match SgrNextStep schema.
+/// Handles common deviations:
+/// - "tool" → "tool_name"
+/// - "parameters": {...} → flatten into action object
+/// - "response"/"message"/"text"/"result" → "summary" (for finish tool)
+fn normalize_cli_json(raw: &str) -> String {
+    // Extract JSON from markdown blocks first
+    let json_str = if let Some(start) = raw.find("```") {
+        let after_ticks = &raw[start + 3..];
+        // Skip optional language tag
+        let content_start = after_ticks.find('\n').map(|i| i + 1).unwrap_or(0);
+        let content = &after_ticks[content_start..];
+        if let Some(end) = content.find("```") {
+            content[..end].trim()
+        } else {
+            content.trim()
+        }
+    } else {
+        raw.trim()
+    };
+
+    // Parse as JSON Value for manipulation
+    let mut val: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return raw.to_string(), // can't parse, return original for flexible parser
+    };
+
+    // Ensure required top-level fields exist
+    if !val.get("situation").is_some_and(|v| v.is_string()) {
+        val["situation"] = serde_json::json!("Executing...");
+    }
+    if !val.get("task").is_some_and(|v| v.is_array()) {
+        val["task"] = serde_json::json!(["Execute actions"]);
+    }
+
+    // Normalize actions array
+    if let Some(actions) = val.get_mut("actions").and_then(|a| a.as_array_mut()) {
+        for action in actions.iter_mut() {
+            if let Some(obj) = action.as_object_mut() {
+                // "tool" → "tool_name"
+                if obj.contains_key("tool") && !obj.contains_key("tool_name") {
+                    if let Some(tool_val) = obj.remove("tool") {
+                        obj.insert("tool_name".into(), tool_val);
+                    }
+                }
+                // Flatten "parameters" into action object
+                if let Some(params) = obj.remove("parameters") {
+                    if let Some(params_obj) = params.as_object() {
+                        for (k, v) in params_obj {
+                            if !obj.contains_key(k) {
+                                obj.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+                // "file_path" → "path" (common LLM deviation)
+                if obj.contains_key("file_path") && !obj.contains_key("path") {
+                    if let Some(v) = obj.remove("file_path") {
+                        obj.insert("path".into(), v);
+                    }
+                }
+                // Normalize finish tool: "response"/"message"/"text"/"result" → "summary"
+                if obj.get("tool_name").and_then(|v| v.as_str()) == Some("finish") {
+                    if !obj.contains_key("summary") {
+                        for alt in &["response", "message", "text", "result", "content"] {
+                            if let Some(v) = obj.remove(*alt) {
+                                obj.insert("summary".into(), v);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&val).unwrap_or_else(|_| raw.to_string())
+}
+
+/// Run `gemini -p` subprocess and return raw stdout text.
+async fn run_gemini_cli(
+    messages: &[sgr_agent::Message],
+    model: Option<&str>,
+    sandbox: bool,
+) -> Result<String> {
+    use tokio::process::Command;
+
+    // Merge messages into a single prompt (system + user + assistant history)
+    let prompt = messages
+        .iter()
+        .map(|m| {
+            let prefix = match m.role {
+                sgr_agent::Role::System => "[System]",
+                sgr_agent::Role::User => "[User]",
+                sgr_agent::Role::Assistant => "[Assistant]",
+                sgr_agent::Role::Tool => "[Tool Result]",
+            };
+            format!("{}\n{}", prefix, m.content)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let mut cmd = Command::new("gemini");
+    cmd.arg("-p").arg(&prompt);
+    cmd.arg("--output-format").arg("json"); // structured envelope with response + stats
+    cmd.arg("--yolo"); // auto-accept if tools present
+    cmd.arg("-e").arg(""); // no extensions = pure LLM proxy (no tools)
+
+    if let Some(m) = model {
+        cmd.arg("-m").arg(m);
+    }
+    if sandbox {
+        cmd.arg("--sandbox");
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    tracing::info!(
+        model = model.unwrap_or("default"),
+        sandbox,
+        prompt_len = prompt.len(),
+        "gemini_cli_start"
+    );
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to run `gemini`: {}. Is it installed?", e))?;
+
+    if !output.status.success() && output.stdout.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("gemini CLI error: {}", stderr.trim()));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Parse JSON envelope: {"session_id": "...", "response": "...", "stats": {...}}
+    let response_text = if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(resp) = envelope.get("response").and_then(|r| r.as_str()) {
+            // Log token stats if available
+            if let Some(stats) = envelope.get("stats") {
+                if let Some(tokens) = stats.pointer("/models/gemini-2.5-flash/tokens") {
+                    tracing::info!(
+                        input = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
+                        output = tokens.get("candidates").and_then(|v| v.as_u64()).unwrap_or(0),
+                        "gemini_cli_tokens"
+                    );
+                }
+            }
+            resp.to_string()
+        } else {
+            text.clone()
+        }
+    } else {
+        // Not JSON envelope — clean up text output
+        text.lines()
+            .filter(|l| {
+                !l.contains("GOOGLE_API_KEY and GEMINI_API_KEY are set")
+                    && !l.starts_with("Loading extension:")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    };
+
+    tracing::info!(output_len = response_text.len(), "gemini_cli_done");
+    Ok(response_text)
 }
 
 /// Convert BAML Message history to sgr-agent Messages.

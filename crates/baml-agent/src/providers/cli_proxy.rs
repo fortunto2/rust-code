@@ -60,7 +60,16 @@ impl CliProvider {
                     "Bash,Edit,Write,Read".into(),
                 ],
             ),
-            Self::Gemini => ("gemini".into(), vec!["-p".into(), prompt.into()]),
+            Self::Gemini => (
+                "gemini".into(),
+                vec![
+                    "-p".into(),
+                    prompt.into(),
+                    "--sandbox".into(),
+                    "--output-format".into(),
+                    "text".into(),
+                ],
+            ),
             Self::Codex => ("codex".into(), vec!["exec".into(), prompt.into()]),
         }
     }
@@ -366,7 +375,6 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
         }
     };
 
-    // Build SSE streaming response (BAML expects streaming)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -376,43 +384,74 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
     let out_tokens = (text.len() / 4) as u64;
     let model = provider.model_name();
 
-    let _ = stream
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")
-        .await;
+    // Check if client requested streaming
+    let wants_stream = request.contains("\"stream\"") && request.contains("true");
 
-    let chunk = serde_json::json!({
-        "id": format!("chatcmpl-cli-{}", now),
-        "object": "chat.completion.chunk",
-        "created": now,
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {"role": "assistant", "content": text},
-            "finish_reason": null
-        }]
-    });
-    let _ = stream
-        .write_all(format!("data: {}\n\n", chunk).as_bytes())
-        .await;
+    if wants_stream {
+        // SSE streaming response (BAML expects this)
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")
+            .await;
 
-    let finish = serde_json::json!({
-        "id": format!("chatcmpl-cli-{}", now),
-        "object": "chat.completion.chunk",
-        "created": now,
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": in_tokens,
-            "completion_tokens": out_tokens,
-            "total_tokens": in_tokens + out_tokens
-        }
-    });
-    let _ = stream
-        .write_all(format!("data: {}\n\n", finish).as_bytes())
-        .await;
-    let _ = stream.write_all(b"data: [DONE]\n\n").await;
+        let chunk = serde_json::json!({
+            "id": format!("chatcmpl-cli-{}", now),
+            "object": "chat.completion.chunk",
+            "created": now,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": null
+            }]
+        });
+        let _ = stream
+            .write_all(format!("data: {}\n\n", chunk).as_bytes())
+            .await;
+
+        let finish = serde_json::json!({
+            "id": format!("chatcmpl-cli-{}", now),
+            "object": "chat.completion.chunk",
+            "created": now,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": in_tokens,
+                "completion_tokens": out_tokens,
+                "total_tokens": in_tokens + out_tokens
+            }
+        });
+        let _ = stream
+            .write_all(format!("data: {}\n\n", finish).as_bytes())
+            .await;
+        let _ = stream.write_all(b"data: [DONE]\n\n").await;
+    } else {
+        // Standard JSON response (SGR flexible parser expects this)
+        let resp_body = serde_json::json!({
+            "id": format!("chatcmpl-cli-{}", now),
+            "object": "chat.completion",
+            "created": now,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": in_tokens,
+                "completion_tokens": out_tokens,
+                "total_tokens": in_tokens + out_tokens
+            }
+        });
+        let body_str = serde_json::to_string(&resp_body).unwrap();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body_str.len(),
+            body_str
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+    }
 }
