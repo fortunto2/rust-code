@@ -879,6 +879,9 @@ async fn main() {
             LoopEvent::Error(e) => {
                 println!("\n!!! Error: {} !!!", e);
             }
+            LoopEvent::WaitingForInput { question, .. } => {
+                println!("  ?? {}", question);
+            }
         }
     }).await;
 

@@ -18,6 +18,8 @@ pub enum AgentType {
     Flexible,
     /// 2-phase hybrid (reasoning + action).
     Hybrid,
+    /// Read-only planning (wraps Sgr by default).
+    Planning,
 }
 
 impl AgentType {
@@ -28,6 +30,7 @@ impl AgentType {
             "tool_calling" | "toolcalling" | "fc" | "function_calling" => Some(Self::ToolCalling),
             "flexible" | "text" | "iron" => Some(Self::Flexible),
             "hybrid" | "sgr_tool_calling" => Some(Self::Hybrid),
+            "planning" | "plan" | "read_only" => Some(Self::Planning),
             _ => None,
         }
     }
@@ -124,6 +127,13 @@ pub fn create_agent<C: LlmClient + Clone + 'static>(
             client,
             &config.system_prompt,
         )),
+        AgentType::Planning => {
+            let inner = Box::new(crate::agents::sgr::SgrAgent::new(
+                client,
+                &config.system_prompt,
+            ));
+            Box::new(crate::agents::planning::PlanningAgent::new(inner))
+        }
     }
 }
 

@@ -14,15 +14,24 @@ pub struct ToolOutput {
     pub content: String,
     /// If true, the agent should stop (e.g. FinishTask tool).
     pub done: bool,
+    /// If true, the loop should pause and wait for user input.
+    /// Content contains the question to ask.
+    pub waiting: bool,
 }
 
 impl ToolOutput {
     pub fn text(content: impl Into<String>) -> Self {
-        Self { content: content.into(), done: false }
+        Self { content: content.into(), done: false, waiting: false }
     }
 
     pub fn done(content: impl Into<String>) -> Self {
-        Self { content: content.into(), done: true }
+        Self { content: content.into(), done: true, waiting: false }
+    }
+
+    /// Signal that the agent needs user input before continuing.
+    /// The content is the question to present to the user.
+    pub fn waiting(question: impl Into<String>) -> Self {
+        Self { content: question.into(), done: false, waiting: true }
     }
 }
 

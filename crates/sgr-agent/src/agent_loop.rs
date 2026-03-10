@@ -42,6 +42,11 @@ pub enum LoopEvent {
     Completed { steps: usize },
     LoopDetected { count: usize },
     Error(AgentError),
+    /// Agent needs user input. Content is the question.
+    WaitingForInput {
+        question: String,
+        tool_call_id: String,
+    },
 }
 
 /// Run the agent loop: decide → execute tools → feed results → repeat.
@@ -126,10 +131,22 @@ pub async fn run_loop(
                             output: output.content.clone(),
                         });
                         step_outputs.push(output.content.clone());
-                        messages.push(Message::tool(&tc.id, &output.content));
 
                         // Lifecycle hook: after action
                         agent.after_action(ctx, &tc.name, &output.content);
+
+                        if output.waiting {
+                            // Non-interactive loop: emit event, add placeholder, continue
+                            ctx.state = AgentState::WaitingInput;
+                            on_event(LoopEvent::WaitingForInput {
+                                question: output.content.clone(),
+                                tool_call_id: tc.id.clone(),
+                            });
+                            messages.push(Message::tool(&tc.id, "[waiting for user input]"));
+                            ctx.state = AgentState::Running;
+                        } else {
+                            messages.push(Message::tool(&tc.id, &output.content));
+                        }
 
                         if output.done {
                             ctx.state = AgentState::Completed;
@@ -161,6 +178,143 @@ pub async fn run_loop(
         }
 
         // Tier 3: output stagnation
+        if detector.check_outputs(&step_outputs) {
+            ctx.state = AgentState::Failed;
+            on_event(LoopEvent::LoopDetected { count: detector.output_repeat_count });
+            return Err(AgentError::LoopDetected(detector.output_repeat_count));
+        }
+    }
+
+    ctx.state = AgentState::Failed;
+    Err(AgentError::MaxSteps(config.max_steps))
+}
+
+/// Run the agent loop with interactive input support.
+///
+/// When a tool returns `ToolOutput::waiting`, the loop pauses and calls `on_input`
+/// with the question. The returned string is injected as the tool result, then the loop continues.
+///
+/// This is the interactive version of `run_loop` — use it when the agent may need
+/// to ask the user questions (via ClarificationTool or similar).
+pub async fn run_loop_interactive<F, Fut>(
+    agent: &dyn Agent,
+    tools: &ToolRegistry,
+    ctx: &mut AgentContext,
+    messages: &mut Vec<Message>,
+    config: &LoopConfig,
+    mut on_event: impl FnMut(LoopEvent),
+    mut on_input: F,
+) -> Result<usize, AgentError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = String>,
+{
+    let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
+
+    for step in 1..=config.max_steps {
+        if config.max_messages > 0 && messages.len() > config.max_messages {
+            trim_messages(messages, config.max_messages);
+        }
+        ctx.iteration = step;
+        on_event(LoopEvent::StepStart { step });
+
+        agent.prepare_context(ctx, messages);
+
+        let active_tool_names = agent.prepare_tools(ctx, tools);
+        let filtered_tools = if active_tool_names.len() == tools.list().len() {
+            None
+        } else {
+            Some(active_tool_names)
+        };
+        let effective_tools = if let Some(ref names) = filtered_tools {
+            &tools.filter(names)
+        } else {
+            tools
+        };
+
+        let decision = agent.decide(messages, effective_tools).await?;
+        on_event(LoopEvent::Decision(decision.clone()));
+
+        if completion_detector.check(&decision) {
+            ctx.state = AgentState::Completed;
+            if !decision.situation.is_empty() {
+                messages.push(Message::assistant(&decision.situation));
+            }
+            on_event(LoopEvent::Completed { steps: step });
+            return Ok(step);
+        }
+
+        if decision.completed || decision.tool_calls.is_empty() {
+            ctx.state = AgentState::Completed;
+            if !decision.situation.is_empty() {
+                messages.push(Message::assistant(&decision.situation));
+            }
+            on_event(LoopEvent::Completed { steps: step });
+            return Ok(step);
+        }
+
+        let sig: Vec<String> = decision.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+        if detector.check(&sig) {
+            ctx.state = AgentState::Failed;
+            on_event(LoopEvent::LoopDetected { count: detector.consecutive });
+            return Err(AgentError::LoopDetected(detector.consecutive));
+        }
+
+        let mut step_outputs: Vec<String> = Vec::new();
+        for tc in &decision.tool_calls {
+            if let Some(tool) = tools.get(&tc.name) {
+                match tool.execute(tc.arguments.clone(), ctx).await {
+                    Ok(output) => {
+                        on_event(LoopEvent::ToolResult {
+                            name: tc.name.clone(),
+                            output: output.content.clone(),
+                        });
+                        step_outputs.push(output.content.clone());
+                        agent.after_action(ctx, &tc.name, &output.content);
+
+                        if output.waiting {
+                            // Pause: ask user via callback, inject response
+                            ctx.state = AgentState::WaitingInput;
+                            on_event(LoopEvent::WaitingForInput {
+                                question: output.content.clone(),
+                                tool_call_id: tc.id.clone(),
+                            });
+                            let response = on_input(output.content).await;
+                            ctx.state = AgentState::Running;
+                            messages.push(Message::tool(&tc.id, &response));
+                        } else {
+                            messages.push(Message::tool(&tc.id, &output.content));
+                        }
+
+                        if output.done {
+                            ctx.state = AgentState::Completed;
+                            on_event(LoopEvent::Completed { steps: step });
+                            return Ok(step);
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Tool error: {}", e);
+                        step_outputs.push(err_msg.clone());
+                        messages.push(Message::tool(&tc.id, &err_msg));
+                        agent.after_action(ctx, &tc.name, &err_msg);
+                        on_event(LoopEvent::ToolResult {
+                            name: tc.name.clone(),
+                            output: err_msg,
+                        });
+                    }
+                }
+            } else {
+                let err_msg = format!("Unknown tool: {}", tc.name);
+                step_outputs.push(err_msg.clone());
+                messages.push(Message::tool(&tc.id, &err_msg));
+                on_event(LoopEvent::ToolResult {
+                    name: tc.name.clone(),
+                    output: err_msg,
+                });
+            }
+        }
+
         if detector.check_outputs(&step_outputs) {
             ctx.state = AgentState::Failed;
             on_event(LoopEvent::LoopDetected { count: detector.output_repeat_count });
