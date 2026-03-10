@@ -2000,7 +2000,9 @@ dependencies = [
 name = "sgr-agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
+ "indexmap",
  "reqwest",
  "schemars 0.8.22",
  "serde",

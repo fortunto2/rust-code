@@ -1,17 +1,21 @@
-//! # sgr-agent — Schema-Guided Reasoning LLM client
+//! # sgr-agent — LLM client + agent framework
 //!
 //! Pure Rust. No dlopen, no external binaries.
 //! Works on iOS, Android, WASM — anywhere reqwest+rustls compiles.
 //!
-//! Two mechanisms combined:
+//! ## LLM Client (default)
 //! - **Structured output** — response conforms to JSON Schema (SGR envelope)
 //! - **Function calling** — tools as typed structs, model picks & fills params
+//! - **Flexible parser** — extract JSON from markdown, broken JSON, streaming chunks
+//! - **Backends**: Gemini (Google AI + Vertex AI), OpenAI (+ OpenRouter, Ollama)
 //!
-//! ## BAML as single source of truth
-//!
-//! `.baml` files define schemas once. Two backends consume them:
-//! - `baml-cli generate` → `baml_client/` (macOS, dlopen runtime)
-//! - `sgr-agent codegen` → Rust structs with `#[derive(JsonSchema)]` (iOS/Android, native HTTP)
+//! ## Agent Framework (`feature = "agent"`)
+//! - **Tool trait** — define tools with typed args + async execute
+//! - **ToolRegistry** — ordered collection, case-insensitive lookup, fuzzy resolve
+//! - **Agent trait** — decides what tools to call given conversation history
+//! - **3 agent variants**: SgrAgent (structured output), ToolCallingAgent (native FC), FlexibleAgent (text parse)
+//! - **Agent loop** — decide → execute → feed back, with 3-tier loop detection
+//! - **Progressive discovery** — filter tools by relevance (TF-IDF scoring)
 
 pub mod baml_parser;
 pub mod codegen;
@@ -26,6 +30,26 @@ pub mod gemini;
 
 #[cfg(feature = "openai")]
 pub mod openai;
+
+// Agent framework (behind feature gate)
+#[cfg(feature = "agent")]
+pub mod agent;
+#[cfg(feature = "agent")]
+pub mod agent_loop;
+#[cfg(feature = "agent")]
+pub mod agent_tool;
+#[cfg(feature = "agent")]
+pub mod agents;
+#[cfg(feature = "agent")]
+pub mod client;
+#[cfg(feature = "agent")]
+pub mod context;
+#[cfg(feature = "agent")]
+pub mod discovery;
+#[cfg(feature = "agent")]
+pub mod registry;
+#[cfg(feature = "agent")]
+pub mod union_schema;
 
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
