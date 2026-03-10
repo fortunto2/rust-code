@@ -490,13 +490,6 @@ impl GeminiClient {
     }
 }
 
-fn truncate_str(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..s.floor_char_boundary(max)]
-    }
-}
 
 #[cfg(test)]
 mod tests {

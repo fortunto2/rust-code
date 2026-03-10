@@ -13,10 +13,6 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-fn truncate_str(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..s.floor_char_boundary(max)] }
-}
-
 /// OpenAI-compatible API client.
 pub struct OpenAIClient {
     config: ProviderConfig,
