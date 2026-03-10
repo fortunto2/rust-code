@@ -656,17 +656,31 @@ impl CompletionDetector {
 /// Trim messages to fit within max_messages limit.
 /// Keeps: first 2 messages (system + initial user) + last (max - 2) messages.
 fn trim_messages(messages: &mut Vec<Message>, max: usize) {
+    use crate::types::Role;
+
     if messages.len() <= max || max < 4 {
         return;
     }
     let keep_start = 2; // system + user prompt
-    // Account for the summary message we'll insert (+1)
     let remove_count = messages.len() - max + 1;
-    let removed_range = keep_start..keep_start + remove_count;
+    let mut trim_end = keep_start + remove_count;
+
+    // Don't break functionCall → functionResponse pairs.
+    // If trim_end lands inside a Tool message sequence, extend to include all of them.
+    // Then if the message just before the kept portion is a Tool, also remove it
+    // (orphaned functionResponse without its functionCall).
+    while trim_end < messages.len() && messages[trim_end].role == Role::Tool {
+        trim_end += 1;
+    }
+    // If the first kept message (after summary) is a Tool, it's orphaned — remove it too
+    // (This shouldn't happen after the while above, but be safe)
+
+    let removed_range = keep_start..trim_end;
 
     let summary = format!(
         "[{} messages trimmed from context to stay within {} message limit]",
-        remove_count, max
+        trim_end - keep_start,
+        max
     );
 
     messages.drain(removed_range);
