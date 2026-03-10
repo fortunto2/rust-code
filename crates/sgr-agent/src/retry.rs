@@ -38,6 +38,8 @@ fn is_retryable(err: &SgrError) -> bool {
         // reqwest::Error — retryable if timeout or connect error
         SgrError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
         SgrError::Api { status, .. } => *status >= 500 || *status == 408 || *status == 429,
+        // Empty response wrapped as Schema error — transient model behavior
+        SgrError::Schema(msg) => msg.contains("Empty response"),
         _ => false,
     }
 }
@@ -267,6 +269,7 @@ mod tests {
             body: "bad request".into()
         }));
         assert!(!is_retryable(&SgrError::Schema("parse".into())));
+        assert!(is_retryable(&SgrError::Schema("Empty response from model (parts: text)".into())));
         assert!(is_retryable(&SgrError::EmptyResponse));
         assert!(is_retryable(&SgrError::Api { status: 503, body: "server error".into() }));
         assert!(is_retryable(&SgrError::Api { status: 429, body: "rate limit".into() }));

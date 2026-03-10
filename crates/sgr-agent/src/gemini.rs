@@ -94,7 +94,8 @@ impl GeminiClient {
         messages: &[Message],
     ) -> Result<SgrResponse<T>, SgrError> {
         // Send without responseSchema — plain text response
-        let contents = self.messages_to_contents(messages);
+        // Use text mode for tool messages (no functionDeclarations in this mode)
+        let contents = self.messages_to_contents_text(messages);
         let mut system_instruction = self.extract_system(messages);
 
         // Auto-inject schema hint into system prompt
@@ -279,7 +280,12 @@ impl GeminiClient {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Value, SgrError> {
-        let contents = self.messages_to_contents(messages);
+        // Use functionResponse format only when tools are present
+        let contents = if tools.is_empty() {
+            self.messages_to_contents_text(messages)
+        } else {
+            self.messages_to_contents(messages)
+        };
         let system_instruction = self.extract_system(messages);
 
         // When using function calling, Gemini doesn't support responseMimeType + functionDeclarations.
@@ -364,7 +370,20 @@ impl GeminiClient {
         Ok(body)
     }
 
+    /// Convert messages to Gemini contents format.
+    ///
+    /// When `use_function_response` is true, Tool messages become `functionResponse` parts
+    /// (for native function calling mode). When false, they become user text messages
+    /// (for structured output / flexible mode where no function declarations are sent).
     fn messages_to_contents(&self, messages: &[Message]) -> Vec<Value> {
+        self.messages_to_contents_inner(messages, true)
+    }
+
+    fn messages_to_contents_text(&self, messages: &[Message]) -> Vec<Value> {
+        self.messages_to_contents_inner(messages, false)
+    }
+
+    fn messages_to_contents_inner(&self, messages: &[Message], use_function_response: bool) -> Vec<Value> {
         let mut contents = Vec::new();
 
         for msg in messages {
@@ -383,19 +402,28 @@ impl GeminiClient {
                     }));
                 }
                 Role::Tool => {
-                    // Tool results go as function response parts
-                    let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
-                    contents.push(json!({
-                        "role": "function",
-                        "parts": [{
-                            "functionResponse": {
-                                "name": call_id,
-                                "response": {
-                                    "content": msg.content,
+                    if use_function_response {
+                        // Native function calling mode — functionResponse parts
+                        let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
+                        contents.push(json!({
+                            "role": "function",
+                            "parts": [{
+                                "functionResponse": {
+                                    "name": call_id,
+                                    "response": {
+                                        "content": msg.content,
+                                    }
                                 }
-                            }
-                        }]
-                    }));
+                            }]
+                        }));
+                    } else {
+                        // Text mode — convert tool results to user messages
+                        let call_id = msg.tool_call_id.as_deref().unwrap_or("tool");
+                        contents.push(json!({
+                            "role": "user",
+                            "parts": [{"text": format!("[{}] {}", call_id, msg.content)}]
+                        }));
+                    }
                 }
             }
         }
