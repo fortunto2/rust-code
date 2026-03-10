@@ -1,7 +1,6 @@
 pub mod agent;
 pub mod app;
 pub mod backend;
-pub mod baml_client;
 pub mod preview;
 pub mod tools;
 pub mod tui;
@@ -196,26 +195,26 @@ enum TaskAction {
 
 /// Resolved provider ready to apply to agent.
 struct ProviderSetup {
-    client: Option<String>,
     label: Option<String>,
-    /// SGR backend override (None = use BAML).
-    sgr_backend: Option<backend::SgrProvider>,
+    /// SGR provider.
+    provider: Option<backend::SgrProvider>,
     /// Background proxy handle (kept alive for duration of session)
     _proxy_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Start Codex Responses API proxy and configure env vars for BAML.
+/// Start Codex Responses API proxy and configure as OpenAI-compatible provider.
 async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
     match tools::start_codex_proxy().await {
         Ok((port, handle)) => {
             let proxy_url = format!("http://127.0.0.1:{}/v1", port);
-            // SAFETY: called before spawning agent threads, single-threaded init
-            unsafe { std::env::set_var("CODEX_PROXY_URL", &proxy_url) };
-            let client = model_override.unwrap_or_else(|| "CodexProxy".into());
+            let model = model_override.unwrap_or_else(|| "codex".into());
             ProviderSetup {
-                label: Some(format!("Codex proxy (:{}, {})", port, client)),
-                client: Some(client),
-                sgr_backend: None,
+                label: Some(format!("Codex proxy (:{}, {})", port, model)),
+                provider: Some(backend::SgrProvider::OpenAI {
+                    api_key: "proxy".into(),
+                    model,
+                    base_url: Some(proxy_url),
+                }),
                 _proxy_handle: Some(handle),
             }
         }
@@ -229,7 +228,7 @@ async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
 
 /// Start a CLI tool proxy (claude, gemini, codex CLI subprocess).
 async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> ProviderSetup {
-    let provider = match tools::CliProvider::from_name(cli_name) {
+    let cli_provider = match tools::CliProvider::from_name(cli_name) {
         Some(p) => p,
         None => {
             eprintln!("Unknown CLI provider: {}", cli_name);
@@ -237,63 +236,43 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
         }
     };
 
-    match tools::start_cli_proxy(provider).await {
+    match tools::start_cli_proxy(cli_provider).await {
         Ok((port, handle)) => {
             let proxy_url = format!("http://127.0.0.1:{}/v1", port);
-            // SAFETY: called before spawning agent threads, single-threaded init
-            unsafe { std::env::set_var("CLI_PROXY_URL", &proxy_url) };
-            let client = model_override.unwrap_or_else(|| "CliProxy".into());
+            let model = model_override.unwrap_or_else(|| "cli-proxy".into());
             ProviderSetup {
                 label: Some(format!(
                     "{} proxy (:{}, {})",
-                    provider.display_name(),
+                    cli_provider.display_name(),
                     port,
-                    client
+                    model
                 )),
-                client: Some(client),
-                sgr_backend: None,
+                provider: Some(backend::SgrProvider::OpenAI {
+                    api_key: "proxy".into(),
+                    model,
+                    base_url: Some(proxy_url),
+                }),
                 _proxy_handle: Some(handle),
             }
         }
         Err(e) => {
-            eprintln!("Failed to start {} proxy: {}", provider.display_name(), e);
+            eprintln!("Failed to start {} proxy: {}", cli_provider.display_name(), e);
             std::process::exit(1);
         }
     }
 }
 
-/// Resolve provider from CLI flags (override) → config file (default).
+/// Resolve provider from CLI flags (override) → config file (default) → auto-detect.
 async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     use baml_agent::providers::{self, ProviderAuth};
 
-    // --sgr flag: use SGR pure Rust backend (bypasses BAML runtime)
+    // --sgr flag or --gemini-cli: resolve SGR provider from env/flags
     if args.sgr || args.gemini_cli {
         let (provider, proxy_handle) = resolve_sgr_provider(args).await;
-        let label = match &provider {
-            backend::SgrProvider::Gemini { model, .. } => format!("SGR/Gemini ({})", model),
-            backend::SgrProvider::OpenAI { model, base_url, .. } => {
-                if base_url.is_some() {
-                    format!("SGR/OpenAI-compat ({})", model)
-                } else {
-                    format!("SGR/OpenAI ({})", model)
-                }
-            }
-            backend::SgrProvider::Vertex { model, project_id, .. } => {
-                format!("SGR/Vertex ({}, {})", model, project_id)
-            }
-            backend::SgrProvider::GeminiCli { model, sandbox } => {
-                let m = model.as_deref().unwrap_or("default");
-                if *sandbox {
-                    format!("SGR/Gemini CLI ({}, sandbox)", m)
-                } else {
-                    format!("SGR/Gemini CLI ({})", m)
-                }
-            }
-        };
+        let label = provider_label(&provider);
         return ProviderSetup {
             label: Some(label),
-            client: None,
-            sgr_backend: Some(provider),
+            provider: Some(provider),
             _proxy_handle: proxy_handle,
         };
     }
@@ -303,81 +282,147 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
         return start_codex_provider(args.model.clone()).await;
     }
     if args.local {
-        let model = args.model.clone().unwrap_or_else(|| "OllamaDefault".into());
+        let model = args.model.clone().unwrap_or_else(|| "llama3".into());
         return ProviderSetup {
             label: Some(format!("local ({})", model)),
-            client: Some(model),
-            sgr_backend: None,
-            _proxy_handle: None,
-        };
-    }
-    if let Some(ref model) = args.model {
-        return ProviderSetup {
-            label: Some(model.clone()),
-            client: Some(model.clone()),
-            sgr_backend: None,
+            provider: Some(backend::SgrProvider::OpenAI {
+                api_key: "ollama".into(),
+                model,
+                base_url: Some("http://localhost:11434/v1".into()),
+            }),
             _proxy_handle: None,
         };
     }
 
     // Fall back to config file
     let cfg = providers::load_config(".rust-code");
-    if let Some(ref provider) = cfg.provider {
-        if let Some((default_client, auth)) = providers::resolve_provider(provider) {
-            let client = cfg.model.unwrap_or_else(|| default_client.to_string());
+    if let Some(ref prov_name) = cfg.provider {
+        if let Some((_default_client, auth)) = providers::resolve_provider(prov_name) {
+            let model = cfg.model.clone();
             match auth {
                 ProviderAuth::CodexProxy => {
-                    return start_codex_provider(Some(client)).await;
+                    return start_codex_provider(model).await;
                 }
                 ProviderAuth::CliProxy(cli_name) => {
-                    return start_cli_provider(cli_name, Some(client)).await;
+                    return start_cli_provider(cli_name, model).await;
                 }
-                ProviderAuth::EnvKey(_) if provider == "vertex" => {
+                ProviderAuth::EnvKey(key) if prov_name == "vertex" => {
                     // Auto-detect VERTEX_PROJECT from gcloud if not set
-                    if std::env::var("VERTEX_PROJECT").is_err() {
-                        if let Ok(out) = std::process::Command::new("gcloud")
+                    let project = std::env::var("VERTEX_PROJECT").ok().or_else(|| {
+                        std::process::Command::new("gcloud")
                             .args(["config", "get-value", "project"])
                             .output()
-                        {
-                            let project = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                            if !project.is_empty() && out.status.success() {
-                                unsafe { std::env::set_var("VERTEX_PROJECT", &project) };
-                            }
-                        }
+                            .ok()
+                            .filter(|o| o.status.success())
+                            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                            .filter(|s| !s.is_empty())
+                    });
+                    if let Some(project) = project {
+                        let m = model.unwrap_or_else(|| "gemini-2.5-flash".into());
+                        return ProviderSetup {
+                            label: Some(format!("Vertex ({}, {})", m, project)),
+                            provider: Some(backend::SgrProvider::Vertex {
+                                project_id: project,
+                                model: m,
+                                location: "us-central1".into(),
+                            }),
+                            _proxy_handle: None,
+                        };
+                    }
+                }
+                ProviderAuth::EnvKey(key) if prov_name == "gemini" || prov_name == "google" => {
+                    if let Ok(api_key) = std::env::var(&key) {
+                        let m = model.unwrap_or_else(|| "gemini-2.5-flash".into());
+                        return ProviderSetup {
+                            label: Some(format!("Gemini ({})", m)),
+                            provider: Some(backend::SgrProvider::Gemini {
+                                api_key,
+                                model: m,
+                            }),
+                            _proxy_handle: None,
+                        };
+                    }
+                }
+                ProviderAuth::EnvKey(key) if prov_name == "openai" => {
+                    if let Ok(api_key) = std::env::var(&key) {
+                        let m = model.unwrap_or_else(|| "gpt-4o".into());
+                        return ProviderSetup {
+                            label: Some(format!("OpenAI ({})", m)),
+                            provider: Some(backend::SgrProvider::OpenAI {
+                                api_key,
+                                model: m,
+                                base_url: None,
+                            }),
+                            _proxy_handle: None,
+                        };
                     }
                 }
                 ProviderAuth::ClaudeKeychain => {
                     match providers::load_claude_keychain_token() {
                         Ok(token) => {
-                            // SAFETY: called before spawning threads
-                            unsafe { std::env::set_var("ANTHROPIC_API_KEY", &token) };
+                            let m = model.unwrap_or_else(|| "claude-sonnet-4-20250514".into());
+                            return ProviderSetup {
+                                label: Some(format!("Anthropic ({})", m)),
+                                provider: Some(backend::SgrProvider::OpenAI {
+                                    api_key: token,
+                                    model: m,
+                                    base_url: Some("https://api.anthropic.com/v1".into()),
+                                }),
+                                _proxy_handle: None,
+                            };
                         }
                         Err(e) => {
                             eprintln!("Claude auth failed: {}", e);
-                            eprintln!(
-                                "Run `claude` first to authenticate, or use `config set anthropic` with ANTHROPIC_API_KEY"
-                            );
-                            std::process::exit(1);
                         }
                     }
                 }
                 _ => {}
             }
-            return ProviderSetup {
-                label: Some(format!("{} ({})", provider, client)),
-                client: Some(client),
-                sgr_backend: None,
-                _proxy_handle: None,
-            };
         }
     }
 
-    // Default: no override (uses BAML default client)
+    // Auto-detect: try GEMINI_API_KEY
+    if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
+        let model = args.model.clone().unwrap_or_else(|| "gemini-2.5-flash".into());
+        return ProviderSetup {
+            label: Some(format!("Gemini ({})", model)),
+            provider: Some(backend::SgrProvider::Gemini {
+                api_key,
+                model,
+            }),
+            _proxy_handle: None,
+        };
+    }
+
+    // No provider found
     ProviderSetup {
-        client: None,
         label: None,
-        sgr_backend: None,
+        provider: None,
         _proxy_handle: None,
+    }
+}
+
+fn provider_label(provider: &backend::SgrProvider) -> String {
+    match provider {
+        backend::SgrProvider::Gemini { model, .. } => format!("Gemini ({})", model),
+        backend::SgrProvider::OpenAI { model, base_url, .. } => {
+            if base_url.is_some() {
+                format!("OpenAI-compat ({})", model)
+            } else {
+                format!("OpenAI ({})", model)
+            }
+        }
+        backend::SgrProvider::Vertex { model, project_id, .. } => {
+            format!("Vertex ({}, {})", model, project_id)
+        }
+        backend::SgrProvider::GeminiCli { model, sandbox } => {
+            let m = model.as_deref().unwrap_or("default");
+            if *sandbox {
+                format!("Gemini CLI ({}, sandbox)", m)
+            } else {
+                format!("Gemini CLI ({})", m)
+            }
+        }
     }
 }
 
@@ -510,10 +555,8 @@ async fn start_sgr_gemini_cli(
 
 /// Apply resolved provider to agent.
 fn apply_provider(setup: &ProviderSetup, agent: &mut Agent) {
-    if let Some(ref sgr) = setup.sgr_backend {
-        agent.set_backend(backend::Backend::Sgr(sgr.clone()));
-    } else if let Some(ref client) = setup.client {
-        agent.set_backend(backend::Backend::Baml(Some(client.clone())));
+    if let Some(ref provider) = setup.provider {
+        agent.set_provider(provider.clone());
     }
     if let Some(ref label) = setup.label {
         println!("Provider: {}", label);
@@ -1323,8 +1366,6 @@ async fn main() -> Result<()> {
         Box::new(init_telemetry_tui())
     };
 
-    // Initialize BAML runtime
-    baml_client::init();
 
     if let Some(prompt) = args.prompt {
         // Single prompt headless mode — fresh session by default
@@ -1440,8 +1481,8 @@ async fn main() -> Result<()> {
         let mut app = app::App::new();
 
         // Apply provider from config/flags
-        if let Some(ref client) = provider_setup.client {
-            app.set_client_override(client);
+        if let Some(ref provider) = provider_setup.provider {
+            app.set_provider_override(provider.clone());
         }
 
         let result = app

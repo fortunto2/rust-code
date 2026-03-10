@@ -144,14 +144,20 @@ impl GeminiClient {
         // Extract raw text
         let raw_text = self.extract_raw_text(&response_body);
         if raw_text.trim().is_empty() {
-            // Log finish reason for debugging empty responses
-            if let Some(reason) = response_body
+            // Log finish reason and response parts for debugging
+            if let Some(candidate) = response_body
                 .get("candidates")
                 .and_then(|c| c.get(0))
-                .and_then(|c| c.get("finishReason"))
-                .and_then(|r| r.as_str())
             {
-                tracing::warn!(finish_reason = reason, "empty raw_text from Gemini");
+                let reason = candidate
+                    .get("finishReason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("unknown");
+                tracing::warn!(
+                    finish_reason = reason,
+                    has_parts = candidate.get("content").and_then(|c| c.get("parts")).is_some(),
+                    "empty raw_text from Gemini"
+                );
             }
         }
         let usage = response_body.get("usageMetadata").and_then(|u| {
@@ -174,7 +180,38 @@ impl GeminiClient {
             .ok();
 
         if output.is_none() && raw_text.trim().is_empty() && tool_calls.is_empty() {
-            return Err(SgrError::Schema("Empty response from model".into()));
+            // Log raw response for debugging
+            let parts_summary = response_body
+                .get("candidates")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("content"))
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+                .map(|parts| {
+                    parts.iter()
+                        .map(|p| {
+                            if p.get("text").is_some() { "text".to_string() }
+                            else if p.get("functionCall").is_some() {
+                                format!("functionCall:{}", p["functionCall"]["name"].as_str().unwrap_or("?"))
+                            }
+                            else { format!("unknown:{}", p) }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "no parts".into());
+            // Log full candidate for debugging
+            let candidate_json = response_body
+                .get("candidates")
+                .and_then(|c| c.get(0))
+                .map(|c| serde_json::to_string_pretty(c).unwrap_or_default())
+                .unwrap_or_else(|| "no candidates".into());
+            tracing::error!(
+                parts = parts_summary,
+                candidate = candidate_json.as_str(),
+                "SGR empty response"
+            );
+            return Err(SgrError::Schema(format!("Empty response from model (parts: {})", parts_summary)));
         }
 
         Ok(SgrResponse {
@@ -240,11 +277,16 @@ impl GeminiClient {
         let contents = self.messages_to_contents(messages);
         let system_instruction = self.extract_system(messages);
 
+        // When using function calling, Gemini doesn't support responseMimeType + functionDeclarations.
+        // Use structured output (JSON mode) only when there are no tools.
         let mut gen_config = json!({
             "temperature": self.config.temperature,
-            "responseMimeType": "application/json",
-            "responseSchema": response_schema_for::<T>(),
         });
+
+        if tools.is_empty() {
+            gen_config["responseMimeType"] = json!("application/json");
+            gen_config["responseSchema"] = response_schema_for::<T>();
+        }
 
         if let Some(max_tokens) = self.config.max_tokens {
             gen_config["maxOutputTokens"] = json!(max_tokens);
@@ -267,6 +309,11 @@ impl GeminiClient {
             body["tools"] = json!([{
                 "functionDeclarations": function_declarations,
             }]);
+            body["toolConfig"] = json!({
+                "functionCallingConfig": {
+                    "mode": "AUTO"
+                }
+            });
         }
 
         Ok(body)
@@ -466,6 +513,7 @@ impl GeminiClient {
 
         if let Some(candidates) = body.get("candidates").and_then(|c| c.as_array()) {
             for candidate in candidates {
+                // Standard: functionCall in parts
                 if let Some(parts) = candidate
                     .get("content")
                     .and_then(|c| c.get("parts"))
@@ -484,6 +532,49 @@ impl GeminiClient {
                                 name,
                                 arguments: args,
                             });
+                        }
+                    }
+                }
+
+                // Vertex AI fallback: tool call in finishMessage when no functionDeclarations
+                // Format: "Unexpected tool call: {\"tool_name\": \"bash\", \"command\": \"...\"}"
+                if calls.is_empty() {
+                    if let Some(msg) = candidate.get("finishMessage").and_then(|m| m.as_str()) {
+                        tracing::debug!(finish_message = msg, "parsing finishMessage for tool calls");
+                        if let Some(json_start) = msg.find('{') {
+                            let json_str = &msg[json_start..];
+                            // Try to find matching closing brace for clean extraction
+                            let json_str = if let Some(end) = json_str.rfind('}') {
+                                &json_str[..=end]
+                            } else {
+                                json_str
+                            };
+                            if let Ok(tc_json) = serde_json::from_str::<Value>(json_str) {
+                                // Handle two formats:
+                                // 1. Flat: {"tool_name": "bash", "command": "..."}
+                                // 2. Actions array: {"actions": [{"tool_name": "read_file", "path": "..."}]}
+                                let items: Vec<Value> = if let Some(actions) = tc_json.get("actions").and_then(|a| a.as_array()) {
+                                    actions.clone()
+                                } else {
+                                    vec![tc_json]
+                                };
+                                for item in items {
+                                    let name = item
+                                        .get("tool_name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let mut args = item.clone();
+                                    if let Some(obj) = args.as_object_mut() {
+                                        obj.remove("tool_name");
+                                    }
+                                    calls.push(ToolCall {
+                                        id: name.clone(),
+                                        name,
+                                        arguments: args,
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -508,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_request_with_schema_and_tools() {
+    fn builds_request_with_tools_no_json_mode() {
         let client = GeminiClient::from_api_key("test-key", "gemini-2.5-flash");
         let messages = vec![
             Message::system("You are a helper."),
@@ -518,12 +609,13 @@ mod tests {
 
         let body = client.build_request::<TestResponse>(&messages, &tools).unwrap();
 
-        // Has structured output schema
-        assert!(body["generationConfig"]["responseSchema"].is_object());
-        assert_eq!(body["generationConfig"]["responseMimeType"], "application/json");
+        // When tools are present, no JSON mode (Gemini doesn't support both)
+        assert!(body["generationConfig"]["responseSchema"].is_null());
+        assert!(body["generationConfig"]["responseMimeType"].is_null());
 
-        // Has tools
+        // Has tools + toolConfig
         assert!(body["tools"][0]["functionDeclarations"].is_array());
+        assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "AUTO");
 
         // Has system instruction
         assert!(body["systemInstruction"]["parts"][0]["text"].is_string());
@@ -532,6 +624,19 @@ mod tests {
         let contents = body["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
         assert_eq!(contents[0]["role"], "user");
+    }
+
+    #[test]
+    fn builds_request_without_tools_has_json_mode() {
+        let client = GeminiClient::from_api_key("test-key", "gemini-2.5-flash");
+        let messages = vec![Message::user("Hello")];
+
+        let body = client.build_request::<TestResponse>(&messages, &[]).unwrap();
+
+        // Without tools, JSON mode is enabled
+        assert!(body["generationConfig"]["responseSchema"].is_object());
+        assert_eq!(body["generationConfig"]["responseMimeType"], "application/json");
+        assert!(body["tools"].is_null());
     }
 
     #[test]

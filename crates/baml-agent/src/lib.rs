@@ -46,7 +46,7 @@ pub use prompt::{build_system_prompt, BASE_SYSTEM_PROMPT};
 pub use session::search_sessions;
 pub use session::{
     import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
-    SessionMeta,
+    SessionHeader, SessionMeta,
 };
 pub use tasks::{
     append_notes, create_task, load_tasks, save_task, tasks_context, tasks_dir, tasks_summary,

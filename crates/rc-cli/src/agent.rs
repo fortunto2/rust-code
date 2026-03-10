@@ -1,5 +1,4 @@
-use crate::backend::{self, Backend};
-use crate::baml_client::{self, types};
+use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
     git_status, is_mutating_action, mcp::McpManager, read_file, run_command, write_file,
@@ -11,8 +10,8 @@ use baml_agent::{
 };
 use std::path::Path;
 
-/// Shorthand for the 18-variant BAML action union.
-pub use types::Union18AskUserToolOrBashBgToolOrBashCommandToolOrDependenciesToolOrEditFileToolOrFinishTaskToolOrGitAddToolOrGitCommitToolOrGitDiffToolOrGitStatusToolOrMcpToolCallOrMemoryToolOrOpenEditorToolOrProjectMapToolOrReadFileToolOrSearchCodeToolOrTaskToolOrWriteFileTool as Action;
+/// Action type — the 18-variant tool enum.
+pub type Action = SgrAction;
 
 // Implement baml-agent traits for BAML's generated Message type
 
@@ -43,24 +42,27 @@ impl MessageRole for Role {
     }
 }
 
-/// Wrapper around BAML's Message that implements baml-agent traits.
+/// Chat message for the session.
 #[derive(Clone)]
-pub struct Msg(pub types::Message);
+pub struct Msg {
+    pub role: String,
+    pub content: String,
+}
 
 impl AgentMessage for Msg {
     type Role = Role;
     fn new(role: Role, content: String) -> Self {
-        Self(types::Message {
+        Self {
             role: role.0,
             content,
-        })
+        }
     }
     fn role(&self) -> &Role {
         // Safety: Role is repr(String), same layout
-        unsafe { &*((&self.0.role) as *const String as *const Role) }
+        unsafe { &*(&self.role as *const String as *const Role) }
     }
     fn content(&self) -> &str {
-        &self.0.content
+        &self.content
     }
 }
 
@@ -69,8 +71,8 @@ pub struct Agent {
     mcp: Option<McpManager>,
     step_count: usize,
     last_input_chars: usize,
-    /// LLM backend: BAML (dlopen) or SGR (pure Rust HTTP).
-    backend: Backend,
+    /// LLM provider (SGR pure Rust HTTP).
+    provider: Option<SgrProvider>,
     /// Current user intent for action filtering.
     pub intent: Intent,
     /// Pluggable hint sources.
@@ -147,7 +149,7 @@ impl Agent {
             mcp: None,
             step_count: 0,
             last_input_chars: 0,
-            backend: Backend::default(),
+            provider: None,
             intent: Intent::Auto,
             hint_sources: baml_agent::default_sources_with_tasks(Path::new(".")),
             cwd: std::sync::Mutex::new(
@@ -200,8 +202,8 @@ impl Agent {
         Ok(())
     }
 
-    pub fn history(&self) -> Vec<&types::Message> {
-        self.session.messages().iter().map(|m| &m.0).collect()
+    pub fn history(&self) -> Vec<&Msg> {
+        self.session.messages().iter().collect()
     }
 
     /// Get mutable reference to session (for run_loop / TUI).
@@ -209,38 +211,36 @@ impl Agent {
         &mut self.session
     }
 
-    /// Get raw BAML messages for the LLM call.
+    /// Build message history for LLM call as (role, content) pairs.
     ///
     /// Injects ephemeral project map after system messages (not stored in session).
     /// - First call: full repomap (all top files with symbols)
     /// - Subsequent calls: compact summary + detailed symbols for changed files only
-    fn baml_history(&mut self) -> Vec<types::Message> {
+    fn build_history(&mut self) -> Vec<(String, String)> {
         self.step_count += 1;
 
         let msgs: Vec<_> = self
             .session
             .messages()
             .iter()
-            .map(|m| m.0.clone())
+            .map(|m| (m.role.clone(), m.content.clone()))
             .collect();
 
         // Find where system messages end to insert repomap there
         let insert_at = msgs
             .iter()
-            .rposition(|m| m.role == "system")
+            .rposition(|(role, _)| role == "system")
             .map(|i| i + 1)
             .unwrap_or(0);
 
         let root = Path::new(".");
         let map_content = if self.step_count <= 1 {
-            // First call: full repomap so model understands the project
             let repomap = solograph::generate_repomap(root);
             format!(
                 "## Project Map (full, auto-generated)\n```\n{}\n```",
                 repomap
             )
         } else {
-            // Subsequent calls: compact summary + changed files detail
             let changed = git_changed_files();
             let context_map = solograph::generate_context_map(root, &changed);
             format!(
@@ -250,14 +250,9 @@ impl Agent {
             )
         };
 
-        let repomap_msg = types::Message {
-            role: "system".into(),
-            content: map_content,
-        };
-
         let mut result = Vec::with_capacity(msgs.len() + 1);
         result.extend_from_slice(&msgs[..insert_at]);
-        result.push(repomap_msg);
+        result.push(("system".into(), map_content));
         result.extend_from_slice(&msgs[insert_at..]);
         result
     }
@@ -270,62 +265,23 @@ impl Agent {
         self.session.push(Role::assistant(), content.into());
     }
 
-    /// TUI-only: get streaming BAML call (used by app.rs manual loop).
-    /// Returns None if using SGR backend (which doesn't support streaming yet).
-    pub fn step_stream(
-        &mut self,
-    ) -> Result<Option<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>>>
-    {
+    /// Call LLM and get next step (non-streaming).
+    pub async fn step(&mut self) -> Result<SgrNextStep> {
         self.session.trim();
-        let history = self.baml_history();
+        let history = self.build_history();
 
-        // Record input size for cost tracking
-        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
+        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
         self.last_input_chars = input_chars;
 
-        match &self.backend {
-            Backend::Baml(client_override) => {
-                let stream = if let Some(client) = client_override {
-                    baml_client::async_client::B
-                        .GetNextStep
-                        .with_client(client)
-                        .stream(&history)?
-                } else {
-                    baml_client::async_client::B.GetNextStep.stream(&history)?
-                };
-                Ok(Some(stream))
-            }
-            Backend::Sgr(_) => Ok(None),
-        }
-    }
-
-    /// SGR non-streaming call (used when backend is SGR).
-    /// Returns BAML NextStep for compatibility with the rest of the system.
-    pub async fn step_sgr(&mut self) -> Result<types::NextStep> {
-        self.session.trim();
-        let history = self.baml_history();
-
-        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
-        self.last_input_chars = input_chars;
-
-        let sgr_provider = match &self.backend {
-            Backend::Sgr(provider) => provider,
-            _ => anyhow::bail!("step_sgr called with non-SGR backend"),
-        };
+        let provider = self
+            .provider
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No LLM provider configured. Use --sgr or set GEMINI_API_KEY."))?;
 
         let mut sgr_msgs = backend::to_sgr_messages(&history);
-
-        // Inject SGR-specific prompt at position 0 (before agent context).
-        // BAML has its own prompt template; SGR needs explicit JSON output instructions.
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
 
-        let sgr_step = sgr_provider.call_flexible(&sgr_msgs).await?;
-        Ok(sgr_step.into_baml())
-    }
-
-    /// Check if using SGR backend.
-    pub fn is_sgr(&self) -> bool {
-        matches!(self.backend, Backend::Sgr(_))
+        provider.call_flexible(&sgr_msgs).await
     }
 
     /// Record output size after LLM response (call from TUI/headless after getting response).
@@ -339,14 +295,9 @@ impl Agent {
         cost::reset_cost();
     }
 
-    /// Set LLM backend (BAML with optional client override, or SGR pure Rust).
-    pub fn set_backend(&mut self, backend: Backend) {
-        self.backend = backend;
-    }
-
-    /// Convenience: set BAML client override (e.g. "OllamaDefault" for local mode).
-    pub fn set_client(&mut self, client_name: impl Into<String>) {
-        self.backend = Backend::Baml(Some(client_name.into()));
+    /// Set LLM provider.
+    pub fn set_provider(&mut self, provider: SgrProvider) {
+        self.provider = Some(provider);
     }
 
     /// Get current cost stats for display in TUI.
@@ -363,40 +314,36 @@ impl Agent {
                 tracing::info!("Checkpoint: {}", label);
             }
         }
-        use Action::*;
         match action {
-            ReadFileTool(cmd) => {
+            SgrAction::ReadFile { path, offset, limit } => {
                 let content = read_file(
-                    &cmd.path,
-                    cmd.offset.map(|o| o as usize),
-                    cmd.limit.map(|l| l as usize),
+                    path,
+                    offset.map(|o| o as usize),
+                    limit.map(|l| l as usize),
                 )
                 .await?;
                 Ok(ActionResult {
-                    output: format!("File contents of {}:\n{}", cmd.path, content),
+                    output: format!("File contents of {}:\n{}", path, content),
                     done: false,
                 })
             }
-            WriteFileTool(cmd) => {
-                let is_new = !std::path::Path::new(&cmd.path).exists();
-                write_file(&cmd.path, &cmd.content).await?;
+            SgrAction::WriteFile { path, content } => {
+                let is_new = !std::path::Path::new(path).exists();
+                write_file(path, content).await?;
                 let label = if is_new { "Created" } else { "Wrote" };
-                let lines = cmd.content.lines().count();
+                let lines = content.lines().count();
                 Ok(ActionResult {
-                    output: format!("{} {} ({} lines)", label, cmd.path, lines),
+                    output: format!("{} {} ({} lines)", label, path, lines),
                     done: false,
                 })
             }
-            EditFileTool(cmd) => {
-                crate::tools::edit_file(&cmd.path, &cmd.old_string, &cmd.new_string).await?;
-                // Show inline diff
-                let old_lines: Vec<&str> = cmd.old_string.lines().collect();
-                let new_lines: Vec<&str> = cmd.new_string.lines().collect();
+            SgrAction::EditFile { path, old_string, new_string } => {
+                crate::tools::edit_file(path, old_string, new_string).await?;
+                let old_lines: Vec<&str> = old_string.lines().collect();
+                let new_lines: Vec<&str> = new_string.lines().collect();
                 let mut diff = format!(
                     "Edited {} ({}→{} lines)\n",
-                    cmd.path,
-                    old_lines.len(),
-                    new_lines.len()
+                    path, old_lines.len(), new_lines.len()
                 );
                 for l in &old_lines {
                     diff.push_str(&format!("- {}\n", l));
@@ -409,11 +356,11 @@ impl Agent {
                     done: false,
                 })
             }
-            BashCommandTool(cmd) => {
-                let timeout_ms = cmd.timeout.map(|t| (t as u64).min(600_000));
+            SgrAction::Bash { command, timeout, .. } => {
+                let timeout_ms = timeout.map(|t| (t as u64).min(600_000));
                 let current_cwd = self.cwd.lock().unwrap().clone();
                 let result =
-                    crate::tools::run_command_in(&cmd.command, &current_cwd, timeout_ms).await;
+                    crate::tools::run_command_in(command, &current_cwd, timeout_ms).await;
                 *self.cwd.lock().unwrap() = result.cwd;
                 let exit_info = if result.exit_code == 0 {
                     String::new()
@@ -425,21 +372,21 @@ impl Agent {
                     done: false,
                 })
             }
-            BashBgTool(cmd) => {
-                let output = crate::tools::run_command_bg(&cmd.name, &cmd.command).await?;
+            SgrAction::BashBg { name, command } => {
+                let output = crate::tools::run_command_bg(name, command).await?;
                 Ok(ActionResult {
                     output: format!("[BG] {}", output),
                     done: false,
                 })
             }
-            SearchCodeTool(cmd) => {
+            SgrAction::SearchCode { query } => {
                 let mut result = String::new();
 
                 if let Ok(files) = FuzzySearcher::get_all_files().await {
                     let mut searcher = FuzzySearcher::new();
-                    let matches = searcher.fuzzy_match_files(&cmd.query, &files);
+                    let matches = searcher.fuzzy_match_files(query, &files);
                     if !matches.is_empty() {
-                        result.push_str(&format!("File path matches for '{}':\n", cmd.query));
+                        result.push_str(&format!("File path matches for '{}':\n", query));
                         for (score, path) in matches.iter().take(5) {
                             if *score > 50 {
                                 result.push_str(&format!("- {}\n", path));
@@ -449,8 +396,8 @@ impl Agent {
                     }
                 }
 
-                result.push_str(&format!("Content search results for '{}':\n", cmd.query));
-                let safe_query = cmd.query.replace("'", "'\\''");
+                result.push_str(&format!("Content search results for '{}':\n", query));
+                let safe_query = query.replace("'", "'\\''");
                 let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
                 match run_command(&search_cmd).await {
                     Ok(output) => {
@@ -479,7 +426,7 @@ impl Agent {
                     done: false,
                 })
             }
-            GitStatusTool(_cmd) => match git_status()? {
+            SgrAction::GitStatus { .. } => match git_status()? {
                 Some(status) => {
                     let mut result = format!(
                         "Git Status:\nBranch: {}\nDirty: {}\n",
@@ -513,8 +460,8 @@ impl Agent {
                     done: false,
                 }),
             },
-            GitDiffTool(cmd) => {
-                let diff = git_diff(cmd.path.as_deref(), cmd.cached.unwrap_or(false))?;
+            SgrAction::GitDiff { path, cached } => {
+                let diff = git_diff(path.as_deref(), cached.unwrap_or(false))?;
                 let output = if diff.is_empty() {
                     "No changes to show".into()
                 } else {
@@ -525,46 +472,47 @@ impl Agent {
                     done: false,
                 })
             }
-            GitAddTool(cmd) => {
-                git_add(&cmd.paths)?;
+            SgrAction::GitAdd { paths } => {
+                git_add(paths)?;
                 Ok(ActionResult {
-                    output: format!("Added {} files to staging", cmd.paths.len()),
+                    output: format!("Added {} files to staging", paths.len()),
                     done: false,
                 })
             }
-            GitCommitTool(cmd) => {
-                git_commit(&cmd.message)?;
+            SgrAction::GitCommit { message } => {
+                git_commit(message)?;
                 Ok(ActionResult {
-                    output: format!("Committed: {}", cmd.message),
+                    output: format!("Committed: {}", message),
                     done: false,
                 })
             }
-            OpenEditorTool(cmd) => Ok(ActionResult {
-                output: format!("Opened {} in editor", cmd.path),
+            SgrAction::OpenEditor { path, .. } => Ok(ActionResult {
+                output: format!("Opened {} in editor", path),
                 done: false,
             }),
-            FinishTaskTool(cmd) => Ok(ActionResult {
-                output: format!("Task finished: {}", cmd.summary),
+            SgrAction::Finish { summary } => Ok(ActionResult {
+                output: format!("Task finished: {}", summary),
                 done: true,
             }),
-            AskUserTool(cmd) => Ok(ActionResult {
-                output: format!("Question for user: {}", cmd.question),
+            SgrAction::AskUser { question } => Ok(ActionResult {
+                output: format!("Question for user: {}", question),
                 done: true,
             }),
-            MemoryTool(cmd) => {
+            SgrAction::Memory { operation, category, section, content, context, confidence } => {
                 let memory_path = Path::new(AGENT_HOME).join("MEMORY.jsonl");
-                let op = baml_agent::norm(&format!("{:?}", cmd.operation));
-                let category = baml_agent::norm(&format!("{:?}", cmd.category));
-                let confidence = baml_agent::norm(&format!("{:?}", cmd.confidence));
+                let op = operation.to_lowercase();
+                let cat = category.as_deref().unwrap_or("insight").to_lowercase();
+                let conf = confidence.as_deref().unwrap_or("tentative").to_lowercase();
 
                 match op.as_str() {
                     "save" => {
+                        let sec = section.as_deref().unwrap_or("general");
                         let entry = serde_json::json!({
-                            "category": category,
-                            "section": cmd.section,
-                            "content": cmd.content,
-                            "context": cmd.context,
-                            "confidence": confidence,
+                            "category": cat,
+                            "section": sec,
+                            "content": content,
+                            "context": context,
+                            "confidence": conf,
                             "created": std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default().as_secs(),
@@ -580,29 +528,30 @@ impl Agent {
                         Ok(ActionResult {
                             output: format!(
                                 "Memory saved: [{}] {} ({})",
-                                category, cmd.section, confidence
+                                cat, sec, conf
                             ),
                             done: false,
                         })
                     }
                     "forget" => {
+                        let sec = section.as_deref().unwrap_or("general");
                         if memory_path.exists() {
-                            let content = std::fs::read_to_string(&memory_path).unwrap_or_default();
-                            let filtered: Vec<&str> = content
+                            let file_content = std::fs::read_to_string(&memory_path).unwrap_or_default();
+                            let filtered: Vec<&str> = file_content
                                 .lines()
                                 .filter(|line| {
                                     serde_json::from_str::<serde_json::Value>(line)
-                                        .map(|v| v["section"].as_str() != Some(&cmd.section))
+                                        .map(|v| v["section"].as_str() != Some(sec))
                                         .unwrap_or(true)
                                 })
                                 .collect();
-                            let removed = content.lines().count() - filtered.len();
+                            let removed = file_content.lines().count() - filtered.len();
                             std::fs::write(&memory_path, filtered.join("\n") + "\n")
                                 .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
                             Ok(ActionResult {
                                 output: format!(
                                     "Memory: forgot {} entries from '{}'",
-                                    removed, cmd.section
+                                    removed, sec
                                 ),
                                 done: false,
                             })
@@ -619,55 +568,52 @@ impl Agent {
                     }),
                 }
             }
-            McpToolCall(cmd) => {
+            SgrAction::McpCall { server, tool, arguments } => {
                 let Some(mcp) = &self.mcp else {
                     return Ok(ActionResult {
                         output: "MCP not initialized. No .mcp.json found.".into(),
                         done: false,
                     });
                 };
-                let args = cmd.arguments.as_ref().and_then(|json_str| {
+                let args = arguments.as_ref().and_then(|json_str| {
                     serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str)
                         .ok()
                 });
-                match mcp.call_tool(&cmd.server, &cmd.tool, args).await {
+                match mcp.call_tool(server, tool, args).await {
                     Ok(result) => {
                         let output = crate::tools::mcp::format_tool_result(&result);
                         Ok(ActionResult {
-                            output: format!("MCP [{}] {}:\n{}", cmd.server, cmd.tool, output),
+                            output: format!("MCP [{}] {}:\n{}", server, tool, output),
                             done: false,
                         })
                     }
                     Err(e) => Ok(ActionResult {
-                        output: format!("MCP Error [{}] {}: {}", cmd.server, cmd.tool, e),
+                        output: format!("MCP Error [{}] {}: {}", server, tool, e),
                         done: false,
                     }),
                 }
             }
-            ProjectMapTool(cmd) => {
-                let dir = cmd.path.as_deref().unwrap_or(".");
+            SgrAction::ProjectMap { path } => {
+                let dir = path.as_deref().unwrap_or(".");
                 let map = solograph::generate_repomap(Path::new(dir));
                 Ok(ActionResult {
                     output: map,
                     done: false,
                 })
             }
-            TaskTool(cmd) => {
+            SgrAction::Task { operation, title, task_id, status, priority, notes } => {
                 let project_root = Path::new(".");
-                let op = baml_agent::norm(&format!("{:?}", cmd.operation));
+                let op = operation.to_lowercase();
                 match op.as_str() {
                     "create" => {
-                        let title = cmd.title.as_deref().unwrap_or("Untitled");
-                        let priority = cmd
-                            .priority
+                        let t = title.as_deref().unwrap_or("Untitled");
+                        let pri = priority
                             .as_ref()
-                            .and_then(|p| {
-                                baml_agent::Priority::parse(&baml_agent::norm(&format!("{:?}", p)))
-                            })
+                            .and_then(|p| baml_agent::Priority::parse(&p.to_lowercase()))
                             .unwrap_or(baml_agent::Priority::Medium);
-                        let mut task = baml_agent::create_task(project_root, title, priority);
-                        if let Some(notes) = &cmd.notes {
-                            task.body = notes.clone();
+                        let mut task = baml_agent::create_task(project_root, t, pri);
+                        if let Some(n) = notes {
+                            task.body = n.clone();
                             baml_agent::save_task(project_root, &task);
                         }
                         Ok(ActionResult {
@@ -682,7 +628,7 @@ impl Agent {
                         let tasks = baml_agent::load_tasks(project_root);
                         if tasks.is_empty() {
                             Ok(ActionResult {
-                                output: "No tasks found. Use TaskTool(operation='create') to create one.".into(),
+                                output: "No tasks found. Use task(operation='create') to create one.".into(),
                                 done: false,
                             })
                         } else {
@@ -700,21 +646,21 @@ impl Agent {
                         }
                     }
                     "update" => {
-                        let Some(id) = cmd.task_id else {
+                        let Some(id) = task_id else {
                             return Ok(ActionResult {
                                 output: "Error: task_id required for update".into(),
                                 done: false,
                             });
                         };
-                        let id = id as u16;
-                        if let Some(status_val) = &cmd.status {
-                            let status_str = baml_agent::norm(&format!("{:?}", status_val));
-                            if let Some(status) = baml_agent::TaskStatus::parse(&status_str) {
-                                baml_agent::update_status(project_root, id, status);
+                        let id = *id as u16;
+                        if let Some(status_val) = status {
+                            let status_str = status_val.to_lowercase();
+                            if let Some(s) = baml_agent::TaskStatus::parse(&status_str) {
+                                baml_agent::update_status(project_root, id, s);
                             }
                         }
-                        if let Some(notes) = &cmd.notes {
-                            baml_agent::append_notes(project_root, id, notes);
+                        if let Some(n) = notes {
+                            baml_agent::append_notes(project_root, id, n);
                         }
                         let tasks = baml_agent::load_tasks(project_root);
                         let task = tasks.iter().find(|t| t.id == id);
@@ -733,7 +679,7 @@ impl Agent {
                         }
                     }
                     "done" => {
-                        let Some(id) = cmd.task_id else {
+                        let Some(id) = task_id else {
                             return Ok(ActionResult {
                                 output: "Error: task_id required for done".into(),
                                 done: false,
@@ -741,7 +687,7 @@ impl Agent {
                         };
                         match baml_agent::update_status(
                             project_root,
-                            id as u16,
+                            *id as u16,
                             baml_agent::TaskStatus::Done,
                         ) {
                             Some(t) => Ok(ActionResult {
@@ -760,21 +706,20 @@ impl Agent {
                     }),
                 }
             }
-            DependenciesTool(cmd) => {
-                let path = if let Some(p) = &cmd.path {
+            SgrAction::Dependencies { path } => {
+                let manifest = if let Some(p) = path {
                     std::path::PathBuf::from(p)
                 } else {
-                    // Auto-detect manifest in current dir
                     ["Cargo.toml", "package.json", "pyproject.toml"]
                         .iter()
                         .map(std::path::PathBuf::from)
                         .find(|p| p.exists())
                         .unwrap_or_else(|| std::path::PathBuf::from("Cargo.toml"))
                 };
-                let deps = solograph::parse_deps(&path);
+                let deps = solograph::parse_deps(&manifest);
                 if deps.is_empty() {
                     Ok(ActionResult {
-                        output: format!("No dependencies found in {}", path.display()),
+                        output: format!("No dependencies found in {}", manifest.display()),
                         done: false,
                     })
                 } else {
@@ -791,7 +736,7 @@ impl Agent {
                         .collect::<Vec<_>>()
                         .join("\n");
                     Ok(ActionResult {
-                        output: format!("Dependencies from {}:\n{}", path.display(), output),
+                        output: format!("Dependencies from {}:\n{}", manifest.display(), output),
                         done: false,
                     })
                 }
@@ -803,39 +748,29 @@ impl Agent {
 /// SgrAgent implementation — used by run_loop_stream in headless mode.
 ///
 /// `execute` delegates to `execute_action` which takes `&self` (no mutation).
-/// `decide`/`decide_stream` call BAML directly from the passed-in messages.
+/// `decide` calls the SGR provider directly from the passed-in messages.
 impl SgrAgent for Agent {
     type Action = Action;
     type Msg = Msg;
     type Error = anyhow::Error;
 
     async fn decide(&self, messages: &[Msg]) -> Result<StepDecision<Action>> {
-        let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
-        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
+        let history: Vec<(String, String)> = messages
+            .iter()
+            .map(|m| (m.role.clone(), m.content.clone()))
+            .collect();
+        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
 
-        let step = match &self.backend {
-            Backend::Baml(client_override) => {
-                if let Some(client) = client_override {
-                    baml_client::async_client::B
-                        .GetNextStep
-                        .with_client(client)
-                        .call(&history)
-                        .await?
-                } else {
-                    baml_client::async_client::B
-                        .GetNextStep
-                        .call(&history)
-                        .await?
-                }
-            }
-            Backend::Sgr(provider) => {
-                let sgr_msgs = backend::to_sgr_messages(&history);
-                let sgr_step = provider.call_flexible(&sgr_msgs).await?;
-                sgr_step.into_baml()
-            }
-        };
+        let provider = self
+            .provider
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
-        // Track cost: estimate output from response fields
+        let mut sgr_msgs = backend::to_sgr_messages(&history);
+        sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
+        let step = provider.call_flexible(&sgr_msgs).await?;
+
+        // Track cost
         let output_chars = step.situation.len()
             + step.task.iter().map(|t| t.len()).sum::<usize>()
             + format!("{:?}", step.actions).len();
@@ -844,7 +779,7 @@ impl SgrAgent for Agent {
         let done = step
             .actions
             .iter()
-            .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
+            .any(|a| matches!(a, Action::Finish { .. } | Action::AskUser { .. }));
 
         let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
         let mcp_names: Vec<&str> = self
@@ -876,41 +811,39 @@ impl SgrAgent for Agent {
     }
 
     fn action_signature(action: &Action) -> String {
-        use Action::*;
         match action {
-            ReadFileTool(c) => format!("read:{}", c.path),
-            WriteFileTool(c) => format!("write:{}", c.path),
-            EditFileTool(c) => format!("edit:{}", c.path),
-            BashCommandTool(c) => format!("bash:{}", c.command),
-            BashBgTool(c) => format!("bg:{}", c.name),
-            SearchCodeTool(c) => format!("search:{}", c.query),
-            GitStatusTool(_) => "git_status".into(),
-            GitDiffTool(c) => format!("diff:{:?}", c.path),
-            GitAddTool(c) => format!("add:{:?}", c.paths),
-            GitCommitTool(c) => format!("commit:{}", c.message),
-            OpenEditorTool(c) => format!("open:{}", c.path),
-            AskUserTool(c) => format!("ask:{}", c.question),
-            FinishTaskTool(c) => format!("finish:{}", c.summary),
-            MemoryTool(c) => format!("memory:{:?}:{}", c.operation, c.section),
-            McpToolCall(c) => format!("mcp:{}:{}", c.server, c.tool),
-            ProjectMapTool(c) => format!("project_map:{:?}", c.path),
-            DependenciesTool(c) => format!("deps:{:?}", c.path),
-            TaskTool(c) => format!("task:{:?}:{:?}", c.operation, c.task_id),
+            Action::ReadFile { path, .. } => format!("read:{}", path),
+            Action::WriteFile { path, .. } => format!("write:{}", path),
+            Action::EditFile { path, .. } => format!("edit:{}", path),
+            Action::Bash { command, .. } => format!("bash:{}", command),
+            Action::BashBg { name, .. } => format!("bg:{}", name),
+            Action::SearchCode { query } => format!("search:{}", query),
+            Action::GitStatus { .. } => "git_status".into(),
+            Action::GitDiff { path, .. } => format!("diff:{:?}", path),
+            Action::GitAdd { paths } => format!("add:{:?}", paths),
+            Action::GitCommit { message } => format!("commit:{}", message),
+            Action::OpenEditor { path, .. } => format!("open:{}", path),
+            Action::AskUser { question } => format!("ask:{}", question),
+            Action::Finish { summary } => format!("finish:{}", summary),
+            Action::Memory { operation, section, .. } => format!("memory:{}:{:?}", operation, section),
+            Action::McpCall { server, tool, .. } => format!("mcp:{}:{}", server, tool),
+            Action::ProjectMap { path } => format!("project_map:{:?}", path),
+            Action::Dependencies { path } => format!("deps:{:?}", path),
+            Action::Task { operation, task_id, .. } => format!("task:{}:{:?}", operation, task_id),
         }
     }
 }
 
 /// Classify action into coarse ActionKind for intent guard.
 pub fn action_kind(action: &Action) -> ActionKind {
-    use Action::*;
     match action {
-        ReadFileTool(_) | SearchCodeTool(_) | GitStatusTool(_) | GitDiffTool(_)
-        | ProjectMapTool(_) | DependenciesTool(_) => ActionKind::Read,
-        WriteFileTool(_) | EditFileTool(_) | OpenEditorTool(_) => ActionKind::Write,
-        BashCommandTool(_) | BashBgTool(_) => ActionKind::Execute,
-        GitAddTool(_) | GitCommitTool(_) => ActionKind::GitMutate,
-        AskUserTool(_) | FinishTaskTool(_) | MemoryTool(_) | TaskTool(_) => ActionKind::Plan,
-        McpToolCall(_) => ActionKind::External,
+        Action::ReadFile { .. } | Action::SearchCode { .. } | Action::GitStatus { .. }
+        | Action::GitDiff { .. } | Action::ProjectMap { .. } | Action::Dependencies { .. } => ActionKind::Read,
+        Action::WriteFile { .. } | Action::EditFile { .. } | Action::OpenEditor { .. } => ActionKind::Write,
+        Action::Bash { .. } | Action::BashBg { .. } => ActionKind::Execute,
+        Action::GitAdd { .. } | Action::GitCommit { .. } => ActionKind::GitMutate,
+        Action::AskUser { .. } | Action::Finish { .. } | Action::Memory { .. } | Action::Task { .. } => ActionKind::Plan,
+        Action::McpCall { .. } => ActionKind::External,
     }
 }
 
@@ -923,46 +856,21 @@ impl SgrAgentStream for Agent {
     where
         T: FnMut(&str) + Send,
     {
-        let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
-        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
-        let backend = self.backend.clone();
+        let history: Vec<(String, String)> = messages
+            .iter()
+            .map(|m| (m.role.clone(), m.content.clone()))
+            .collect();
+        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
+        let provider = self.provider.clone();
         async move {
-            let step = match &backend {
-                Backend::Baml(client_override) => {
-                    let mut stream = if let Some(client) = client_override {
-                        baml_client::async_client::B
-                            .GetNextStep
-                            .with_client(client)
-                            .stream(&history)?
-                    } else {
-                        baml_client::async_client::B.GetNextStep.stream(&history)?
-                    };
-                    let mut last_analysis_len = 0;
+            let provider = provider
+                .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
-                    while let Some(partial) = stream.next().await {
-                        match partial {
-                            Ok(partial_step) => {
-                                if let Some(ref analysis) = partial_step.situation {
-                                    if analysis.len() > last_analysis_len {
-                                        on_token(&analysis[last_analysis_len..]);
-                                        last_analysis_len = analysis.len();
-                                    }
-                                }
-                            }
-                            Err(_) => {}
-                        }
-                    }
-
-                    stream.get_final_response().await?
-                }
-                Backend::Sgr(provider) => {
-                    // SGR: no streaming yet — emit situation as single token after response
-                    let sgr_msgs = backend::to_sgr_messages(&history);
-                    let sgr_step = provider.call_flexible(&sgr_msgs).await?;
-                    on_token(&sgr_step.situation);
-                    sgr_step.into_baml()
-                }
-            };
+            let mut sgr_msgs = backend::to_sgr_messages(&history);
+            sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
+            let step = provider.call_flexible(&sgr_msgs).await?;
+            // Emit situation as single token (no streaming yet)
+            on_token(&step.situation);
 
             // Track cost
             let output_chars = step.situation.len()
@@ -972,7 +880,7 @@ impl SgrAgentStream for Agent {
             let done = step
                 .actions
                 .iter()
-                .any(|a| matches!(a, Action::FinishTaskTool(_) | Action::AskUserTool(_)));
+                .any(|a| matches!(a, Action::Finish { .. } | Action::AskUser { .. }));
 
             let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
             let mcp_names: Vec<&str> = self

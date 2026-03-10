@@ -1,37 +1,34 @@
-//! Switchable LLM backend: BAML (dlopen runtime) vs SGR (pure Rust HTTP).
+//! SGR backend — pure Rust HTTP LLM provider.
 //!
-//! Both backends produce the same BAML types (NextStep, Action union)
-//! so the rest of the system (execute, loop detection, TUI) stays unchanged.
+//! Uses native Gemini function calling (functionDeclarations) for Gemini/Vertex,
+//! and flexible JSON parsing for OpenAI-compatible and CLI backends.
 
-use crate::agent::Action;
-use crate::baml_client::types;
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sgr_agent::tool::tool;
+
+/// System prompt for native function calling mode (Gemini/Vertex).
+/// Tells model to use provided functions instead of writing JSON.
+const NATIVE_FC_SYSTEM_PROMPT: &str = r#"You are rust-code, an expert AI coding agent in a Terminal UI.
+
+## How to respond
+1. Think about the current situation — what phase of the task are you in? What's done, what's blocking?
+2. Call one or more tools using the provided functions. Call multiple tools for independent operations.
+3. When the task is FULLY complete, call the `finish` function with a summary of what was done.
+
+## Rules
+- Act directly — don't waste steps on unnecessary setup.
+- Read files before editing. Verify changes with git_status or tests.
+- When answering questions or reporting findings, call `finish` with the answer in `summary`.
+- For simple questions that need no tools, just call `finish` immediately.
+"#;
 
 // ---------------------------------------------------------------------------
-// Backend enum
+// Provider enum
 // ---------------------------------------------------------------------------
 
-/// Which LLM backend to use for `decide()` / `decide_stream()`.
-#[derive(Debug, Clone)]
-pub enum Backend {
-    /// BAML runtime (dlopen). Supports streaming + structured output.
-    /// Optional client name override (e.g. "OllamaDefault", "CodexProxy").
-    Baml(Option<String>),
-
-    /// SGR-agent pure Rust. Uses flexible parser (text → JSON cascade).
-    /// For iOS/Android/WASM or when BAML runtime is unavailable.
-    Sgr(SgrProvider),
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Self::Baml(None)
-    }
-}
-
-/// SGR provider configuration.
+/// LLM provider configuration.
 #[derive(Debug, Clone)]
 pub enum SgrProvider {
     Gemini {
@@ -176,250 +173,326 @@ pub enum SgrAction {
 }
 
 // ---------------------------------------------------------------------------
+// SgrPlan — structured output for native function calling
+// ---------------------------------------------------------------------------
+// When using Gemini/Vertex with functionDeclarations, the model returns:
+// - JSON text (SgrPlan): situation + task (the "thinking" part)
+// - functionCall parts: the actual tool invocations
+// We merge them into SgrNextStep.
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SgrPlan {
+    /// Current situation assessment.
+    pub situation: String,
+    /// Task steps to accomplish.
+    pub task: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Tool parameter structs for functionDeclarations
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct ReadFileParams {
+    /// File path to read.
+    path: String,
+    /// Line offset to start reading from.
+    #[serde(default)]
+    offset: Option<i64>,
+    /// Number of lines to read.
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct WriteFileParams {
+    /// File path to write.
+    path: String,
+    /// File content.
+    content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct EditFileParams {
+    /// File path to edit.
+    path: String,
+    /// Exact string to find and replace.
+    old_string: String,
+    /// Replacement string.
+    new_string: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct BashParams {
+    /// Shell command to execute.
+    command: String,
+    /// Human-readable description of what this command does.
+    #[serde(default)]
+    description: Option<String>,
+    /// Timeout in milliseconds.
+    #[serde(default)]
+    timeout: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct BashBgParams {
+    /// Background task name.
+    name: String,
+    /// Shell command to run in background.
+    command: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct SearchCodeParams {
+    /// Search query (regex or text).
+    query: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct GitStatusParams {}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct GitDiffParams {
+    /// Optional path to diff.
+    #[serde(default)]
+    path: Option<String>,
+    /// Show staged changes only.
+    #[serde(default)]
+    cached: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct GitAddParams {
+    /// File paths to stage.
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct GitCommitParams {
+    /// Commit message.
+    message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct OpenEditorParams {
+    /// File path to open.
+    path: String,
+    /// Line number to jump to.
+    #[serde(default)]
+    line: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct AskUserParams {
+    /// Question to ask the user.
+    question: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct FinishParams {
+    /// Summary of what was accomplished.
+    summary: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct McpCallParams {
+    /// MCP server name.
+    server: String,
+    /// Tool name on the server.
+    tool: String,
+    /// JSON-encoded arguments.
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct MemoryParams {
+    /// Operation: "save" or "forget".
+    operation: String,
+    /// Category: insight, pattern, decision, preference, debug.
+    #[serde(default)]
+    category: Option<String>,
+    /// Section name.
+    #[serde(default)]
+    section: Option<String>,
+    /// Memory content.
+    #[serde(default)]
+    content: Option<String>,
+    /// Context for this memory.
+    #[serde(default)]
+    context: Option<String>,
+    /// Confidence: "confirmed" or "tentative".
+    #[serde(default)]
+    confidence: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct ProjectMapParams {
+    /// Optional path to scope the map.
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct DependenciesParams {
+    /// Optional path to check dependencies.
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct TaskParams {
+    /// Operation: create, list, update, done.
+    operation: String,
+    /// Task title (for create).
+    #[serde(default)]
+    title: Option<String>,
+    /// Task ID (for update/done).
+    #[serde(default)]
+    task_id: Option<i64>,
+    /// Status: todo, in_progress, blocked, done.
+    #[serde(default)]
+    status: Option<String>,
+    /// Priority: low, medium, high.
+    #[serde(default)]
+    priority: Option<String>,
+    /// Notes.
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+/// Build Gemini functionDeclarations for all agent tools.
+pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
+    vec![
+        tool::<ReadFileParams>("read_file", "Read file contents. Use offset/limit for large files."),
+        tool::<WriteFileParams>("write_file", "Create or overwrite a file with new content."),
+        tool::<EditFileParams>("edit_file", "Edit a file by replacing old_string with new_string. old_string must match exactly."),
+        tool::<BashParams>("bash", "Run a shell command and return stdout/stderr."),
+        tool::<BashBgParams>("bash_bg", "Run a shell command in background (tmux)."),
+        tool::<SearchCodeParams>("search_code", "Search codebase for a pattern using ripgrep."),
+        tool::<GitStatusParams>("git_status", "Show git status of the working directory."),
+        tool::<GitDiffParams>("git_diff", "Show git diff. Use cached=true for staged changes."),
+        tool::<GitAddParams>("git_add", "Stage files for commit."),
+        tool::<GitCommitParams>("git_commit", "Create a git commit with a message."),
+        tool::<OpenEditorParams>("open_editor", "Open a file in the user's editor."),
+        tool::<AskUserParams>("ask_user", "Ask the user a question and wait for their response."),
+        tool::<FinishParams>("finish", "Signal task completion with a summary of what was done."),
+        tool::<McpCallParams>("mcp_call", "Call a tool on an MCP server."),
+        tool::<MemoryParams>("memory", "Save or forget an agent memory entry."),
+        tool::<ProjectMapParams>("project_map", "Generate a project structure map."),
+        tool::<DependenciesParams>("dependencies", "Analyze project dependencies."),
+        tool::<TaskParams>("task", "Manage tasks: create, list, update, done."),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // Conversion: SgrNextStep → BAML types
 // ---------------------------------------------------------------------------
 
-impl SgrNextStep {
-    /// Convert to BAML's NextStep (used by the rest of the system).
-    pub fn into_baml(self) -> types::NextStep {
-        types::NextStep {
-            situation: self.situation,
-            task: self.task,
-            actions: self.actions.into_iter().map(|a| a.into_baml()).collect(),
-        }
-    }
-}
 
-impl SgrAction {
-    fn into_baml(self) -> Action {
-        match self {
-            SgrAction::ReadFile {
-                path,
-                offset,
-                limit,
-            } => Action::ReadFileTool(types::ReadFileTool {
-                tool_name: "read_file".into(),
-                path,
-                offset,
-                limit,
-            }),
-            SgrAction::WriteFile { path, content } => {
-                Action::WriteFileTool(types::WriteFileTool {
-                    tool_name: "write_file".into(),
-                    path,
-                    content,
-                })
-            }
-            SgrAction::EditFile {
-                path,
-                old_string,
-                new_string,
-            } => Action::EditFileTool(types::EditFileTool {
-                tool_name: "edit_file".into(),
-                path,
-                old_string,
-                new_string,
-            }),
-            SgrAction::Bash {
-                command,
-                description,
-                timeout,
-            } => Action::BashCommandTool(types::BashCommandTool {
-                tool_name: "bash".into(),
-                command,
-                description,
-                timeout,
-            }),
-            SgrAction::BashBg { name, command } => Action::BashBgTool(types::BashBgTool {
-                tool_name: "bash_bg".into(),
-                name,
-                command,
-            }),
-            SgrAction::SearchCode { query } => {
-                Action::SearchCodeTool(types::SearchCodeTool {
-                    tool_name: "search_code".into(),
-                    query,
-                })
-            }
-            SgrAction::GitStatus { dummy } => Action::GitStatusTool(types::GitStatusTool {
-                tool_name: "git_status".into(),
-                dummy,
-            }),
-            SgrAction::GitDiff { path, cached } => Action::GitDiffTool(types::GitDiffTool {
-                tool_name: "git_diff".into(),
-                path,
-                cached,
-            }),
-            SgrAction::GitAdd { paths } => Action::GitAddTool(types::GitAddTool {
-                tool_name: "git_add".into(),
-                paths,
-            }),
-            SgrAction::GitCommit { message } => {
-                Action::GitCommitTool(types::GitCommitTool {
-                    tool_name: "git_commit".into(),
-                    message,
-                })
-            }
-            SgrAction::OpenEditor { path, line } => {
-                Action::OpenEditorTool(types::OpenEditorTool {
-                    tool_name: "open_editor".into(),
-                    path,
-                    line,
-                })
-            }
-            SgrAction::AskUser { question } => Action::AskUserTool(types::AskUserTool {
-                tool_name: "ask_user".into(),
-                question,
-            }),
-            SgrAction::Finish { summary } => {
-                Action::FinishTaskTool(types::FinishTaskTool {
-                    tool_name: "finish".into(),
-                    summary,
-                })
-            }
-            SgrAction::McpCall {
-                server,
-                tool,
-                arguments,
-            } => Action::McpToolCall(types::McpToolCall {
-                tool_name: "mcp_call".into(),
-                server,
-                tool,
-                arguments,
-            }),
-            SgrAction::Memory {
-                operation,
-                category,
-                section,
-                content,
-                context,
-                confidence,
-            } => Action::MemoryTool(types::MemoryTool {
-                tool_name: "memory".into(),
-                operation: parse_memory_operation(&operation),
-                category: parse_memory_category(category.as_deref().unwrap_or("insight")),
-                section: section.unwrap_or_default(),
-                content: content.unwrap_or_default(),
-                context,
-                confidence: parse_confidence(confidence.as_deref().unwrap_or("tentative")),
-            }),
-            SgrAction::ProjectMap { path } => {
-                Action::ProjectMapTool(types::ProjectMapTool {
-                    tool_name: "project_map".into(),
-                    path,
-                })
-            }
-            SgrAction::Dependencies { path } => {
-                Action::DependenciesTool(types::DependenciesTool {
-                    tool_name: "dependencies".into(),
-                    path,
-                })
-            }
-            SgrAction::Task {
-                operation,
-                title,
-                task_id,
-                status,
-                priority,
-                notes,
-            } => Action::TaskTool(types::TaskTool {
-                tool_name: "task".into(),
-                operation: parse_task_operation(&operation),
-                title,
-                task_id,
-                status: status.map(|s| parse_task_status(&s)),
-                priority: priority.map(|p| parse_task_priority(&p)),
-                notes,
-            }),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BAML literal union helpers
-// ---------------------------------------------------------------------------
-
-use types::{
-    Union2KconfirmedOrKtentative, Union2KforgetOrKsave,
-    Union3KhighOrKlowOrKmedium, Union4KblockedOrKdoneOrKin_progressOrKtodo,
-    Union4KcreateOrKdoneOrKlistOrKupdate,
-    Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference,
-};
-
-fn parse_memory_operation(s: &str) -> Union2KforgetOrKsave {
-    match s.to_lowercase().as_str() {
-        "forget" | "delete" | "remove" => Union2KforgetOrKsave::Kforget,
-        _ => Union2KforgetOrKsave::Ksave,
-    }
-}
-
-fn parse_memory_category(
-    s: &str,
-) -> Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference {
-    match s.to_lowercase().as_str() {
-        "decision" => Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference::Kdecision,
-        "pattern" => Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference::Kpattern,
-        "preference" => Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference::Kpreference,
-        "debug" => Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference::Kdebug,
-        _ => Union5KdebugOrKdecisionOrKinsightOrKpatternOrKpreference::Kinsight,
-    }
-}
-
-fn parse_confidence(s: &str) -> Union2KconfirmedOrKtentative {
-    match s.to_lowercase().as_str() {
-        "confirmed" => Union2KconfirmedOrKtentative::Kconfirmed,
-        _ => Union2KconfirmedOrKtentative::Ktentative,
-    }
-}
-
-fn parse_task_operation(s: &str) -> Union4KcreateOrKdoneOrKlistOrKupdate {
-    match s.to_lowercase().as_str() {
-        "list" => Union4KcreateOrKdoneOrKlistOrKupdate::Klist,
-        "update" => Union4KcreateOrKdoneOrKlistOrKupdate::Kupdate,
-        "done" => Union4KcreateOrKdoneOrKlistOrKupdate::Kdone,
-        _ => Union4KcreateOrKdoneOrKlistOrKupdate::Kcreate,
-    }
-}
-
-fn parse_task_status(s: &str) -> Union4KblockedOrKdoneOrKin_progressOrKtodo {
-    match s.to_lowercase().as_str() {
-        "in_progress" | "in-progress" | "inprogress" => {
-            Union4KblockedOrKdoneOrKin_progressOrKtodo::Kin_progress
-        }
-        "blocked" => Union4KblockedOrKdoneOrKin_progressOrKtodo::Kblocked,
-        "done" => Union4KblockedOrKdoneOrKin_progressOrKtodo::Kdone,
-        _ => Union4KblockedOrKdoneOrKin_progressOrKtodo::Ktodo,
-    }
-}
-
-fn parse_task_priority(s: &str) -> Union3KhighOrKlowOrKmedium {
-    match s.to_lowercase().as_str() {
-        "medium" | "med" => Union3KhighOrKlowOrKmedium::Kmedium,
-        "high" | "critical" => Union3KhighOrKlowOrKmedium::Khigh,
-        _ => Union3KhighOrKlowOrKmedium::Klow,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // SGR backend: call LLM and parse response
 // ---------------------------------------------------------------------------
 
 impl SgrProvider {
-    /// Call LLM in flexible mode and parse into SgrNextStep.
-    /// If parsing fails but the model returned text, wraps it in a finish action
-    /// (text fallback) so the agent loop doesn't crash.
+    /// Call LLM and parse into SgrNextStep.
+    /// Gemini/Vertex use native function calling (structured plan + tool calls).
+    /// OpenAI/GeminiCli use flexible text parsing (legacy).
     pub async fn call_flexible(
         &self,
         messages: &[sgr_agent::Message],
     ) -> Result<SgrNextStep> {
-        let resp = match self {
+        match self {
+            SgrProvider::Gemini { .. } | SgrProvider::Vertex { .. } => {
+                self.call_native(messages).await
+            }
+            SgrProvider::OpenAI { .. } | SgrProvider::GeminiCli { .. } => {
+                self.call_flexible_legacy(messages).await
+            }
+        }
+    }
+
+    /// Native function calling with functionDeclarations.
+    /// Model returns text (situation analysis) + functionCall parts (tool invocations).
+    async fn call_native(
+        &self,
+        messages: &[sgr_agent::Message],
+    ) -> Result<SgrNextStep> {
+        let tools = sgr_tool_defs();
+
+        // Replace JSON-only system prompt with function calling prompt.
+        // The original prompt tells model to respond with JSON, but with native
+        // function calling the model should write text analysis + call functions.
+        let messages: Vec<sgr_agent::Message> = messages
+            .iter()
+            .map(|m| {
+                if m.role == sgr_agent::Role::System && m.content.contains("MUST respond with ONLY valid JSON") {
+                    sgr_agent::Message::system(NATIVE_FC_SYSTEM_PROMPT)
+                } else {
+                    m.clone()
+                }
+            })
+            .collect();
+
+        let client = self.make_gemini_client().await?;
+        let tool_calls = client
+            .tools_call(&messages, &tools)
+            .await
+            .map_err(|e| anyhow::anyhow!("SGR native FC error: {}", e))?;
+
+        let actions: Vec<SgrAction> = tool_calls
+            .iter()
+            .filter_map(tool_call_to_sgr_action)
+            .collect();
+
+        if actions.is_empty() {
+            return Err(anyhow::anyhow!("SGR: model returned no tool calls"));
+        }
+
+        // Extract situation from a finish tool if present, otherwise generic
+        let situation = actions.iter().find_map(|a| {
+            if let SgrAction::Finish { summary } = a { Some(summary.clone()) } else { None }
+        }).unwrap_or_else(|| format!("Executing {} tool(s).", actions.len()));
+
+        tracing::info!(
+            n = actions.len(),
+            situation = situation.as_str(),
+            "SGR native function calling"
+        );
+
+        Ok(SgrNextStep {
+            situation,
+            task: vec![],
+            actions,
+        })
+    }
+
+    /// Create a GeminiClient for this provider.
+    async fn make_gemini_client(&self) -> Result<sgr_agent::gemini::GeminiClient> {
+        match self {
             SgrProvider::Gemini { api_key, model } => {
                 let mut config = sgr_agent::ProviderConfig::gemini(api_key, model);
                 config.max_tokens = Some(4096);
-                let client = sgr_agent::gemini::GeminiClient::new(config);
-                client.flexible::<SgrNextStep>(messages).await
-                    .map_err(|e| anyhow::anyhow!("SGR Gemini error: {}", e))?
+                Ok(sgr_agent::gemini::GeminiClient::new(config))
             }
+            SgrProvider::Vertex { project_id, model, location } => {
+                let access_token = get_gcloud_access_token().await?;
+                let mut config = sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
+                config.location = Some(location.clone());
+                config.max_tokens = Some(4096);
+                Ok(sgr_agent::gemini::GeminiClient::new(config))
+            }
+            _ => Err(anyhow::anyhow!("make_gemini_client: not a Gemini/Vertex provider")),
+        }
+    }
+
+    /// Legacy flexible text parsing for OpenAI/GeminiCli.
+    async fn call_flexible_legacy(
+        &self,
+        messages: &[sgr_agent::Message],
+    ) -> Result<SgrNextStep> {
+        let resp = match self {
             SgrProvider::OpenAI {
                 api_key,
                 model,
@@ -432,18 +505,8 @@ impl SgrProvider {
                 client.flexible::<SgrNextStep>(messages).await
                     .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?
             }
-            SgrProvider::Vertex { project_id, model, location } => {
-                let access_token = get_gcloud_access_token().await?;
-                let mut config = sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
-                config.location = Some(location.clone());
-                config.max_tokens = Some(4096);
-                let client = sgr_agent::gemini::GeminiClient::new(config);
-                client.flexible::<SgrNextStep>(messages).await
-                    .map_err(|e| anyhow::anyhow!("SGR Vertex error: {}", e))?
-            }
             SgrProvider::GeminiCli { model, sandbox } => {
                 let raw_text = run_gemini_cli(messages, model.as_deref(), *sandbox).await?;
-                // Normalize CLI output: fix common LLM deviations before parsing
                 let normalized = normalize_cli_json(&raw_text);
                 let output = sgr_agent::flexible_parser::parse_flexible_coerced::<SgrNextStep>(&normalized)
                     .map(|r| r.value)
@@ -456,6 +519,7 @@ impl SgrProvider {
                     rate_limit: None,
                 }
             }
+            _ => unreachable!("call_flexible_legacy only for OpenAI/GeminiCli"),
         };
 
         // If structured parsing succeeded, return it
@@ -463,29 +527,7 @@ impl SgrProvider {
             return Ok(step);
         }
 
-        // Native function call fallback: model used Gemini functionCall parts
-        // instead of text JSON. Convert tool_calls → SgrAction.
-        if !resp.tool_calls.is_empty() {
-            tracing::info!(
-                n = resp.tool_calls.len(),
-                "SGR native function call fallback"
-            );
-            let actions: Vec<SgrAction> = resp
-                .tool_calls
-                .iter()
-                .filter_map(|tc| tool_call_to_sgr_action(tc))
-                .collect();
-            if !actions.is_empty() {
-                return Ok(SgrNextStep {
-                    situation: "Executing tool calls from native function calling.".into(),
-                    task: vec!["Execute the requested actions.".into()],
-                    actions,
-                });
-            }
-        }
-
         // Text fallback: model responded with prose instead of JSON.
-        // Wrap in a finish action so the agent loop doesn't crash.
         let text = resp.raw_text.trim();
         if !text.is_empty() {
             tracing::warn!("SGR text fallback: model returned prose, wrapping in finish");
@@ -558,6 +600,28 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             server: s("server"),
             tool: s("tool"),
             arguments: s_opt("arguments"),
+        }),
+        "bash_bg" => Some(SgrAction::BashBg {
+            name: s("name"),
+            command: s("command"),
+        }),
+        "open_editor" => Some(SgrAction::OpenEditor {
+            path: s("path"),
+            line: i_opt("line"),
+        }),
+        "project_map" => Some(SgrAction::ProjectMap {
+            path: s_opt("path"),
+        }),
+        "dependencies" => Some(SgrAction::Dependencies {
+            path: s_opt("path"),
+        }),
+        "task" => Some(SgrAction::Task {
+            operation: s("operation"),
+            title: s_opt("title"),
+            task_id: i_opt("task_id"),
+            status: s_opt("status"),
+            priority: s_opt("priority"),
+            notes: s_opt("notes"),
         }),
         _ => {
             tracing::warn!(tool = %tc.name, "unknown native function call, skipping");
@@ -782,20 +846,20 @@ async fn run_gemini_cli(
     Ok(response_text)
 }
 
-/// Convert BAML Message history to sgr-agent Messages.
-pub fn to_sgr_messages(history: &[types::Message]) -> Vec<sgr_agent::Message> {
+/// Convert (role, content) pairs to sgr-agent Messages.
+pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> {
     history
         .iter()
-        .map(|m| {
-            let role = match m.role.as_str() {
+        .map(|(role, content)| {
+            let r = match role.as_str() {
                 "system" => sgr_agent::Role::System,
                 "assistant" => sgr_agent::Role::Assistant,
                 "tool" => sgr_agent::Role::Tool,
                 _ => sgr_agent::Role::User,
             };
             sgr_agent::Message {
-                role,
-                content: m.content.clone(),
+                role: r,
+                content: content.clone(),
                 tool_call_id: None,
             }
         })
@@ -837,35 +901,6 @@ mod tests {
     }
 
     #[test]
-    fn sgr_to_baml_conversion() {
-        let sgr = SgrNextStep {
-            situation: "test".into(),
-            task: vec!["t1".into()],
-            actions: vec![
-                SgrAction::ReadFile {
-                    path: "main.rs".into(),
-                    offset: None,
-                    limit: None,
-                },
-                SgrAction::Finish {
-                    summary: "done".into(),
-                },
-            ],
-        };
-        let baml = sgr.into_baml();
-        assert_eq!(baml.situation, "test");
-        assert_eq!(baml.actions.len(), 2);
-        match &baml.actions[0] {
-            Action::ReadFileTool(r) => assert_eq!(r.path, "main.rs"),
-            _ => panic!("wrong variant"),
-        }
-        match &baml.actions[1] {
-            Action::FinishTaskTool(f) => assert_eq!(f.summary, "done"),
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
     fn flexible_parse_into_sgr_types() {
         let raw = r#"{"situation":"fixing bug","task":["edit file"],"actions":[{"tool_name":"edit_file","path":"lib.rs","old_string":"foo","new_string":"bar"}]}"#;
         let result = sgr_agent::parse_flexible_coerced::<SgrNextStep>(raw);
@@ -886,31 +921,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn memory_tool_string_to_baml_enum() {
-        assert!(matches!(
-            parse_memory_operation("save"),
-            Union2KforgetOrKsave::Ksave
-        ));
-        assert!(matches!(
-            parse_memory_operation("forget"),
-            Union2KforgetOrKsave::Kforget
-        ));
-        assert!(matches!(
-            parse_memory_operation("SAVE"),
-            Union2KforgetOrKsave::Ksave
-        ));
-    }
-
-    #[test]
-    fn task_operation_string_to_baml_enum() {
-        assert!(matches!(
-            parse_task_operation("create"),
-            Union4KcreateOrKdoneOrKlistOrKupdate::Kcreate
-        ));
-        assert!(matches!(
-            parse_task_operation("LIST"),
-            Union4KcreateOrKdoneOrKlistOrKupdate::Klist
-        ));
-    }
 }

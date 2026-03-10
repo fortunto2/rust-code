@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/rc-cli",
-    "crates/rc-baml",
     "crates/baml-agent",
     "crates/baml-agent-tui",
     "crates/solograph",
@@ -26,5 +25,4 @@ nucleo-matcher = "0.3"
 
 # Tools / Core
 ignore = "0.4" # for fast directory traversal / gitignore support
-baml = "0.218.0" # using the version from the cli
 rmcp = { version = "0.11.0", features = ["client", "transport-io", "transport-child-process"] }

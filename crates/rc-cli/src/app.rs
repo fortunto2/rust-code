@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tui_textarea::{Input, TextArea};
 
 use crate::agent::{Action, Agent};
+use crate::backend;
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
 use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
@@ -773,7 +774,7 @@ pub struct App<'a> {
     pub skills_search_seq: u64,
     pub context_map: ContextMap,
     pub tick_count: u32,
-    pub client_override: Option<String>,
+    pub provider_override: Option<backend::SgrProvider>,
     /// Slash command autocomplete popup.
     pub command_palette: CommandPalette,
     /// Temporary output from slash commands (shown near input, not in chat).
@@ -943,15 +944,15 @@ impl<'a> App<'a> {
             skills_search_seq: 0,
             context_map: ContextMap::new(),
             tick_count: 0,
-            client_override: None,
+            provider_override: None,
             command_palette: CommandPalette::new(&Self::SLASH_COMMANDS),
             command_output: None,
         }
     }
 
-    /// Set BAML client override (propagated to agent on run).
-    pub fn set_client_override(&mut self, client: &str) {
-        self.client_override = Some(client.to_string());
+    /// Set provider override (propagated to agent on run).
+    pub fn set_provider_override(&mut self, provider: backend::SgrProvider) {
+        self.provider_override = Some(provider);
     }
 
     pub async fn run(
@@ -964,9 +965,9 @@ impl<'a> App<'a> {
 
         // Share the agent so the background worker can use it
         let mut agent_instance = Agent::new();
-        // Apply model override if set via CLI flags
-        if let Some(ref client) = self.client_override {
-            agent_instance.set_client(client);
+        // Apply provider override if set via CLI flags
+        if let Some(ref provider) = self.provider_override {
+            agent_instance.set_provider(provider.clone());
         }
         // Initialize MCP servers from .mcp.json
         if let Err(e) = agent_instance.init_mcp().await {
@@ -4648,52 +4649,7 @@ impl<'a> App<'a> {
                             locked_agent.session_mut().trim();
 
                             // Stream the LLM response for real-time UI updates
-                            let step_result = if locked_agent.is_sgr() {
-                                // SGR backend: non-streaming call
-                                locked_agent.step_sgr().await
-                            } else {
-                                // BAML backend: streaming
-                                let stream_result = locked_agent.step_stream();
-                                match stream_result {
-                                    Ok(Some(mut stream)) => {
-                                        let mut last_analysis_len = 0;
-                                        while let Some(partial) = stream.next().await {
-                                            match partial {
-                                                Ok(partial_step) => {
-                                                    if let Some(ref analysis) = partial_step.situation {
-                                                        if analysis.len() > last_analysis_len {
-                                                            let new_text = analysis
-                                                                [last_analysis_len..]
-                                                                .to_string();
-                                                            let _ = agent_tx
-                                                                .send(AppEvent::AgentStreamChunk(
-                                                                    new_text,
-                                                                ))
-                                                                .await;
-                                                            last_analysis_len = analysis.len();
-                                                        }
-                                                    }
-                                                }
-                                                Err(_) => {}
-                                            }
-                                        }
-                                        stream.get_final_response().await.map_err(|e| e.into())
-                                    }
-                                    Ok(None) => {
-                                        // Should not happen — is_sgr() was false
-                                        Err(anyhow::anyhow!("unexpected: no stream from BAML backend"))
-                                    }
-                                    Err(e) => {
-                                        let _ = agent_tx
-                                            .send(AppEvent::AgentResponse(format!(
-                                                "[ERR] AI Error: {}",
-                                                e
-                                            )))
-                                            .await;
-                                        break;
-                                    }
-                                }
-                            };
+                            let step_result = locked_agent.step().await;
 
                             match step_result {
                                 Ok(step) => {
@@ -4753,32 +4709,32 @@ impl<'a> App<'a> {
                                     for action in &step.actions {
                                         if matches!(
                                             action,
-                                            Action::FinishTaskTool(_) | Action::AskUserTool(_)
+                                            Action::Finish { .. } | Action::AskUser { .. }
                                         ) {
                                             is_done = true;
                                         }
 
                                         match locked_agent.execute_action(action).await {
                                             Ok(result) => {
-                                                if let Action::OpenEditorTool(cmd) = action {
+                                                if let Action::OpenEditor { path, line } = action {
                                                     let _ = agent_tx
                                                         .send(AppEvent::SuspendAndRun(
-                                                            cmd.path.clone(),
-                                                            cmd.line,
+                                                            path.clone(),
+                                                            *line,
                                                         ))
                                                         .await;
                                                 }
-                                                if let Action::EditFileTool(cmd) = action {
+                                                if let Action::EditFile { path, .. } = action {
                                                     let _ = agent_tx
                                                         .send(AppEvent::FileModified(
-                                                            cmd.path.clone(),
+                                                            path.clone(),
                                                         ))
                                                         .await;
                                                 }
-                                                if let Action::WriteFileTool(cmd) = action {
+                                                if let Action::WriteFile { path, .. } = action {
                                                     let _ = agent_tx
                                                         .send(AppEvent::FileModified(
-                                                            cmd.path.clone(),
+                                                            path.clone(),
                                                         ))
                                                         .await;
                                                 }

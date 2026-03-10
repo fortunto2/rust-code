@@ -7,6 +7,24 @@ use std::path::{Path, PathBuf};
 use super::format::{make_persisted, parse_entry};
 use super::traits::{AgentMessage, EntryType, MessageRole};
 
+/// Session header metadata — written as the first JSONL line.
+///
+/// Identifies who created the session, what models are used, etc.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct SessionHeader {
+    /// Source client: "sim", "tui", "app", "api"
+    pub source: String,
+    /// User or operator identifier (login, nickname)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// Model used for the agent
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Extra key-value metadata
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub extra: std::collections::HashMap<String, String>,
+}
+
 /// Session manager: JSONL persistence, history access, context trimming.
 ///
 /// Uses Claude Code compatible JSONL format with UUID v7 (time-sortable).
@@ -24,9 +42,42 @@ impl<M: AgentMessage> Session<M> {
     /// Creates the session directory if it doesn't exist.
     /// Returns an error if the directory cannot be created.
     pub fn new(session_dir: &str, max_history: usize) -> std::io::Result<Self> {
+        Self::new_with_header(session_dir, max_history, None)
+    }
+
+    /// Create a new session with an optional header (metadata).
+    ///
+    /// The header is written as the first JSONL line with `"type": "header"`.
+    pub fn new_with_header(
+        session_dir: &str,
+        max_history: usize,
+        header: Option<SessionHeader>,
+    ) -> std::io::Result<Self> {
         std::fs::create_dir_all(session_dir)?;
         let session_id = uuid::Uuid::now_v7().to_string();
         let session_file = PathBuf::from(format!("{}/{}.jsonl", session_dir, session_id));
+
+        if let Some(header) = header {
+            let header_entry = serde_json::json!({
+                "type": "header",
+                "sessionId": &session_id,
+                "timestamp": super::time::now_iso(),
+                "source": header.source,
+                "user": header.user,
+                "model": header.model,
+                "extra": if header.extra.is_empty() { None } else { Some(&header.extra) },
+            });
+            let mut f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&session_file)?;
+            let _ = writeln!(
+                f,
+                "{}",
+                serde_json::to_string(&header_entry).unwrap_or_default()
+            );
+        }
+
         Ok(Self {
             messages: Vec::new(),
             session_file,
