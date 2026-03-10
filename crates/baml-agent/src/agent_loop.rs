@@ -191,6 +191,15 @@ where
 
     if decision.completed {
         tracing::info!(step = step_num, "agent_completed");
+        // Execute final actions (e.g. FinishTaskTool) so their output is visible,
+        // then signal completion.
+        for action in &decision.actions {
+            on_event(LoopEvent::ActionStart(action));
+            match agent.execute(action).await {
+                Ok(result) => on_event(LoopEvent::ActionDone(&result)),
+                Err(e) => tracing::warn!(error = %e, "final action failed"),
+            }
+        }
         on_event(LoopEvent::Completed);
         return Ok(Some(step_num));
     }

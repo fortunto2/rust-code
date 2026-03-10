@@ -143,6 +143,17 @@ impl GeminiClient {
 
         // Extract raw text
         let raw_text = self.extract_raw_text(&response_body);
+        if raw_text.trim().is_empty() {
+            // Log finish reason for debugging empty responses
+            if let Some(reason) = response_body
+                .get("candidates")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("finishReason"))
+                .and_then(|r| r.as_str())
+            {
+                tracing::warn!(finish_reason = reason, "empty raw_text from Gemini");
+            }
+        }
         let usage = response_body.get("usageMetadata").and_then(|u| {
             Some(Usage {
                 prompt_tokens: u.get("promptTokenCount")?.as_u64()? as u32,
@@ -151,16 +162,15 @@ impl GeminiClient {
             })
         });
 
-        // Flexible parse with coercion
+        // Flexible parse with coercion.
+        // If parsing fails, return output=None with raw_text preserved
+        // so callers can implement fallback logic (e.g. wrap in finish tool).
         let output = crate::flexible_parser::parse_flexible_coerced::<T>(&raw_text)
             .map(|r| r.value)
             .ok();
 
-        if output.is_none() {
-            return Err(SgrError::Schema(format!(
-                "Failed to extract structured data from text response: {}",
-                truncate_str(&raw_text, 200)
-            )));
+        if output.is_none() && raw_text.trim().is_empty() {
+            return Err(SgrError::Schema("Empty response from model".into()));
         }
 
         Ok(SgrResponse {

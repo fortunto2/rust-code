@@ -174,6 +174,8 @@ function GetNextStep(history: Message[]) -> NextStep {
     **R — Result**: Reflected by FinishTaskTool when ALL steps are done.
     - Verify before finishing: run `cargo check`, `git status`, tests, etc.
     - Use FinishTaskTool with a clear summary of what was accomplished.
+    - NEVER respond with plain text, markdown, or prose. EVERY response MUST be valid JSON with situation/task/actions.
+    - When answering questions or reporting findings, put the full answer in FinishTaskTool's summary field.
 
     ## Agent Context
     Your identity, soul, rules, and memory are provided in system messages above.

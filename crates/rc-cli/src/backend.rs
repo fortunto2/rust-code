@@ -393,18 +393,19 @@ fn parse_task_priority(s: &str) -> Union3KhighOrKlowOrKmedium {
 
 impl SgrProvider {
     /// Call LLM in flexible mode and parse into SgrNextStep.
+    /// If parsing fails but the model returned text, wraps it in a finish action
+    /// (text fallback) so the agent loop doesn't crash.
     pub async fn call_flexible(
         &self,
         messages: &[sgr_agent::Message],
     ) -> Result<SgrNextStep> {
-        match self {
+        let resp = match self {
             SgrProvider::Gemini { api_key, model } => {
                 let mut config = sgr_agent::ProviderConfig::gemini(api_key, model);
                 config.max_tokens = Some(4096);
                 let client = sgr_agent::gemini::GeminiClient::new(config);
-                let resp = client.flexible::<SgrNextStep>(messages).await
-                    .map_err(|e| anyhow::anyhow!("SGR Gemini error: {}", e))?;
-                resp.output.ok_or_else(|| anyhow::anyhow!("SGR: empty response"))
+                client.flexible::<SgrNextStep>(messages).await
+                    .map_err(|e| anyhow::anyhow!("SGR Gemini error: {}", e))?
             }
             SgrProvider::OpenAI {
                 api_key,
@@ -415,10 +416,30 @@ impl SgrProvider {
                 config.base_url = base_url.clone();
                 config.max_tokens = Some(4096);
                 let client = sgr_agent::openai::OpenAIClient::new(config);
-                let resp = client.flexible::<SgrNextStep>(messages).await
-                    .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?;
-                resp.output.ok_or_else(|| anyhow::anyhow!("SGR: empty response"))
+                client.flexible::<SgrNextStep>(messages).await
+                    .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?
             }
+        };
+
+        // If structured parsing succeeded, return it
+        if let Some(step) = resp.output {
+            return Ok(step);
+        }
+
+        // Text fallback: model responded with prose instead of JSON.
+        // Wrap in a finish action so the agent loop completes gracefully.
+        let text = resp.raw_text.trim();
+        if !text.is_empty() {
+            tracing::warn!("SGR text fallback: model returned prose, wrapping in finish");
+            Ok(SgrNextStep {
+                situation: "Model responded with text instead of structured JSON.".into(),
+                task: vec!["Deliver the model's response to the user.".into()],
+                actions: vec![SgrAction::Finish {
+                    summary: text.to_string(),
+                }],
+            })
+        } else {
+            Err(anyhow::anyhow!("SGR: empty response from model"))
         }
     }
 }

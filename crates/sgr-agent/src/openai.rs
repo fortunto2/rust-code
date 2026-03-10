@@ -154,11 +154,8 @@ impl OpenAIClient {
             .map(|r| r.value)
             .ok();
 
-        if output.is_none() {
-            return Err(SgrError::Schema(format!(
-                "Failed to extract structured data from text response: {}",
-                truncate_str(&raw_text, 200)
-            )));
+        if output.is_none() && raw_text.trim().is_empty() {
+            return Err(SgrError::Schema("Empty response from model".into()));
         }
 
         Ok(SgrResponse {
