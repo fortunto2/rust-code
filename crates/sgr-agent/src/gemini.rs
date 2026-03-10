@@ -386,40 +386,52 @@ impl GeminiClient {
     fn messages_to_contents_inner(&self, messages: &[Message], use_function_response: bool) -> Vec<Value> {
         let mut contents = Vec::new();
 
-        for msg in messages {
+        let mut i = 0;
+        while i < messages.len() {
+            let msg = &messages[i];
             match msg.role {
-                Role::System => {} // handled separately via systemInstruction
+                Role::System => {
+                    i += 1;
+                } // handled separately via systemInstruction
                 Role::User => {
                     contents.push(json!({
                         "role": "user",
                         "parts": [{"text": msg.content}]
                     }));
+                    i += 1;
                 }
                 Role::Assistant => {
                     contents.push(json!({
                         "role": "model",
                         "parts": [{"text": msg.content}]
                     }));
+                    i += 1;
                 }
                 Role::Tool => {
                     if use_function_response {
-                        // Native function calling mode — functionResponse parts
-                        // call_id format: "call#name#counter" — extract the function name
-                        let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
-                        let func_name = match call_id.split('#').collect::<Vec<_>>().as_slice() {
-                            ["call", name, _counter] => *name,
-                            _ => call_id, // fallback: old format or plain tool name
-                        };
-                        contents.push(json!({
-                            "role": "function",
-                            "parts": [{
+                        // Gemini requires ALL functionResponses for one turn in a SINGLE
+                        // "function" content entry. Collect consecutive Tool messages.
+                        let mut parts = Vec::new();
+                        while i < messages.len() && messages[i].role == Role::Tool {
+                            let tool_msg = &messages[i];
+                            let call_id = tool_msg.tool_call_id.as_deref().unwrap_or("unknown");
+                            let func_name = match call_id.split('#').collect::<Vec<_>>().as_slice() {
+                                ["call", name, _counter] => *name,
+                                _ => call_id,
+                            };
+                            parts.push(json!({
                                 "functionResponse": {
                                     "name": func_name,
                                     "response": {
-                                        "content": msg.content,
+                                        "content": tool_msg.content,
                                     }
                                 }
-                            }]
+                            }));
+                            i += 1;
+                        }
+                        contents.push(json!({
+                            "role": "function",
+                            "parts": parts
                         }));
                     } else {
                         // Text mode — convert tool results to user messages
@@ -428,6 +440,7 @@ impl GeminiClient {
                             "role": "user",
                             "parts": [{"text": format!("[{}] {}", call_id, msg.content)}]
                         }));
+                        i += 1;
                     }
                 }
             }
@@ -762,6 +775,7 @@ mod tests {
         let client = GeminiClient::from_api_key("test", "test");
 
         // Build messages with tool results using our call ID format
+        // Consecutive tool messages should be grouped into one "function" turn
         let messages = vec![
             Message::user("test"),
             Message::tool("call#write_file#1", "Wrote file"),
@@ -771,15 +785,34 @@ mod tests {
         ];
 
         let contents = client.messages_to_contents(&messages);
-        // Index 0 = user, 1-4 = tool results
-        let fr1 = &contents[1]["parts"][0]["functionResponse"];
-        assert_eq!(fr1["name"], "write_file");
-        let fr2 = &contents[2]["parts"][0]["functionResponse"];
-        assert_eq!(fr2["name"], "bash");
-        let fr3 = &contents[3]["parts"][0]["functionResponse"];
-        assert_eq!(fr3["name"], "my_custom_tool");
-        // Fallback: old format without call# prefix
-        let fr4 = &contents[4]["parts"][0]["functionResponse"];
-        assert_eq!(fr4["name"], "old_format_id");
+        // Index 0 = user, Index 1 = single function turn with 4 parts
+        assert_eq!(contents.len(), 2, "consecutive tools should be grouped");
+        assert_eq!(contents[1]["role"], "function");
+
+        let parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0]["functionResponse"]["name"], "write_file");
+        assert_eq!(parts[1]["functionResponse"]["name"], "bash");
+        assert_eq!(parts[2]["functionResponse"]["name"], "my_custom_tool");
+        assert_eq!(parts[3]["functionResponse"]["name"], "old_format_id");
+    }
+
+    #[test]
+    fn tool_messages_separated_by_model_not_grouped() {
+        let client = GeminiClient::from_api_key("test", "test");
+
+        // Tool messages separated by a model message should NOT be grouped
+        let messages = vec![
+            Message::user("test"),
+            Message::tool("call#read#1", "file A"),
+            Message::assistant("thinking..."),
+            Message::tool("call#read#2", "file B"),
+        ];
+
+        let contents = client.messages_to_contents(&messages);
+        // user, function(1 part), model, function(1 part)
+        assert_eq!(contents.len(), 4);
+        assert_eq!(contents[1]["parts"].as_array().unwrap().len(), 1);
+        assert_eq!(contents[3]["parts"].as_array().unwrap().len(), 1);
     }
 }
