@@ -154,6 +154,12 @@ pub async fn run_loop(
             return Err(AgentError::LoopDetected(detector.consecutive));
         }
 
+        // Add assistant message with tool calls (Gemini requires model turn before function responses)
+        messages.push(Message::assistant_with_tool_calls(
+            &decision.situation,
+            decision.tool_calls.clone(),
+        ));
+
         // Execute tool calls: read-only in parallel, write sequentially
         let mut step_outputs: Vec<String> = Vec::new();
         let mut early_done = false;
@@ -374,6 +380,12 @@ where
             on_event(LoopEvent::LoopDetected { count: detector.consecutive });
             return Err(AgentError::LoopDetected(detector.consecutive));
         }
+
+        // Add assistant message with tool calls (Gemini requires model turn before function responses)
+        messages.push(Message::assistant_with_tool_calls(
+            &decision.situation,
+            decision.tool_calls.clone(),
+        ));
 
         let mut step_outputs: Vec<String> = Vec::new();
         let mut early_done = false;

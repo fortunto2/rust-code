@@ -8,6 +8,10 @@ pub struct Message {
     /// Tool call results (only for Role::Tool).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Tool calls made by the assistant (only for Role::Assistant with function calling).
+    /// Gemini API requires model turns to include functionCall parts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,16 +25,20 @@ pub enum Role {
 
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: Role::System, content: content.into(), tool_call_id: None }
+        Self { role: Role::System, content: content.into(), tool_call_id: None, tool_calls: vec![] }
     }
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into(), tool_call_id: None }
+        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: vec![] }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None }
+        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls: vec![] }
+    }
+    /// Create an assistant message that includes function calls (for Gemini FC protocol).
+    pub fn assistant_with_tool_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls }
     }
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(call_id.into()) }
+        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(call_id.into()), tool_calls: vec![] }
     }
 }
 

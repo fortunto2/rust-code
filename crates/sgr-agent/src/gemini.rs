@@ -401,10 +401,30 @@ impl GeminiClient {
                     i += 1;
                 }
                 Role::Assistant => {
-                    contents.push(json!({
-                        "role": "model",
-                        "parts": [{"text": msg.content}]
-                    }));
+                    if use_function_response && !msg.tool_calls.is_empty() {
+                        // Model turn with function calls — include functionCall parts
+                        let mut parts: Vec<Value> = Vec::new();
+                        if !msg.content.is_empty() {
+                            parts.push(json!({"text": msg.content}));
+                        }
+                        for tc in &msg.tool_calls {
+                            parts.push(json!({
+                                "functionCall": {
+                                    "name": tc.name,
+                                    "args": tc.arguments
+                                }
+                            }));
+                        }
+                        contents.push(json!({
+                            "role": "model",
+                            "parts": parts
+                        }));
+                    } else {
+                        contents.push(json!({
+                            "role": "model",
+                            "parts": [{"text": msg.content}]
+                        }));
+                    }
                     i += 1;
                 }
                 Role::Tool => {
