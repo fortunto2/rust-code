@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod app;
+pub mod backend;
 pub mod baml_client;
 pub mod preview;
 pub mod tools;
@@ -35,6 +36,10 @@ struct Args {
     /// Use Codex (ChatGPT Plus/Pro) subscription token as OpenAI backend
     #[arg(long)]
     codex: bool,
+
+    /// Use SGR backend (pure Rust, no BAML runtime) instead of BAML
+    #[arg(long)]
+    sgr: bool,
 
     /// Intent mode: auto, ask, build, plan (affects which tools the agent uses)
     #[arg(long, default_value = "auto")]
@@ -187,6 +192,8 @@ enum TaskAction {
 struct ProviderSetup {
     client: Option<String>,
     label: Option<String>,
+    /// SGR backend override (None = use BAML).
+    sgr_backend: Option<backend::SgrProvider>,
     /// Background proxy handle (kept alive for duration of session)
     _proxy_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -202,6 +209,7 @@ async fn start_codex_provider(model_override: Option<String>) -> ProviderSetup {
             ProviderSetup {
                 label: Some(format!("Codex proxy (:{}, {})", port, client)),
                 client: Some(client),
+                sgr_backend: None,
                 _proxy_handle: Some(handle),
             }
         }
@@ -237,6 +245,7 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
                     client
                 )),
                 client: Some(client),
+                sgr_backend: None,
                 _proxy_handle: Some(handle),
             }
         }
@@ -251,6 +260,27 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
 async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     use baml_agent::providers::{self, ProviderAuth};
 
+    // --sgr flag: use SGR pure Rust backend (bypasses BAML runtime)
+    if args.sgr {
+        let provider = resolve_sgr_provider(args);
+        let label = match &provider {
+            backend::SgrProvider::Gemini { model, .. } => format!("SGR/Gemini ({})", model),
+            backend::SgrProvider::OpenAI { model, base_url, .. } => {
+                if base_url.is_some() {
+                    format!("SGR/OpenAI-compat ({})", model)
+                } else {
+                    format!("SGR/OpenAI ({})", model)
+                }
+            }
+        };
+        return ProviderSetup {
+            label: Some(label),
+            client: None,
+            sgr_backend: Some(provider),
+            _proxy_handle: None,
+        };
+    }
+
     // CLI flags take priority
     if args.codex {
         return start_codex_provider(args.model.clone()).await;
@@ -260,6 +290,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
         return ProviderSetup {
             label: Some(format!("local ({})", model)),
             client: Some(model),
+            sgr_backend: None,
             _proxy_handle: None,
         };
     }
@@ -267,6 +298,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
         return ProviderSetup {
             label: Some(model.clone()),
             client: Some(model.clone()),
+            sgr_backend: None,
             _proxy_handle: None,
         };
     }
@@ -317,6 +349,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
             return ProviderSetup {
                 label: Some(format!("{} ({})", provider, client)),
                 client: Some(client),
+                sgr_backend: None,
                 _proxy_handle: None,
             };
         }
@@ -326,14 +359,57 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
     ProviderSetup {
         client: None,
         label: None,
+        sgr_backend: None,
         _proxy_handle: None,
     }
 }
 
+/// Resolve SGR provider from env vars and CLI args.
+fn resolve_sgr_provider(args: &Args) -> backend::SgrProvider {
+    // Check GEMINI_API_KEY first (default SGR provider)
+    if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
+        let model = args
+            .model
+            .clone()
+            .unwrap_or_else(|| "gemini-2.5-flash".into());
+        return backend::SgrProvider::Gemini { api_key, model };
+    }
+
+    // OpenAI / OpenRouter
+    if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+        let model = args
+            .model
+            .clone()
+            .unwrap_or_else(|| "gpt-4o".into());
+        return backend::SgrProvider::OpenAI {
+            api_key,
+            model,
+            base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        };
+    }
+
+    if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
+        let model = args
+            .model
+            .clone()
+            .unwrap_or_else(|| "google/gemini-2.5-flash".into());
+        return backend::SgrProvider::OpenAI {
+            api_key,
+            model,
+            base_url: Some("https://openrouter.ai/api/v1".into()),
+        };
+    }
+
+    eprintln!("--sgr requires GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY");
+    std::process::exit(1);
+}
+
 /// Apply resolved provider to agent.
 fn apply_provider(setup: &ProviderSetup, agent: &mut Agent) {
-    if let Some(ref client) = setup.client {
-        agent.set_client(client);
+    if let Some(ref sgr) = setup.sgr_backend {
+        agent.set_backend(backend::Backend::Sgr(sgr.clone()));
+    } else if let Some(ref client) = setup.client {
+        agent.set_backend(backend::Backend::Baml(Some(client.clone())));
     }
     if let Some(ref label) = setup.label {
         println!("Provider: {}", label);

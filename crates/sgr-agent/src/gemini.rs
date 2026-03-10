@@ -60,13 +60,15 @@ impl GeminiClient {
         let response = req.send().await?;
 
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         if status != 200 {
             let body = response.text().await.unwrap_or_default();
-            return Err(SgrError::Api { status, body });
+            return Err(SgrError::from_response_parts(status, body, &headers));
         }
 
         let response_body: Value = response.json().await?;
-        self.parse_response(&response_body)
+        let rate_limit = RateLimitInfo::from_headers(&headers);
+        self.parse_response(&response_body, rate_limit)
     }
 
     /// SGR call with structured output only (no tools).
@@ -78,6 +80,96 @@ impl GeminiClient {
     ) -> Result<T, SgrError> {
         let resp = self.call::<T>(messages, &[]).await?;
         resp.output.ok_or(SgrError::EmptyResponse)
+    }
+
+    /// Flexible call: no structured output API, parse JSON from raw text.
+    ///
+    /// For use with text-only proxies (CLI proxy, Codex proxy) where
+    /// the model can't enforce JSON schema. Uses AnyOf cascade + coercion.
+    ///
+    /// Auto-injects JSON Schema into the system prompt so the model knows
+    /// the expected format (like BAML does).
+    pub async fn flexible<T: JsonSchema + DeserializeOwned>(
+        &self,
+        messages: &[Message],
+    ) -> Result<SgrResponse<T>, SgrError> {
+        // Send without responseSchema — plain text response
+        let contents = self.messages_to_contents(messages);
+        let mut system_instruction = self.extract_system(messages);
+
+        // Auto-inject schema hint into system prompt
+        let schema = response_schema_for::<T>();
+        let schema_hint = format!(
+            "\n\nRespond with valid JSON matching this schema:\n{}\n\nDo NOT wrap in markdown code blocks.",
+            serde_json::to_string_pretty(&schema).unwrap_or_default()
+        );
+        system_instruction = Some(match system_instruction {
+            Some(s) => format!("{}{}", s, schema_hint),
+            None => schema_hint,
+        });
+
+        let mut gen_config = json!({
+            "temperature": self.config.temperature,
+        });
+        if let Some(max_tokens) = self.config.max_tokens {
+            gen_config["maxOutputTokens"] = json!(max_tokens);
+        }
+
+        let mut body = json!({
+            "contents": contents,
+            "generationConfig": gen_config,
+        });
+        if let Some(system) = system_instruction {
+            body["systemInstruction"] = json!({
+                "parts": [{"text": system}]
+            });
+        }
+
+        let url = self.build_url();
+        let mut req = self.http.post(&url).json(&body);
+        if self.config.project_id.is_some() && !self.config.api_key.is_empty() {
+            req = req.bearer_auth(&self.config.api_key);
+        }
+        let response = req.send().await?;
+        let status = response.status().as_u16();
+        let headers = response.headers().clone();
+        if status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(SgrError::from_response_parts(status, body, &headers));
+        }
+
+        let response_body: Value = response.json().await?;
+        let rate_limit = RateLimitInfo::from_headers(&headers);
+
+        // Extract raw text
+        let raw_text = self.extract_raw_text(&response_body);
+        let usage = response_body.get("usageMetadata").and_then(|u| {
+            Some(Usage {
+                prompt_tokens: u.get("promptTokenCount")?.as_u64()? as u32,
+                completion_tokens: u.get("candidatesTokenCount")?.as_u64()? as u32,
+                total_tokens: u.get("totalTokenCount")?.as_u64()? as u32,
+            })
+        });
+
+        // Flexible parse with coercion
+        let output = crate::flexible_parser::parse_flexible_coerced::<T>(&raw_text)
+            .map(|r| r.value)
+            .ok();
+
+        if output.is_none() {
+            return Err(SgrError::Schema(format!(
+                "Failed to extract structured data from text response: {}",
+                truncate_str(&raw_text, 200)
+            )));
+        }
+
+        Ok(SgrResponse {
+            output,
+            tool_calls: vec![],
+            raw_text,
+            usage,
+            rate_limit,
+        })
     }
 
     /// Tool-only call: no structured output schema, just function calling.
@@ -97,9 +189,10 @@ impl GeminiClient {
         }
         let response = req.send().await?;
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         if status != 200 {
             let body = response.text().await.unwrap_or_default();
-            return Err(SgrError::Api { status, body });
+            return Err(SgrError::from_response_parts(status, body, &headers));
         }
 
         let response_body: Value = response.json().await?;
@@ -261,6 +354,7 @@ impl GeminiClient {
     fn parse_response<T: DeserializeOwned>(
         &self,
         body: &Value,
+        rate_limit: Option<RateLimitInfo>,
     ) -> Result<SgrResponse<T>, SgrError> {
         let mut output: Option<T> = None;
         let mut tool_calls = Vec::new();
@@ -329,7 +423,28 @@ impl GeminiClient {
             tool_calls,
             raw_text,
             usage,
+            rate_limit,
         })
+    }
+
+    fn extract_raw_text(&self, body: &Value) -> String {
+        let mut text = String::new();
+        if let Some(candidates) = body.get("candidates").and_then(|c| c.as_array()) {
+            for candidate in candidates {
+                if let Some(parts) = candidate
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+        }
+        text
     }
 
     fn extract_tool_calls(&self, body: &Value) -> Vec<ToolCall> {
@@ -362,6 +477,14 @@ impl GeminiClient {
         }
 
         calls
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        &s[..s.floor_char_boundary(max)]
     }
 }
 
@@ -422,7 +545,7 @@ mod tests {
             }
         });
 
-        let result: SgrResponse<TestResponse> = client.parse_response(&body).unwrap();
+        let result: SgrResponse<TestResponse> = client.parse_response(&body, None).unwrap();
         let output = result.output.unwrap();
         assert_eq!(output.answer, "42");
         assert_eq!(output.confidence, 0.95);
@@ -446,7 +569,7 @@ mod tests {
             }]
         });
 
-        let result: SgrResponse<TestResponse> = client.parse_response(&body).unwrap();
+        let result: SgrResponse<TestResponse> = client.parse_response(&body, None).unwrap();
         assert!(result.output.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].name, "test_tool");

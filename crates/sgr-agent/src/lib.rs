@@ -15,6 +15,8 @@
 
 pub mod baml_parser;
 pub mod codegen;
+pub mod coerce;
+pub mod flexible_parser;
 pub mod schema;
 pub mod tool;
 pub mod types;
@@ -25,6 +27,8 @@ pub mod gemini;
 #[cfg(feature = "openai")]
 pub mod openai;
 
+pub use coerce::coerce_value;
+pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};
 pub use tool::{tool, ToolDef};
 pub use types::*;

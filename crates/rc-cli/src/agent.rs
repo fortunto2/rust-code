@@ -1,3 +1,4 @@
+use crate::backend::{self, Backend};
 use crate::baml_client::{self, types};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
@@ -68,8 +69,8 @@ pub struct Agent {
     mcp: Option<McpManager>,
     step_count: usize,
     last_input_chars: usize,
-    /// Override BAML client name (e.g. "OllamaDefault" for --local)
-    client_override: Option<String>,
+    /// LLM backend: BAML (dlopen) or SGR (pure Rust HTTP).
+    backend: Backend,
     /// Current user intent for action filtering.
     pub intent: Intent,
     /// Pluggable hint sources.
@@ -104,7 +105,7 @@ impl Agent {
             mcp: None,
             step_count: 0,
             last_input_chars: 0,
-            client_override: None,
+            backend: Backend::default(),
             intent: Intent::Auto,
             hint_sources: baml_agent::default_sources_with_tasks(Path::new(".")),
             cwd: std::sync::Mutex::new(
@@ -228,9 +229,10 @@ impl Agent {
     }
 
     /// TUI-only: get streaming BAML call (used by app.rs manual loop).
+    /// Returns None if using SGR backend (which doesn't support streaming yet).
     pub fn step_stream(
         &mut self,
-    ) -> Result<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>>
+    ) -> Result<Option<baml::AsyncStreamingCall<baml_client::stream_types::NextStep, types::NextStep>>>
     {
         self.session.trim();
         let history = self.baml_history();
@@ -239,15 +241,44 @@ impl Agent {
         let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
         self.last_input_chars = input_chars;
 
-        let stream = if let Some(ref client) = self.client_override {
-            baml_client::async_client::B
-                .GetNextStep
-                .with_client(client)
-                .stream(&history)?
-        } else {
-            baml_client::async_client::B.GetNextStep.stream(&history)?
+        match &self.backend {
+            Backend::Baml(client_override) => {
+                let stream = if let Some(client) = client_override {
+                    baml_client::async_client::B
+                        .GetNextStep
+                        .with_client(client)
+                        .stream(&history)?
+                } else {
+                    baml_client::async_client::B.GetNextStep.stream(&history)?
+                };
+                Ok(Some(stream))
+            }
+            Backend::Sgr(_) => Ok(None),
+        }
+    }
+
+    /// SGR non-streaming call (used when backend is SGR).
+    /// Returns BAML NextStep for compatibility with the rest of the system.
+    pub async fn step_sgr(&mut self) -> Result<types::NextStep> {
+        self.session.trim();
+        let history = self.baml_history();
+
+        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
+        self.last_input_chars = input_chars;
+
+        let sgr_provider = match &self.backend {
+            Backend::Sgr(provider) => provider,
+            _ => anyhow::bail!("step_sgr called with non-SGR backend"),
         };
-        Ok(stream)
+
+        let sgr_msgs = backend::to_sgr_messages(&history);
+        let sgr_step = sgr_provider.call_flexible(&sgr_msgs).await?;
+        Ok(sgr_step.into_baml())
+    }
+
+    /// Check if using SGR backend.
+    pub fn is_sgr(&self) -> bool {
+        matches!(self.backend, Backend::Sgr(_))
     }
 
     /// Record output size after LLM response (call from TUI/headless after getting response).
@@ -261,9 +292,14 @@ impl Agent {
         cost::reset_cost();
     }
 
-    /// Set BAML client override (e.g. "OllamaDefault" for local mode).
+    /// Set LLM backend (BAML with optional client override, or SGR pure Rust).
+    pub fn set_backend(&mut self, backend: Backend) {
+        self.backend = backend;
+    }
+
+    /// Convenience: set BAML client override (e.g. "OllamaDefault" for local mode).
     pub fn set_client(&mut self, client_name: impl Into<String>) {
-        self.client_override = Some(client_name.into());
+        self.backend = Backend::Baml(Some(client_name.into()));
     }
 
     /// Get current cost stats for display in TUI.
@@ -730,17 +766,26 @@ impl SgrAgent for Agent {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
         let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
 
-        let step = if let Some(ref client) = self.client_override {
-            baml_client::async_client::B
-                .GetNextStep
-                .with_client(client)
-                .call(&history)
-                .await?
-        } else {
-            baml_client::async_client::B
-                .GetNextStep
-                .call(&history)
-                .await?
+        let step = match &self.backend {
+            Backend::Baml(client_override) => {
+                if let Some(client) = client_override {
+                    baml_client::async_client::B
+                        .GetNextStep
+                        .with_client(client)
+                        .call(&history)
+                        .await?
+                } else {
+                    baml_client::async_client::B
+                        .GetNextStep
+                        .call(&history)
+                        .await?
+                }
+            }
+            Backend::Sgr(provider) => {
+                let sgr_msgs = backend::to_sgr_messages(&history);
+                let sgr_step = provider.call_flexible(&sgr_msgs).await?;
+                sgr_step.into_baml()
+            }
         };
 
         // Track cost: estimate output from response fields
@@ -833,33 +878,44 @@ impl SgrAgentStream for Agent {
     {
         let history: Vec<types::Message> = messages.iter().map(|m| m.0.clone()).collect();
         let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
-        let client_override = self.client_override.clone();
+        let backend = self.backend.clone();
         async move {
-            let mut stream = if let Some(ref client) = client_override {
-                baml_client::async_client::B
-                    .GetNextStep
-                    .with_client(client)
-                    .stream(&history)?
-            } else {
-                baml_client::async_client::B.GetNextStep.stream(&history)?
-            };
-            let mut last_analysis_len = 0;
+            let step = match &backend {
+                Backend::Baml(client_override) => {
+                    let mut stream = if let Some(client) = client_override {
+                        baml_client::async_client::B
+                            .GetNextStep
+                            .with_client(client)
+                            .stream(&history)?
+                    } else {
+                        baml_client::async_client::B.GetNextStep.stream(&history)?
+                    };
+                    let mut last_analysis_len = 0;
 
-            while let Some(partial) = stream.next().await {
-                match partial {
-                    Ok(partial_step) => {
-                        if let Some(ref analysis) = partial_step.situation {
-                            if analysis.len() > last_analysis_len {
-                                on_token(&analysis[last_analysis_len..]);
-                                last_analysis_len = analysis.len();
+                    while let Some(partial) = stream.next().await {
+                        match partial {
+                            Ok(partial_step) => {
+                                if let Some(ref analysis) = partial_step.situation {
+                                    if analysis.len() > last_analysis_len {
+                                        on_token(&analysis[last_analysis_len..]);
+                                        last_analysis_len = analysis.len();
+                                    }
+                                }
                             }
+                            Err(_) => {}
                         }
                     }
-                    Err(_) => {}
-                }
-            }
 
-            let step = stream.get_final_response().await?;
+                    stream.get_final_response().await?
+                }
+                Backend::Sgr(provider) => {
+                    // SGR: no streaming yet — emit situation as single token after response
+                    let sgr_msgs = backend::to_sgr_messages(&history);
+                    let sgr_step = provider.call_flexible(&sgr_msgs).await?;
+                    on_token(&sgr_step.situation);
+                    sgr_step.into_baml()
+                }
+            };
 
             // Track cost
             let output_chars = step.situation.len()

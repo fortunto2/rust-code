@@ -13,6 +13,10 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max { s } else { &s[..s.floor_char_boundary(max)] }
+}
+
 /// OpenAI-compatible API client.
 pub struct OpenAIClient {
     config: ProviderConfig,
@@ -56,13 +60,15 @@ impl OpenAIClient {
 
         let response = request.send().await?;
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         if status != 200 {
             let body = response.text().await.unwrap_or_default();
-            return Err(SgrError::Api { status, body });
+            return Err(SgrError::from_response_parts(status, body, &headers));
         }
 
         let response_body: Value = response.json().await?;
-        self.parse_response(&response_body)
+        let rate_limit = RateLimitInfo::from_headers(&headers);
+        self.parse_response(&response_body, rate_limit)
     }
 
     /// Structured output only (no tools).
@@ -72,6 +78,96 @@ impl OpenAIClient {
     ) -> Result<T, SgrError> {
         let resp = self.call::<T>(messages, &[]).await?;
         resp.output.ok_or(SgrError::EmptyResponse)
+    }
+
+    /// Flexible call: no structured output API, parse JSON from raw text.
+    ///
+    /// For use with text-only proxies (CLI proxy, Codex proxy, Ollama without grammar).
+    /// Uses AnyOf cascade + coercion.
+    ///
+    /// Auto-injects JSON Schema into the system prompt so the model knows
+    /// the expected format (like BAML does).
+    pub async fn flexible<T: JsonSchema + DeserializeOwned>(
+        &self,
+        messages: &[Message],
+    ) -> Result<SgrResponse<T>, SgrError> {
+        // Auto-inject schema hint into messages
+        let schema = crate::schema::response_schema_for::<T>();
+        let schema_hint = format!(
+            "\n\nRespond with valid JSON matching this schema:\n{}\n\nDo NOT wrap in markdown code blocks.",
+            serde_json::to_string_pretty(&schema).unwrap_or_default()
+        );
+        let mut augmented_msgs = messages.to_vec();
+        // Append schema hint to existing system message or add one
+        let has_system = augmented_msgs.iter().any(|m| m.role == Role::System);
+        if has_system {
+            for msg in &mut augmented_msgs {
+                if msg.role == Role::System {
+                    msg.content.push_str(&schema_hint);
+                    break;
+                }
+            }
+        } else {
+            augmented_msgs.insert(0, Message::system(schema_hint));
+        }
+
+        // Send without response_format — plain text
+        let msgs = self.messages_to_openai(&augmented_msgs);
+        let mut body = json!({
+            "model": self.config.model,
+            "messages": msgs,
+            "temperature": self.config.temperature,
+        });
+        if let Some(max_tokens) = self.config.max_tokens {
+            body["max_tokens"] = json!(max_tokens);
+        }
+
+        let url = self.build_url();
+        let mut request = self.http.post(&url).json(&body);
+        if !self.config.api_key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.config.api_key));
+        }
+
+        let response = request.send().await?;
+        let status = response.status().as_u16();
+        let headers = response.headers().clone();
+        if status != 200 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(SgrError::from_response_parts(status, body, &headers));
+        }
+
+        let response_body: Value = response.json().await?;
+        let rate_limit = RateLimitInfo::from_headers(&headers);
+
+        // Extract raw text and usage
+        let raw_text = self.extract_raw_text(&response_body);
+        let usage = response_body.get("usage").and_then(|u| {
+            Some(Usage {
+                prompt_tokens: u.get("prompt_tokens")?.as_u64()? as u32,
+                completion_tokens: u.get("completion_tokens")?.as_u64()? as u32,
+                total_tokens: u.get("total_tokens")?.as_u64()? as u32,
+            })
+        });
+
+        // Flexible parse with coercion
+        let output = crate::flexible_parser::parse_flexible_coerced::<T>(&raw_text)
+            .map(|r| r.value)
+            .ok();
+
+        if output.is_none() {
+            return Err(SgrError::Schema(format!(
+                "Failed to extract structured data from text response: {}",
+                truncate_str(&raw_text, 200)
+            )));
+        }
+
+        Ok(SgrResponse {
+            output,
+            tool_calls: vec![],
+            raw_text,
+            usage,
+            rate_limit,
+        })
     }
 
     /// Tool-only call.
@@ -90,9 +186,10 @@ impl OpenAIClient {
 
         let response = request.send().await?;
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         if status != 200 {
             let body = response.text().await.unwrap_or_default();
-            return Err(SgrError::Api { status, body });
+            return Err(SgrError::from_response_parts(status, body, &headers));
         }
 
         let response_body: Value = response.json().await?;
@@ -184,6 +281,7 @@ impl OpenAIClient {
     fn parse_response<T: DeserializeOwned>(
         &self,
         body: &Value,
+        rate_limit: Option<RateLimitInfo>,
     ) -> Result<SgrResponse<T>, SgrError> {
         let mut output: Option<T> = None;
         let mut tool_calls = Vec::new();
@@ -257,7 +355,24 @@ impl OpenAIClient {
             tool_calls,
             raw_text,
             usage,
+            rate_limit,
         })
+    }
+
+    fn extract_raw_text(&self, body: &Value) -> String {
+        let mut text = String::new();
+        if let Some(choices) = body.get("choices").and_then(|c| c.as_array()) {
+            for choice in choices {
+                if let Some(content) = choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    text.push_str(content);
+                }
+            }
+        }
+        text
     }
 
     fn extract_tool_calls(&self, body: &Value) -> Vec<ToolCall> {

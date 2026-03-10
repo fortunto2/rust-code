@@ -4648,40 +4648,50 @@ impl<'a> App<'a> {
                             locked_agent.session_mut().trim();
 
                             // Stream the LLM response for real-time UI updates
-                            let stream_result = locked_agent.step_stream();
-                            let step_result = match stream_result {
-                                Ok(mut stream) => {
-                                    let mut last_analysis_len = 0;
-                                    while let Some(partial) = stream.next().await {
-                                        match partial {
-                                            Ok(partial_step) => {
-                                                if let Some(ref analysis) = partial_step.situation {
-                                                    if analysis.len() > last_analysis_len {
-                                                        let new_text = analysis
-                                                            [last_analysis_len..]
-                                                            .to_string();
-                                                        let _ = agent_tx
-                                                            .send(AppEvent::AgentStreamChunk(
-                                                                new_text,
-                                                            ))
-                                                            .await;
-                                                        last_analysis_len = analysis.len();
+                            let step_result = if locked_agent.is_sgr() {
+                                // SGR backend: non-streaming call
+                                locked_agent.step_sgr().await
+                            } else {
+                                // BAML backend: streaming
+                                let stream_result = locked_agent.step_stream();
+                                match stream_result {
+                                    Ok(Some(mut stream)) => {
+                                        let mut last_analysis_len = 0;
+                                        while let Some(partial) = stream.next().await {
+                                            match partial {
+                                                Ok(partial_step) => {
+                                                    if let Some(ref analysis) = partial_step.situation {
+                                                        if analysis.len() > last_analysis_len {
+                                                            let new_text = analysis
+                                                                [last_analysis_len..]
+                                                                .to_string();
+                                                            let _ = agent_tx
+                                                                .send(AppEvent::AgentStreamChunk(
+                                                                    new_text,
+                                                                ))
+                                                                .await;
+                                                            last_analysis_len = analysis.len();
+                                                        }
                                                     }
                                                 }
+                                                Err(_) => {}
                                             }
-                                            Err(_) => {}
                                         }
+                                        stream.get_final_response().await.map_err(|e| e.into())
                                     }
-                                    stream.get_final_response().await
-                                }
-                                Err(e) => {
-                                    let _ = agent_tx
-                                        .send(AppEvent::AgentResponse(format!(
-                                            "[ERR] AI Error: {}",
-                                            e
-                                        )))
-                                        .await;
-                                    break;
+                                    Ok(None) => {
+                                        // Should not happen — is_sgr() was false
+                                        Err(anyhow::anyhow!("unexpected: no stream from BAML backend"))
+                                    }
+                                    Err(e) => {
+                                        let _ = agent_tx
+                                            .send(AppEvent::AgentResponse(format!(
+                                                "[ERR] AI Error: {}",
+                                                e
+                                            )))
+                                            .await;
+                                        break;
+                                    }
                                 }
                             };
 

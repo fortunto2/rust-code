@@ -2000,8 +2000,10 @@ dependencies = [
  "nucleo-matcher",
  "ratatui",
  "rmcp",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sgr-agent",
  "solograph",
  "syntect",
  "syntect-tui",
@@ -2243,10 +2245,12 @@ dependencies = [
 name = "sgr-agent"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "reqwest",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "strsim",
  "thiserror",
  "tokio",
  "tracing",
