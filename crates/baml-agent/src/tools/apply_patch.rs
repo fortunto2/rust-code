@@ -251,6 +251,17 @@ fn check_markers(lines: &[&str]) -> Result<(), ParseError> {
 fn parse_one_hunk(lines: &[&str], line_no: usize) -> Result<(Hunk, usize), ParseError> {
     let first = lines[0].trim();
 
+    // --- Unified diff tolerance (Postel's law) ---
+    // Models often generate standard unified diff instead of our format:
+    //   --- a/path/to/file
+    //   +++ b/path/to/file
+    //   @@ -N,N +N,N @@
+    //   context/-/+ lines
+    // Convert on-the-fly to our UpdateFile format.
+    if first.starts_with("--- ") {
+        return parse_unified_diff_hunk(lines, line_no);
+    }
+
     if let Some(path) = first.strip_prefix(ADD_FILE) {
         let mut contents = String::new();
         let mut consumed = 1;
@@ -338,6 +349,197 @@ fn parse_one_hunk(lines: &[&str], line_no: usize) -> Result<(Hunk, usize), Parse
         ),
         line_number: line_no,
     })
+}
+
+/// Parse a unified diff hunk (`--- a/path` / `+++ b/path` / `@@ ... @@` / lines).
+/// Converts it into our `Hunk::UpdateFile` or `Hunk::AddFile` format.
+fn parse_unified_diff_hunk(lines: &[&str], line_no: usize) -> Result<(Hunk, usize), ParseError> {
+    let first = lines[0].trim();
+
+    // Extract path from "--- a/path" or "--- path" (or "--- /dev/null" for new files)
+    let old_path = first
+        .strip_prefix("--- a/")
+        .or_else(|| first.strip_prefix("--- "))
+        .unwrap_or("");
+    let is_new_file = old_path == "/dev/null" || old_path.is_empty();
+
+    // Expect "+++ b/path" or "+++ path" on next line
+    if lines.len() < 2 {
+        return Err(ParseError::InvalidHunk {
+            message: "Unified diff: expected +++ line after ---".into(),
+            line_number: line_no,
+        });
+    }
+    let second = lines[1].trim();
+    let new_path = second
+        .strip_prefix("+++ b/")
+        .or_else(|| second.strip_prefix("+++ "))
+        .unwrap_or("");
+    let is_delete = new_path == "/dev/null" || new_path.is_empty();
+
+    let path = if is_new_file { new_path } else { old_path };
+    if path.is_empty() || path == "/dev/null" {
+        return Err(ParseError::InvalidHunk {
+            message: "Unified diff: could not determine file path from --- / +++ lines".into(),
+            line_number: line_no,
+        });
+    }
+
+    let mut consumed = 2;
+    let mut remaining = &lines[2..];
+
+    // Handle delete
+    if is_delete {
+        return Ok((
+            Hunk::DeleteFile {
+                path: PathBuf::from(path),
+            },
+            consumed,
+        ));
+    }
+
+    // Parse @@ hunks
+    let mut chunks = Vec::new();
+    let mut add_contents = String::new(); // for new files, collect all + lines
+
+    while !remaining.is_empty() {
+        let line = remaining[0].trim();
+
+        // Stop at next file (--- or ***) or end
+        if line.starts_with("--- ") || line.starts_with("***") {
+            break;
+        }
+
+        // Parse @@ header
+        if line.starts_with("@@") {
+            let ctx = if let Some(rest) = line.strip_prefix("@@ ") {
+                strip_unified_diff_header(rest)
+            } else {
+                String::new()
+            };
+
+            consumed += 1;
+            remaining = &remaining[1..];
+
+            // Collect diff lines for this hunk
+            let mut old_lines = Vec::new();
+            let mut new_lines = Vec::new();
+
+            while !remaining.is_empty() {
+                let dl = remaining[0];
+                match dl.chars().next() {
+                    Some(' ') => {
+                        old_lines.push(dl[1..].to_string());
+                        new_lines.push(dl[1..].to_string());
+                    }
+                    Some('-') => {
+                        old_lines.push(dl[1..].to_string());
+                    }
+                    Some('+') => {
+                        new_lines.push(dl[1..].to_string());
+                        if is_new_file {
+                            add_contents.push_str(&dl[1..]);
+                            add_contents.push('\n');
+                        }
+                    }
+                    Some('\\') => {
+                        // "\ No newline at end of file" — skip
+                    }
+                    None => {
+                        // Empty line = context
+                        old_lines.push(String::new());
+                        new_lines.push(String::new());
+                    }
+                    _ => break, // next @@ or file marker
+                }
+                consumed += 1;
+                remaining = &remaining[1..];
+            }
+
+            if !is_new_file && (!old_lines.is_empty() || !new_lines.is_empty()) {
+                chunks.push(UpdateFileChunk {
+                    change_context: if ctx.is_empty() { None } else { Some(ctx) },
+                    old_lines,
+                    new_lines,
+                    is_end_of_file: false,
+                });
+            }
+            continue;
+        }
+
+        // Non-@@ line at top level — might be a diff line without @@ header
+        // (some models skip the @@ header for simple diffs)
+        match line.chars().next() {
+            Some(' ') | Some('-') | Some('+') => {
+                // Collect as a single hunk without context marker
+                let mut old_lines = Vec::new();
+                let mut new_lines = Vec::new();
+
+                while !remaining.is_empty() {
+                    let dl = remaining[0];
+                    match dl.chars().next() {
+                        Some(' ') => {
+                            old_lines.push(dl[1..].to_string());
+                            new_lines.push(dl[1..].to_string());
+                        }
+                        Some('-') => old_lines.push(dl[1..].to_string()),
+                        Some('+') => {
+                            new_lines.push(dl[1..].to_string());
+                            if is_new_file {
+                                add_contents.push_str(&dl[1..]);
+                                add_contents.push('\n');
+                            }
+                        }
+                        Some('\\') => {}
+                        None => {
+                            old_lines.push(String::new());
+                            new_lines.push(String::new());
+                        }
+                        _ => break,
+                    }
+                    consumed += 1;
+                    remaining = &remaining[1..];
+                }
+
+                if !is_new_file && (!old_lines.is_empty() || !new_lines.is_empty()) {
+                    chunks.push(UpdateFileChunk {
+                        change_context: None,
+                        old_lines,
+                        new_lines,
+                        is_end_of_file: false,
+                    });
+                }
+            }
+            _ => break,
+        }
+    }
+
+    // New file: return AddFile
+    if is_new_file {
+        return Ok((
+            Hunk::AddFile {
+                path: PathBuf::from(path),
+                contents: add_contents,
+            },
+            consumed,
+        ));
+    }
+
+    if chunks.is_empty() {
+        return Err(ParseError::InvalidHunk {
+            message: format!("Unified diff for '{path}' has no changes"),
+            line_number: line_no,
+        });
+    }
+
+    Ok((
+        Hunk::UpdateFile {
+            path: PathBuf::from(path),
+            move_path: None,
+            chunks,
+        },
+        consumed,
+    ))
 }
 
 /// Strip unified diff line-number header from a `@@` line.
@@ -1237,6 +1439,76 @@ mod tests {
         assert!(contents.contains("hello"));
         assert!(contents.contains("world"));
         assert!(!contents.contains("hi"));
+    }
+
+    // -- Unified diff tolerance (Postel's law) --
+
+    #[test]
+    fn test_unified_diff_update_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("app.py"), "import os\n\ndef main():\n    print(\"hello\")\n    return 0\n").unwrap();
+
+        let patch = wrap("--- a/app.py\n+++ b/app.py\n@@ -3,3 +3,3 @@\n def main():\n-    print(\"hello\")\n+    print(\"world\")\n     return 0");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("app.py")).unwrap();
+        assert!(contents.contains("world"));
+        assert!(!contents.contains("hello"));
+    }
+
+    #[test]
+    fn test_unified_diff_new_file() {
+        let dir = tempdir().unwrap();
+        let patch = wrap("--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,2 @@\n+hello\n+world");
+        let result = apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        assert_eq!(result.added.len(), 1);
+        let contents = fs::read_to_string(dir.path().join("new.txt")).unwrap();
+        assert_eq!(contents, "hello\nworld\n");
+    }
+
+    #[test]
+    fn test_unified_diff_delete_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("old.txt"), "bye").unwrap();
+        let patch = wrap("--- a/old.txt\n+++ /dev/null");
+        let result = apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        assert_eq!(result.deleted.len(), 1);
+        assert!(!dir.path().join("old.txt").exists());
+    }
+
+    #[test]
+    fn test_unified_diff_multiple_hunks() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("multi.py"), "a\nb\nc\nd\ne\nf\n").unwrap();
+
+        let patch = wrap("--- a/multi.py\n+++ b/multi.py\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -4,3 +4,3 @@\n d\n-e\n+E\n f");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("multi.py")).unwrap();
+        assert_eq!(contents, "a\nB\nc\nd\nE\nf\n");
+    }
+
+    #[test]
+    fn test_unified_diff_with_context_function() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("ctx.py"), "import os\n\ndef greet():\n    pass\n\ndef other():\n    pass\n").unwrap();
+
+        let patch = wrap("--- a/ctx.py\n+++ b/ctx.py\n@@ -3,2 +3,2 @@ def greet():\n-    pass\n+    return 42");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("ctx.py")).unwrap();
+        assert!(contents.contains("return 42"));
+        assert!(contents.contains("    pass")); // other() pass remains
+    }
+
+    #[test]
+    fn test_unified_diff_mixed_with_codex_format() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "old\n").unwrap();
+
+        let patch = wrap("--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n*** Add File: b.txt\n+fresh");
+        let result = apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        assert_eq!(result.modified.len(), 1);
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "new\n");
+        assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "fresh\n");
     }
 
     // -- Async test --

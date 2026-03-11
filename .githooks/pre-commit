@@ -3,7 +3,8 @@
 set -e
 
 echo "Running tests..."
-cargo test --workspace --quiet
+# Skip genai integration tests — they require provider API keys (ANTHROPIC_API_KEY etc.)
+cargo test --workspace --quiet --exclude genai
 
 echo "Running clippy..."
 cargo clippy -p baml-agent -p baml-agent-tui -p solograph --all-targets -- -D warnings
