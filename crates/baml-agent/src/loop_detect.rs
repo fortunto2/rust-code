@@ -1,6 +1,6 @@
 //! Loop detection for agent loops.
 //!
-//! Detects three types of repetitive behavior:
+//! Detects four types of repetitive behavior:
 //!
 //! 1. **Exact repetition** — identical action signatures (catches trivial loops)
 //! 2. **Semantic repetition** — normalized signatures via [`normalize_signature`]
@@ -8,9 +8,11 @@
 //!    quotes, or fallback chains)
 //! 3. **Output stagnation** — identical tool outputs despite varied commands
 //!    (catches loops where the agent tries different approaches but gets the same result)
+//! 4. **Frequency churn** — same action appearing too often in a sliding window
+//!    (catches alternating patterns like `cat X` → `pwd` → `cat X` → `pwd`)
 //!
-//! Each signal tracks consecutive matches independently. The worst signal
-//! determines the returned [`LoopStatus`].
+//! Each signal tracks independently. The worst signal determines the returned
+//! [`LoopStatus`].
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -179,19 +181,61 @@ impl HashTracker {
     }
 }
 
+/// Tracks frequency of values in a sliding window.
+/// Catches alternating loops like A→B→A→B where consecutive tracking fails.
+struct FrequencyTracker {
+    window: Vec<String>,
+    window_size: usize,
+}
+
+impl FrequencyTracker {
+    fn new(window_size: usize) -> Self {
+        Self {
+            window: Vec::new(),
+            window_size,
+        }
+    }
+
+    /// Record a value and return the max frequency of any single value in the window.
+    fn record(&mut self, value: &str) -> usize {
+        self.window.push(value.to_string());
+        if self.window.len() > self.window_size {
+            self.window.remove(0);
+        }
+        self.max_frequency()
+    }
+
+    /// Max frequency of any value in the current window.
+    fn max_frequency(&self) -> usize {
+        if self.window.is_empty() {
+            return 0;
+        }
+        let mut counts = std::collections::HashMap::<&str, usize>::new();
+        for v in &self.window {
+            *counts.entry(v.as_str()).or_insert(0) += 1;
+        }
+        counts.values().copied().max().unwrap_or(0)
+    }
+
+    fn reset(&mut self) {
+        self.window.clear();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LoopDetector
 // ---------------------------------------------------------------------------
 
 /// Detects repeated action patterns in agent loops.
 ///
-/// Three independent signals, each tracking consecutive repetitions:
+/// Four independent signals:
 ///
-/// | Signal   | Tracks                          | Catches                                |
-/// |----------|---------------------------------|----------------------------------------|
-/// | Exact    | Identical signatures            | Trivial loops (same tool, same args)   |
-/// | Category | Normalized signatures           | Semantic loops (same intent, diff syntax)|
-/// | Output   | Identical tool output (by hash) | Stagnation (different tools, same result)|
+/// | Signal    | Tracks                          | Catches                                |
+/// |-----------|---------------------------------|----------------------------------------|
+/// | Exact     | Consecutive identical sigs      | Trivial loops (same tool, same args)   |
+/// | Category  | Consecutive normalized sigs     | Semantic loops (same intent, diff syntax)|
+/// | Output    | Consecutive identical output    | Stagnation (different tools, same result)|
+/// | Frequency | Sliding window sig frequency    | Churn (alternating A→B→A→B patterns)   |
 ///
 /// Usage:
 /// ```ignore
@@ -219,6 +263,8 @@ pub struct LoopDetector {
     category: ConsecutiveTracker,
     /// Tier 3: tool output repetition (by hash).
     output: HashTracker,
+    /// Tier 4: frequency in sliding window (catches alternating patterns).
+    frequency: FrequencyTracker,
     abort_threshold: usize,
     warn_threshold: usize,
 }
@@ -235,11 +281,13 @@ pub enum LoopStatus {
 
 impl LoopDetector {
     /// Create detector. Warns at `⌈abort_threshold/2⌉`, aborts at `abort_threshold`.
+    /// Frequency window = `abort_threshold * 2` (wider window to catch alternating patterns).
     pub fn new(abort_threshold: usize) -> Self {
         Self {
             exact: ConsecutiveTracker::new(),
             category: ConsecutiveTracker::new(),
             output: HashTracker::new(),
+            frequency: FrequencyTracker::new(abort_threshold * 2),
             abort_threshold,
             warn_threshold: abort_threshold.div_ceil(2),
         }
@@ -251,6 +299,7 @@ impl LoopDetector {
             exact: ConsecutiveTracker::new(),
             category: ConsecutiveTracker::new(),
             output: HashTracker::new(),
+            frequency: FrequencyTracker::new(abort_threshold * 2),
             abort_threshold,
             warn_threshold,
         }
@@ -266,11 +315,12 @@ impl LoopDetector {
 
     /// Check action with separate exact signature and normalized category.
     ///
-    /// Returns the worst status across exact and category signals.
+    /// Returns the worst status across exact, category, and frequency signals.
     pub fn check_with_category(&mut self, signature: &str, category: &str) -> LoopStatus {
         let exact_n = self.exact.record(signature);
         let cat_n = self.category.record(category);
-        let max_n = exact_n.max(cat_n);
+        let freq_n = self.frequency.record(category);
+        let max_n = exact_n.max(cat_n).max(freq_n);
 
         if max_n >= self.abort_threshold {
             LoopStatus::Abort(max_n)
@@ -303,6 +353,7 @@ impl LoopDetector {
         self.exact.reset();
         self.category.reset();
         self.output.reset();
+        self.frequency.reset();
     }
 
     /// Current repeat count (max across all signals).
@@ -311,6 +362,7 @@ impl LoopDetector {
             .count()
             .max(self.category.count())
             .max(self.output.count())
+            .max(self.frequency.max_frequency())
     }
 
     /// Exact signature repeat count.
@@ -445,13 +497,15 @@ mod tests {
     }
 
     #[test]
-    fn different_sig_resets_count() {
+    fn different_sig_resets_consecutive_count() {
         let mut d = LoopDetector::new(6);
         d.check("x");
         d.check("x");
-        d.check("x"); // 3 = warning
-        assert_eq!(d.check("y"), LoopStatus::Ok); // reset
-        assert_eq!(d.repeat_count(), 1);
+        d.check("x"); // 3 = warning (consecutive + frequency)
+        let status = d.check("y");
+        // Consecutive resets to 1, but frequency window still has 3 x's → max is 3
+        assert_eq!(status, LoopStatus::Warning(3));
+        assert_eq!(d.exact_count(), 1); // consecutive reset
     }
 
     // --- Category (semantic) detection ---
@@ -511,6 +565,57 @@ mod tests {
         d.record_output("result A");
         d.record_output("result A"); // 2 = warning
         assert_eq!(d.record_output("result B"), LoopStatus::Ok); // reset to 1
+    }
+
+    // --- Frequency churn (alternating patterns) ---
+
+    #[test]
+    fn frequency_catches_alternating_pattern() {
+        // Simulates: cat X → pwd → cat X → pwd → cat X → pwd
+        // Consecutive detector misses this, but frequency catches it.
+        let mut d = LoopDetector::new(6); // warn at 3, abort at 6
+
+        // cat and pwd alternate — consecutive count stays at 1 for each
+        let sigs = [
+            ("bash:cat src/types/index.ts", "bash:cat:src/types/index.ts"),
+            ("bash:pwd", "bash:pwd"),
+            ("bash:cat src/types/index.ts", "bash:cat:src/types/index.ts"),
+            ("bash:pwd", "bash:pwd"),
+            ("bash:cat src/types/index.ts", "bash:cat:src/types/index.ts"),
+            ("bash:pwd", "bash:pwd"),
+        ];
+
+        let mut statuses = Vec::new();
+        for (sig, cat) in &sigs {
+            statuses.push(d.check_with_category(sig, cat));
+        }
+
+        // By step 5 (3rd cat), frequency of "bash:cat:src/types/index.ts" = 3 = warn_threshold
+        assert_eq!(statuses[0], LoopStatus::Ok);
+        assert_eq!(statuses[1], LoopStatus::Ok);
+        assert_eq!(statuses[2], LoopStatus::Ok); // freq=2 < 3
+        assert_eq!(statuses[3], LoopStatus::Ok); // freq(pwd)=2 < 3
+        assert_eq!(statuses[4], LoopStatus::Warning(3)); // freq(cat)=3 = warn
+        assert_eq!(statuses[5], LoopStatus::Warning(3)); // freq(pwd)=3 = warn
+    }
+
+    #[test]
+    fn frequency_aborts_heavy_churn() {
+        let mut d = LoopDetector::new(4); // warn at 2, abort at 4, window=8
+
+        // Alternate cat/pwd 8 times = 4 of each
+        for i in 0..8 {
+            let (sig, cat) = if i % 2 == 0 {
+                ("bash:cat file.ts", "bash:cat:file.ts")
+            } else {
+                ("bash:pwd", "bash:pwd")
+            };
+            let status = d.check_with_category(sig, cat);
+            if i == 7 {
+                // 4th pwd, freq=4 = abort
+                assert_eq!(status, LoopStatus::Abort(4));
+            }
+        }
     }
 
     // --- Combined: real-world scenario ---

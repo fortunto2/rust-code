@@ -51,6 +51,10 @@ struct Args {
     #[arg(long, default_value = "auto")]
     intent: String,
 
+    /// Working directory for headless mode (default: current directory)
+    #[arg(long)]
+    cwd: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1371,6 +1375,15 @@ async fn main() -> Result<()> {
         // Single prompt headless mode — fresh session by default
         println!("Running single prompt mode...");
         let mut agent = Agent::new();
+        // Set working directory if specified
+        if let Some(ref cwd) = args.cwd {
+            let path = std::path::PathBuf::from(cwd);
+            if path.is_dir() {
+                agent.set_cwd(path);
+            } else {
+                eprintln!("Warning: --cwd path does not exist: {}", cwd);
+            }
+        }
         apply_provider(&provider_setup, &mut agent);
         // Set intent from CLI flag
         agent.intent = match args.intent.as_str() {

@@ -1,0 +1,258 @@
+Running single prompt mode...
+Provider: Gemini (gemini-2.5-flash)
+[2m2026-03-11T13:11:31.001732Z[0m [32m INFO[0m Starting 3 MCP server(s)...
+[2m2026-03-11T13:11:31.471345Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: Some({}), logging: None, completions: None, prompts: Some(PromptsCapability { list_changed: Some(false) }), resources: Some(ResourcesCapability { subscribe: Some(false), list_changed: Some(false) }), tools: Some(ToolsCapability { list_changed: Some(false) }) }, server_info: Implementation { name: "solograph", title: None, version: "1.26.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:11:31.477414Z[0m [32m INFO[0m MCP 'codegraph': 16 tools
+[2m2026-03-11T13:11:33.531818Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: Some(ResourcesCapability { subscribe: None, list_changed: None }), tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "shadcn", title: None, version: "1.0.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:11:33.534432Z[0m [32m INFO[0m MCP 'shadcn': 7 tools
+[2m2026-03-11T13:11:35.027564Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: None, tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "Playwright", title: None, version: "0.0.68", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:11:35.031107Z[0m [32m INFO[0m MCP 'playwright': 22 tools
+[2m2026-03-11T13:11:35.031875Z[0m [32m INFO[0m MCP ready: 3 servers, 45 tools
+[2m2026-03-11T13:11:35.032031Z[0m [32m INFO[0m agent_loop_start [3mmax_steps[0m[2m=[0m50 [3mstreaming[0m[2m=[0mtrue
+
+[Step 1] Thinking...[2m2026-03-11T13:11:36.596037Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m1[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:36.596440Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m1 [3mdecide_ms[0m[2m=[0m1564
+[2m2026-03-11T13:11:36.596508Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m1 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/comfort-index.ts
+[2m2026-03-11T13:11:36.599536Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m1 [3maction[0m[2m=[0mread:src/lib/comfort-index.ts [3mduration_ms[0m[2m=[0m1 [3moutput_bytes[0m[2m=[0m2793 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/comfort-index.ts:
+import { DataModule, SubScore, ModuleData } from "./modules/types";
+
+interface ComfortWeights {
+  [key: string]: number;
+}
+
+const defaultWeights: ComfortWeights = {
+  air: 0.22,
+  temperature: 0.18,
+  wind: 0.12,
+  uv: 0.08,
+  sea: 0.12,
+  earthquake: 0.08,
+  fire: 0.05,
+  pollen: 0.05,
+  pressure: 0.05,
+  geomagnetic: 0.03,
+  daylight: 0.02,
+};
+
+export function calculateComfortScore(
+  subScores: { [key: string]: SubScore },
+  weights: ComfortWeights = defaultWeights
+): number {
+  let totalScore = 0;
+  let totalWeight = 0;
+
+  for (const id in subScores) {
+    if (subScores.hasOwnProperty(id) && weights.hasOwnProperty(id)) {
+      totalScore += subScores[id].score * weights[id];
+      totalWeight += weights[id];
+    }
+  }
+
+  if (totalWeight === 0) {
+    return 0; // Avoid division by zero if no active modules
+  }
+
+  return parseFloat(((totalScore / totalWeight)).toFixed(2));
+}
+
+// This will be an array of all registered DataModules, imported from the modules directory
+import { AirModule } from "./modules/air";
+import { WeatherModule } from "./modules/weather";
+import { MarineModule } from "./modules/marine";
+import { UVModule } from "./modules/uv";
+import { DaylightModule } from "./modules/daylight";
+
+export const dataModules: DataModule[] = [
+  AirModule,
+  WeatherModule,
+  MarineModule,
+  UVModule,
+  DaylightModule,
+  // Add other modules here as they are implemented
+];
+
+export function registerDataModule(module: DataModule) {
+  dataModules.push(module);
+}
+
+export async function getCityComfortScore(
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = dataModules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+  let totalConfiguredWeight = 0;
+  activeModules.forEach(m => totalConfiguredWeight += m.weight);
+
+  for (const module of activeModules) {
+    try {
+      const rawData = await module.fetch(lat, lon);
+      subScores[module.id] = module.normalize(rawData);
+      // Re-normalize weights based on active modules
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight;
+    } catch (error) {
+      console.error(`Error fetching or normalizing data for module ${module.id}:`, error);
+      // If a module fails, we can assign a default score or skip it.
+      // For now, let's assign a neutral score (50) and log the error.
+      subScores[module.id] = { score: 50, description: `Data unavailable: ${error.message}` };
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight; // Still include its weight
+    }
+  }
+
+  const comfortScore = calculateComfortScore(subScores, moduleWeights);
+
+  return { score: comfortScore, subScores };
+}
+
+[Step 2] Thinking...[2m2026-03-11T13:11:39.683757Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m2[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:39.684164Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m2 [3mdecide_ms[0m[2m=[0m3083
+[2m2026-03-11T13:11:39.684230Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m2 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/modules/index.ts
+[2m2026-03-11T13:11:39.685432Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m2 [3maction[0m[2m=[0mread:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m958 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/modules/index.ts:
+import { DataModule } from '../../types';
+import { WeatherModule } from './weather';
+import { airModule } from './air';
+import { uvModule } from './uv';
+import { marineModule } from './marine';
+import { earthquakeModule } from './earthquake';
+import { fireModule } from './fire';
+import { pollenModule } from './pollen';
+import { pressureModule } from './pressure';
+import { geomagneticModule } from './geomagnetic';
+import { moonModule } from './moon';
+import { daylightModule } from './daylight';
+
+export const allModules: DataModule[] = [
+  weatherModule,
+  airModule,
+  uvModule,
+  marineModule,
+  earthquakeModule,
+  fireModule,
+  pollenModule,
+  pressureModule,
+  geomagneticModule,
+  moonModule,
+  daylightModule,
+];
+
+export {
+  WeatherModule,
+  airModule,
+  uvModule,
+  marineModule,
+  earthquakeModule,
+  fireModule,
+  pollenModule,
+  pressureModule,
+  geomagneticModule,
+  moonModule,
+  daylightModule,
+};
+
+[Step 3] Thinking...[2m2026-03-11T13:11:45.855609Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m3[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:45.856525Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m3 [3mdecide_ms[0m[2m=[0m6170
+[2m2026-03-11T13:11:45.856640Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m3 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:46.045686Z[0m [32m INFO[0m Checkpoint: rc-step-0: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:46.047327Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m3 [3maction[0m[2m=[0medit:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m189 [3moutput_bytes[0m[2m=[0m120 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+Edited src/lib/modules/index.ts (1→1 lines)
+- import { airModule } from './air';
++ import { AirModule } from './air';
+
+
+[Step 4] Thinking...[2m2026-03-11T13:11:49.202320Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m4[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:49.202814Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m4 [3mdecide_ms[0m[2m=[0m3155
+[2m2026-03-11T13:11:49.202884Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m4 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:49.342343Z[0m [32m INFO[0m Checkpoint: rc-step-0: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:49.342553Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m4 [3maction[0m[2m=[0medit:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m138 [3moutput_bytes[0m[2m=[0m116 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+Edited src/lib/modules/index.ts (1→1 lines)
+- import { uvModule } from './uv';
++ import { UVModule } from './uv';
+
+
+[Step 5] Thinking...[2m2026-03-11T13:11:51.264281Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m5[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:51.264663Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m5 [3mdecide_ms[0m[2m=[0m1921
+[2m2026-03-11T13:11:51.264732Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m5 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+[2m2026-03-11T13:11:51.264828Z[0m [33m WARN[0m agent_loop_warning [3mstep[0m[2m=[0m5 [3mrepeats[0m[2m=[0m3 [3mcategory[0m[2m=[0medit:src/lib/modules/index.ts
+[WARN] Loop detected — 3 repeats
+
+Action: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:51.404913Z[0m [32m INFO[0m Checkpoint: rc-step-0: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:51.405167Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m5 [3maction[0m[2m=[0medit:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m139 [3moutput_bytes[0m[2m=[0m132 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+Edited src/lib/modules/index.ts (1→1 lines)
+- import { marineModule } from './marine';
++ import { MarineModule } from './marine';
+
+
+[Step 6] Thinking...[2m2026-03-11T13:11:52.831758Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m6[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:52.832386Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m6 [3mdecide_ms[0m[2m=[0m1426
+[2m2026-03-11T13:11:52.832623Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m6 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+[2m2026-03-11T13:11:52.832718Z[0m [33m WARN[0m agent_loop_warning [3mstep[0m[2m=[0m6 [3mrepeats[0m[2m=[0m4 [3mcategory[0m[2m=[0medit:src/lib/modules/index.ts
+[WARN] Loop detected — 4 repeats
+
+Action: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:52.978158Z[0m [32m INFO[0m Checkpoint: rc-step-0: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:52.978504Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m6 [3maction[0m[2m=[0medit:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m144 [3moutput_bytes[0m[2m=[0m148 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+Edited src/lib/modules/index.ts (1→1 lines)
+- import { earthquakeModule } from './earthquake';
++ import { EarthquakeModule } from './earthquake';
+
+
+[Step 7] Thinking...[2m2026-03-11T13:11:54.502016Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m7[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:54.502486Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m7 [3mdecide_ms[0m[2m=[0m1523
+[2m2026-03-11T13:11:54.502552Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m7 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+[2m2026-03-11T13:11:54.502637Z[0m [33m WARN[0m agent_loop_warning [3mstep[0m[2m=[0m7 [3mrepeats[0m[2m=[0m5 [3mcategory[0m[2m=[0medit:src/lib/modules/index.ts
+[WARN] Loop detected — 5 repeats
+
+Action: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:54.637992Z[0m [32m INFO[0m Checkpoint: rc-step-0: edit:src/lib/modules/index.ts
+[2m2026-03-11T13:11:54.638237Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m7 [3maction[0m[2m=[0medit:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m134 [3moutput_bytes[0m[2m=[0m124 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+Edited src/lib/modules/index.ts (1→1 lines)
+- import { fireModule } from './fire';
++ import { FireModule } from './fire';
+
+
+[Step 8] Thinking...[2m2026-03-11T13:11:56.222654Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m8[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:56.223100Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m8 [3mdecide_ms[0m[2m=[0m1584
+[2m2026-03-11T13:11:56.223169Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m8 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+[2m2026-03-11T13:11:56.223242Z[0m [31mERROR[0m agent_loop_abort [3mstep[0m[2m=[0m8 [3mrepeats[0m[2m=[0m6 [3mcategory[0m[2m=[0medit:src/lib/modules/index.ts
+[ERR] Agent stuck in loop after 6 identical actions — aborting
+[2m2026-03-11T13:11:56.223583Z[0m [32m INFO[0m agent_loop_done [3mtotal_steps[0m[2m=[0m8
+
+[2m30.6K→310tok | 8 steps | $0.005[0m
+[2m2026-03-11T13:11:56.223794Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled
+[2m2026-03-11T13:11:56.223935Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled
+[2m2026-03-11T13:11:56.224055Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled

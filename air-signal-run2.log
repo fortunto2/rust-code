@@ -1,0 +1,486 @@
+Running single prompt mode...
+Provider: Gemini (gemini-2.5-flash)
+[2m2026-03-10T20:20:09.671313Z[0m [32m INFO[0m Starting 3 MCP server(s)...
+[2m2026-03-10T20:20:12.081697Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: Some(ResourcesCapability { subscribe: None, list_changed: None }), tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "shadcn", title: None, version: "1.0.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-10T20:20:12.085480Z[0m [32m INFO[0m MCP 'shadcn': 7 tools
+[2m2026-03-10T20:20:13.626935Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: None, tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "Playwright", title: None, version: "0.0.68", icons: None, website_url: None }, instructions: None })
+[2m2026-03-10T20:20:13.629976Z[0m [32m INFO[0m MCP 'playwright': 22 tools
+[2m2026-03-10T20:20:14.141460Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: Some({}), logging: None, completions: None, prompts: Some(PromptsCapability { list_changed: Some(false) }), resources: Some(ResourcesCapability { subscribe: Some(false), list_changed: Some(false) }), tools: Some(ToolsCapability { list_changed: Some(false) }) }, server_info: Implementation { name: "solograph", title: None, version: "1.26.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-10T20:20:14.144103Z[0m [32m INFO[0m MCP 'codegraph': 16 tools
+[2m2026-03-10T20:20:14.144364Z[0m [32m INFO[0m MCP ready: 3 servers, 45 tools
+[2m2026-03-10T20:20:14.144480Z[0m [32m INFO[0m agent_loop_start [3mmax_steps[0m[2m=[0m50 [3mstreaming[0m[2m=[0mtrue
+
+[Step 1] Thinking...[2m2026-03-10T20:20:15.915618Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m1[0m
+Executing 1 tool(s).[2m2026-03-10T20:20:15.915802Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m1 [3mdecide_ms[0m[2m=[0m1771
+[2m2026-03-10T20:20:15.915826Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m1 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:CLAUDE.md
+[2m2026-03-10T20:20:15.917284Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m1 [3maction[0m[2m=[0mread:CLAUDE.md [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m2409 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of CLAUDE.md:
+# CLAUDE.md — Air Signal
+
+> Modular life signal platform: environmental comfort + personal biometrics.
+
+## Stack
+
+- Next.js 15 (App Router) + TypeScript strict
+- Tailwind CSS v4 + shadcn/ui
+- Recharts for charts
+- SWR for data fetching
+- Cloudflare Pages hosting
+- pnpm package manager
+
+## Commands
+
+```bash
+pnpm dev          # Development server
+pnpm build        # Production build
+pnpm lint         # ESLint
+pnpm type-check    # TypeScript check (tsc --noEmit)
+```
+
+## Architecture
+
+Every data source is a **DataModule** plugin:
+
+```
+src/lib/modules/    # DataModule implementations (air, weather, marine, uv, earthquake, fire, pollen, pressure, geomagnetic, moon, daylight)
+src/lib/apis/       # API client functions (open-meteo, usgs, nasa-firms, noaa-swpc)
+src/lib/comfort-index.ts  # Weighted comfort score calculation
+src/components/     # UI components (ComfortScore, MetricCard, CitySelector, etc.)
+src/app/[city]/     # Dynamic city dashboard
+src/app/compare/    # City comparison
+src/app/cities/     # SEO city pages (SSG)
+src/types/          # TypeScript interfaces
+```
+
+### DataModule Interface
+
+```typescript
+interface DataModule {
+  id: string;
+  name: string;
+  fetch(lat: number, lon: number): Promise<ModuleData>;
+  normalize(raw: unknown): SubScore;  // → 0-100
+  weight: number;
+  icon: string;
+  enabled: boolean;
+}
+```
+
+## Key APIs (all free, no auth except FIRMS)
+
+- Open-Meteo: weather, air quality, marine, pollen, geocoding
+- USGS: earthquakes (GeoJSON feed)
+- NASA FIRMS: active fires
+- NOAA SWPC: geomagnetic Kp index
+- Sensor.Community: local air sensors
+
+## Principles
+
+- SOLID, DRY, KISS
+- TDD for business logic (comfort index, normalization)
+- Schemas-first: TypeScript interfaces for ALL API responses
+- Modular: every data source is a plug-in module
+- Mobile-first responsive design
+- Dark mode default
+- Privacy-first (Phase 2 health data on-device only)
+
+## Current State
+
+- Basic project scaffolded with Next.js + Tailwind + shadcn
+- Single AirQualityDisplay component exists
+- API route for sensor data exists
+- Need: full DataModule system, comfort index, city dashboard, comparison, charts
+
+## Phase 1 MVP Scope
+
+See docs/prd.md for full PRD. Phase 1:
+1. F1: Multi-city dashboard with comfort score (0-100)
+2. F2: City comparison view (2-3 cities side-by-side)
+3. F3: Historical charts (24h/7d/30d)
+4. F4: Programmatic city pages (SEO)
+
+[Step 2] Thinking...[2m2026-03-10T20:20:17.872597Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m2[0m
+Executing 1 tool(s).[2m2026-03-10T20:20:17.872683Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m2 [3mdecide_ms[0m[2m=[0m1954
+[2m2026-03-10T20:20:17.872690Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m2 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:docs/prd.md
+[2m2026-03-10T20:20:17.873964Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m2 [3maction[0m[2m=[0mread:docs/prd.md [3mduration_ms[0m[2m=[0m1 [3moutput_bytes[0m[2m=[0m20310 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of docs/prd.md:
+---
+type: opportunity
+status: validated
+title: "Air Signal — PRD"
+created: 2026-02-16
+tags: [air-signal, prd, web, mobile, dashboard, climate, comfort-index, quantified-self, life-signal, nextjs-cloudflare]
+product_type: web+mobile
+stack: nextjs-cloudflare
+stream_score: 7.0
+related:
+  - 4-opportunities/air-signal/research.md
+  - 0-principles/manifest.md
+---
+
+# Air Signal — Product Requirements Document
+
+> Modular life signal platform: environmental comfort + personal biometrics. One dashboard instead of 5 apps, correlations a human couldn't spot alone.
+
+## Problem
+
+Expats and digital nomads choosing coastal cities (Turkey, SE Asia, Southern Europe) must check 4-5 separate apps daily — IQAir for air quality, Windy for wind/waves, earthquake apps, fire maps — to understand their environment. No tool provides a unified comfort score combining air quality, sea conditions, wind, seismic risk, fire proximity, and UV. Beyond environment, nobody connects environmental data with personal biometrics (sleep, HRV, activity) to answer "how does my environment affect my body?" Nomad List's data is surface-level (±30% inaccuracy). Exist.io and Gyroscope track personal metrics but ignore environment entirely.
+
+**Why now:** Post-2023 Turkey earthquake raised seismic awareness. Climate consciousness growing. Remote work enables location flexibility. All needed APIs became free (Open-Meteo open-data October 2025). Wearables (Apple Watch, Oura) generate personal health data that goes largely uncorrelated with environment. Scientific research confirms barometric pressure → migraines (64-75% of sufferers), geomagnetic storms → cardiovascular effects, moon phases → sleep quality.
+
+## Target User (ICP)
+
+**Primary:** Expat/digital nomad (25-55) considering or living in a coastal city. Checks weather/air daily. Has moved internationally at least once. Wears Apple Watch or fitness tracker. Budget-conscious but will pay for tools that save significant time.
+
+**Secondary:** Real estate agents in Turkey/SE Asia who need environmental data to advise clients. Property buyers evaluating cities post-earthquake.
+
+**Tertiary (Phase 2+):** Quantified self enthusiasts, weather-sensitive people (migraineurs, joint pain), health-conscious developers wanting MCP agent data access.
+
+## Jobs-To-Be-Done
+
+1. **"Help me check today's environmental conditions in ONE place"** — replace 4-5 apps with one dashboard (daily use)
+2. **"Help me compare cities before I move"** — side-by-side environmental comparison for relocation decisions (one-time, high-intent)
+3. **"Alert me when conditions are dangerous"** — push notification for earthquakes, fires, extreme AQI, dangerous waves (safety-critical)
+4. **"Show me how my environment affects my body"** — correlate environmental data with personal biometrics (HRV, sleep, steps) to discover patterns (Phase 2)
+5. **"Give my AI agent environmental context"** — MCP tools for AI agents to access comfort scores, personal signal, correlations (Phase 3)
+
+## Features (MVP — Phase 1)
+
+### F1: Multi-City Dashboard with Comfort Score
+**Description:** Dynamic route `/[city]` showing unified comfort score (0-100) + individual metrics.
+**Acceptance criteria:**
+- [ ] Comfort score 0-100 calculated from weighted sub-scores (air, wind, sea, UV, seismic, fire)
+- [ ] Sub-score cards: Air Quality (PM2.5 AQI), Wind (speed + gusts), Sea (wave height + water temp), UV Index, Earthquake (nearest recent M3.0+, distance), Fire (nearest active fire, distance)
+- [ ] City selector dropdown with search (Open-Meteo Geocoding)
+- [ ] 3 preset cities (Gazipasha, Alanya, Antalya) + user-added cities via search
+- [ ] Auto-refresh every 5 minutes via SWR
+- [ ] Responsive: mobile-first design
+- [ ] Dark mode (existing)
+
+### F2: City Comparison View
+**Description:** Side-by-side comparison of 2-3 cities on all environmental metrics.
+**Acceptance criteria:**
+- [ ] Select 2-3 cities from presets or search
+- [ ] Table/grid showing all metrics side-by-side
+- [ ] Comfort score highlighted with color coding
+- [ ] Shareable URL (`/compare?cities=gazipasha,alanya`)
+
+### F3: Historical Charts
+**Description:** 24h/7d/30d trend charts for key metrics using Recharts (already installed).
+**Acceptance criteria:**
+- [ ] Temperature, AQI, wind speed charts with time axis
+- [ ] Toggle between 24h / 7d / 30d
+- [ ] Open-Meteo historical API for weather/air data
+
+### F4: Programmatic City Pages (SEO)
+**Description:** Auto-generated static pages for 100+ coastal cities optimized for search.
+**Acceptance criteria:**
+- [ ] SSG pages at `/cities/[slug]` with meta tags, OpenGraph, JSON-LD
+- [ ] City name, country, coordinates, current conditions, comfort score
+- [ ] Internal linking between nearby cities
+- [ ] Sitemap.xml auto-generated
+
+### F5: Alert System (Phase 2)
+**Description:** Push notifications for dangerous conditions.
+**Acceptance criteria:**
+- [ ] Browser push notifications (service worker)
+- [ ] Configurable thresholds: AQI > 100, earthquake M4.0+ within 200km, active fire within 50km
+- [ ] Telegram bot integration (reuse BashAir pattern)
+
+### F6: Extended Environmental Modules (Phase 2)
+**Description:** Additional environmental data beyond core comfort index.
+**Acceptance criteria:**
+- [ ] Pollen / allergen forecast (Open-Meteo Air Quality API: birch_pollen, grass_pollen)
+- [ ] Barometric pressure with trend arrow (rising/falling/stable) + migraine risk indicator
+- [ ] Geomagnetic activity (NOAA SWPC Kp index JSON) with health impact note
+- [ ] Moon phase (calculated, no API) with sleep impact context
+- [ ] Daylight hours + sunrise/sunset with seasonal progress
+- [ ] Each module is a plug-in card — user can enable/disable per preference
+
+### F7: Mobile App with Personal Signal (Phase 2)
+**Description:** iOS/Android app integrating HealthKit/Health Connect for personal biometrics.
+**Acceptance criteria:**
+- [ ] Native iOS app (Swift) reading: steps, sleep, HRV, heart rate, screen time
+- [ ] Android app via Health Connect: same metrics
+- [ ] Local-first: health data stored on device, never sent to server
+- [ ] Personal signal score (0-100) combining activity, sleep quality, stress indicators
+- [ ] Time series charts: personal metrics overlaid with environmental data
+- [ ] Correlation discovery: "Your sleep quality drops 20% when AQI > 50"
+
+### F8: Correlation Engine (Phase 2-3)
+**Description:** Time series analysis correlating environment × personal data.
+**Acceptance criteria:**
+- [ ] Rolling correlation (Pearson) between any two metrics over 7/30/90 days
+- [ ] Anomaly detection: flag unusual patterns (HRV drop + pressure drop)
+- [ ] Top correlations feed: "Discovered: your migraines correlate 0.72 with pressure drops"
+- [ ] Privacy-first: all correlation computed on-device or in user's edge worker
+- [ ] No health claims — present as data insights, not medical advice
+
+### F9: MCP Agent Data Source (Phase 3)
+**Description:** MCP tools exposing Air Signal data for AI agents.
+**Acceptance criteria:**
+- [ ] `get_comfort_score(city, lat, lon)` — current comfort index + sub-scores
+- [ ] `get_personal_signal()` — latest personal metrics summary
+- [ ] `get_correlations(metric1, metric2, days)` — correlation analysis result
+- [ ] `get_anomalies(days)` — unusual patterns detected
+- [ ] `get_forecast(city, hours)` — comfort score forecast
+- [ ] MCP server config for Claude Code / other agents
+
+### F10: Time Series ML (Phase 3)
+**Description:** Neural network for pattern prediction on personal + environmental time series.
+**Acceptance criteria:**
+- [ ] LSTM/Transformer model for 24h comfort score forecasting
+- [ ] Personal pattern prediction: "tomorrow you'll likely feel X based on forecast + your patterns"
+- [ ] On-device inference (Core ML for iOS, TFLite for Android)
+- [ ] Model trained on anonymized aggregate data, inference on personal data locally
+
+## Architecture
+
+### Web (Phase 1) — Next.js on Cloudflare
+
+```
+src/
+├── app/
+│   ├── [city]/page.tsx          # Dynamic city dashboard
+│   ├── compare/page.tsx         # City comparison
+│   ├── cities/[slug]/page.tsx   # SEO city pages (SSG)
+│   ├── api/
+│   │   ├── comfort/route.ts     # Comfort score API
+│   │   ├── weather/route.ts     # Open-Meteo proxy + cache
+│   │   ├── air/route.ts         # Sensor.Community + Open-Meteo AQ
+│   │   ├── marine/route.ts      # Open-Meteo Marine
+│   │   ├── earthquake/route.ts  # USGS GeoJSON
+│   │   ├── fire/route.ts        # NASA FIRMS
+│   │   ├── pollen/route.ts      # Open-Meteo Air Quality (pollen)
+│   │   └── geomagnetic/route.ts # NOAA SWPC Kp index
+│   └── layout.tsx
+├── components/
+│   ├── ComfortScore.tsx         # Big circular score (0-100)
+│   ├── MetricCard.tsx           # Individual metric card (plug-in pattern)
+│   ├── CitySelector.tsx         # Search + presets
+│   ├── ComparisonGrid.tsx       # Side-by-side view
+│   ├── HistoricalChart.tsx      # Recharts time series
+│   └── ui/                      # shadcn/ui components
+├── lib/
+│   ├── comfort-index.ts         # Weighted score calculation
+│   ├── modules/                 # Modular data source pattern
+│   │   ├── types.ts             # DataModule interface
+│   │   ├── air.ts               # PM2.5, PM10, AQI
+│   │   ├── weather.ts           # Temp, wind, humidity, pressure
+│   │   ├── marine.ts            # Waves, water temp
+│   │   ├── uv.ts                # UV index
+│   │   ├── earthquake.ts        # USGS seismic
+│   │   ├── fire.ts              # NASA FIRMS
+│   │   ├── pollen.ts            # Allergen forecast
+│   │   ├── geomagnetic.ts       # NOAA Kp index
+│   │   └── moon.ts              # Lunar phase (calculated)
+│   ├── apis/                    # API client functions
+│   │   ├── open-meteo.ts
+│   │   ├── sensor-community.ts
+│   │   ├── usgs.ts
+│   │   ├── nasa-firms.ts
+│   │   └── noaa-swpc.ts
+│   ├── cities.ts                # City config (presets + geocoding)
+│   └── utils.ts
+└── types/
+    └── index.ts                 # All TypeScript interfaces
+```
+
+### Module Interface (plug-in pattern)
+
+```typescript
+// Every data source implements this interface
+interface DataModule {
+  id: string;                           // 'air' | 'marine' | 'pollen' | ...
+  name: string;                         // Human-readable name
+  fetch(lat: number, lon: number): Promise<ModuleData>;
+  normalize(raw: unknown): SubScore;    // → 0-100 score
+  weight: number;                       // Default weight in comfort index
+  icon: string;                         // Lucide icon name
+  enabled: boolean;                     // User can toggle
+}
+```
+
+### Mobile (Phase 2) — Swift (iOS) + Kotlin (Android)
+
+```
+ios/
+├── AirSignal/
+│   ├── Modules/
+│   │   ├── EnvironmentModule.swift     # Fetches web API data
+│   │   ├── HealthModule.swift          # HealthKit: steps, sleep, HRV, HR
+│   │   ├── ScreenTimeModule.swift      # DeviceActivity framework
+│   │   └── SensorModule.swift          # Ambient light, noise (microphone)
+│   ├── Correlation/
+│   │   ├── CorrelationEngine.swift     # Pearson, anomaly detection
+│   │   └── TimeSeriesStore.swift       # Local SQLite for time series
+│   ├── Views/
+│   │   ├── DashboardView.swift         # Main signal dashboard
+│   │   ├── CorrelationView.swift       # Discovered correlations
+│   │   └── CityView.swift              # Environmental comfort (web parity)
+│   └── MCP/
+│       └── MCPServer.swift             # MCP tools for AI agents
+```
+
+**Principles:** SOLID, DRY, KISS, schemas-first (TypeScript interfaces for all API responses). Privacy-first for health data (on-device only). Modular architecture: every data source is a plug-in module.
+
+## Tech Stack
+
+### Phase 1 (Web)
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Framework | Next.js 15 (App Router) | Existing MVP, SSR + SSG for SEO |
+| UI | shadcn/ui + Tailwind CSS v4 | Existing, beautiful dark mode |
+| Charts | Recharts | Already installed, unused — now activate |
+| Data Fetching | SWR | Existing, auto-refresh, cache |
+| Hosting | Cloudflare Pages | Free, existing deployment, edge caching |
+| APIs | Open-Meteo, USGS, NASA FIRMS, Sensor.Community, NOAA SWPC | All free, no auth (except FIRMS key) |
+| Language | TypeScript (strict) | Existing |
+| Package Manager | pnpm | Existing |
+
+### Phase 2 (Mobile)
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| iOS | Swift + SwiftUI | HealthKit requires native, best performance |
+| Android | Kotlin + Jetpack Compose | Health Connect requires native |
+| Health Data | HealthKit / Health Connect | Steps, sleep, HRV, HR — on-device only |
+| Screen Time | DeviceActivity / UsageStatsManager | Platform APIs, privacy-first |
+| Local DB | SQLite (via GRDB / Room) | Time series storage on device |
+| Correlation | vDSP (iOS) / Apache Commons Math | On-device statistical analysis |
+
+### Phase 3 (ML + MCP)
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| ML | Core ML (iOS) / TFLite (Android) | On-device inference, privacy |
+| Training | PyTorch → export ONNX → Core ML/TFLite | Standard pipeline |
+| MCP Server | FastMCP (Python) or TypeScript MCP SDK | Expose tools to AI agents |
+| Time Series | LSTM or Temporal Fusion Transformer | Best for multi-variate forecasting |
+
+## Comfort Index Formula
+
+```typescript
+// Weighted comfort score (0-100)
+// Each sub-score normalized to 0-100 (100 = best)
+// Core modules (always active)
+const coreWeights = {
+  air: 0.22,         // PM2.5 AQI (inverted: low AQI = high comfort)
+  temperature: 0.18, // Ideal range 18-28°C
+  wind: 0.12,        // <20 km/h = comfortable
+  uv: 0.08,          // UV index <6 = comfortable
+  sea: 0.12,         // Wave height <1m + water temp 20-28°C
+  earthquake: 0.08,  // No M3+ within 200km in 7 days = 100
+  fire: 0.05,        // No active fire within 100km = 100
+  pollen: 0.05,      // Low pollen = comfortable (Open-Meteo)
+  pressure: 0.05,    // Stable pressure = comfortable, rapid drops = risk
+  geomagnetic: 0.03, // Low Kp = calm, Kp ≥ 5 = storm
+  daylight: 0.02,    // More daylight hours = better mood
+};
+
+// comfortScore = Σ(weight_i × subScore_i)
+// Weights auto-normalize if user disables modules
+```
+
+Weights are configurable. V1 uses fixed weights, V2 adds user preference sliders. Modules are plug-ins — each implements `DataModule` interface and registers its weight.
+
+### Personal Signal Score (Phase 2)
+
+```typescript
+// Personal signal = how YOUR body is doing (0-100)
+const personalWeights = {
+  sleep: 0.30,       // Sleep quality + duration (HealthKit)
+  hrv: 0.25,         // HRV trend (higher = better recovery)
+  activity: 0.20,    // Steps vs goal, active minutes
+  screenTime: 0.15,  // Under 4h = good, contextual
+  stress: 0.10,      // Derived from resting HR + HRV
+};
+// Combined "Life Signal" = f(comfortScore, personalSignal, correlations)
+```
+
+## KPIs
+
+| KPI | Unit | Target (Month 3) | Kill | Iterate | Scale |
+|-----|------|-------------------|------|---------|-------|
+| Monthly Active Users | users | 1,000 | <200 | 200-2K | >2K |
+| Daily page views | views/day | 500 | <100 | 100-1K | >1K |
+| SEO organic traffic | sessions/mo | 2,000 | <300 | 300-5K | >5K |
+| City pages indexed | pages | 50 | <10 | 10-100 | >100 |
+| Avg session duration | seconds | 120 | <30 | 30-180 | >180 |
+
+## Unit Economics
+
+| Metric | Optimistic | Pessimistic |
+|--------|-----------|-------------|
+| Infrastructure cost | $0/mo (Cloudflare free) | $20/mo (Workers paid) |
+| API cost | $0/mo | $0/mo (all free) |
+| Premium users (Year 1) | 500 | 50 |
+| Premium price | $49/year | $49/year |
+| Annual revenue | $24,500 | $2,450 |
+| Development time | 1 week (MVP expansion) | 3 weeks |
+| Break-even | Instant (zero cost) | Instant |
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|------------|
+| Windy.com adds comfort index | Medium | High | Move faster, own the niche (expat focus, city comparison). Windy targets sports, not relocation. |
+| Google Air Quality API expansion | Medium | Medium | Google is B2B (API pricing $50/10K calls). Consumer dashboard unlikely. |
+| Open-Meteo goes paid | Low | High | Switch to OWM free tier, Visual Crossing, or cache aggressively. Multiple API fallbacks. |
+| Sensor.Community coverage gaps | High | Medium | Fall back to Open-Meteo Air Quality API for cities without sensors. Show data source transparency. |
+| Comfort index subjectivity | Medium | Medium | Publish methodology openly. V2: user-configurable weights. |
+
+## Honest Assessment
+
+### Devil's Advocate Top Finding
+**The strongest reason NOT to build:** Scope creep. Starting as "environmental dashboard for expats" and expanding to "modular life signal platform with ML" is classic overengineering. The environmental dashboard alone might be enough — and adding mobile + HealthKit + ML triples the development surface while the core value proposition (unified comfort index) remains unvalidated. **Mitigation:** Strict phasing. Phase 1 (web-only, environment-only) must hit KPIs before Phase 2 starts. Personal signal is a SEPARATE validation.
+
+**Secondary risk:** Windy.com already has all the data layers. If they add a composite comfort score, the environmental differentiator disappears. But the personal data correlation angle is hard for Windy to copy — they're not a health platform.
+
+### Dead Startup Precedents
+- **Plume Labs** — acquired by AccuWeather (2021), killed consumer hardware (2023). Lesson: consumer air hardware fails, but air data B2B works.
+- **BreezoMeter** — acquired by Google for $200M (2022). Lesson: environmental data is valuable enough for Big Tech acquisition. Risk: Google now owns this data.
+- **Exist.io** — still alive at $6.99/mo, small team. Lesson: quantified self market sustains indie projects but doesn't scale explosively.
+- Neither BreezoMeter nor Plume FAILED — both were acquired. The space attracts acquirers.
+
+### Manifest Conflicts
+1. **Offline-first violation** — dashboard requires internet for real-time data. Mitigation: cache last-known data, mobile app stores health data locally.
+2. **AI as foundation** — no AI in Phase 1, but Phase 3 adds ML-based scoring + correlation engine + predictive alerts. AI becomes foundation in v3.
+3. **Subscription fatigue** — if premium tier is subscription, conflicts with manifest principle. Mitigation: lifetime pricing option ($49/year or $149 lifetime).
+
+### "If I'm wrong about..."
+**If I'm wrong about the environment × health correlation being interesting** — if users don't care that "AQI > 80 correlates with 15% lower HRV" — then the expanded vision collapses to just another weather dashboard. **Litmus test:** Ship Phase 1 (web), get SEO traffic, add a "notify me when mobile app launches" email collector. If <100 signups in 3 months, the personal signal angle is dead.
+
+**If I'm wrong about expats wanting a unified dashboard** — environmental comfort index has no market, but personal signal might work for quantified self enthusiasts instead. Pivot: drop city comparison, focus on personal dashboard only.
+
+## Definition of Done Checklist
+
+- [x] Problem statement >= 30 words
+- [x] ICP + JTBD (5 jobs across 3 phases)
+- [x] 10 features with acceptance criteria (5 MVP + 5 expanded)
+- [x] 5 KPIs with Kill/Iterate/Scale thresholds
+- [x] 5 risks with mitigation
+- [x] Honest Assessment section (scope creep risk acknowledged)
+- [x] Unit economics: optimistic AND pessimistic
+- [x] Dead startup precedents (3 listed including Exist.io)
+- [x] Manifest conflicts (3 listed)
+- [x] Tech stack with packages (3 phases)
+- [x] Architecture principles (SOLID, DRY, KISS, schemas-first, modular plug-in)
+- [x] Evidence-sourced (research.md with Reddit/QuantifiedSelf findings)
+- [x] Modular data module interface defined
+- [x] Personal signal scoring formula
+- [x] MCP agent tools specified
+
+[Step 3] Thinking...[2m2026-03-10T20:20:24.487778Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m3[0m
+Executing 1 tool(s).

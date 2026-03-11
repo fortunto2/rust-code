@@ -1,7 +1,7 @@
 use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
-    git_status, is_mutating_action, mcp::McpManager, read_file, run_command, truncate_output,
+    git_status, is_mutating_action, mcp::McpManager, read_file, truncate_output,
     write_file,
 };
 use anyhow::Result;
@@ -186,6 +186,22 @@ impl Agent {
             ),
             edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
+        }
+    }
+
+    /// Set working directory for tool execution.
+    pub fn set_cwd(&self, path: std::path::PathBuf) {
+        *self.cwd.lock().unwrap() = path;
+    }
+
+    /// Resolve a potentially relative path against agent CWD.
+    fn resolve_path(&self, path: &str) -> String {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            path.to_string()
+        } else {
+            let cwd = self.cwd.lock().unwrap();
+            cwd.join(p).to_string_lossy().to_string()
         }
     }
 
@@ -427,16 +443,18 @@ impl Agent {
                 offset,
                 limit,
             } => {
+                let resolved = self.resolve_path(path);
                 let content =
-                    read_file(path, offset.map(|o| o as usize), limit.map(|l| l as usize)).await?;
+                    read_file(&resolved, offset.map(|o| o as usize), limit.map(|l| l as usize)).await?;
                 Ok(ActionResult {
                     output: truncate_output(&format!("File contents of {}:\n{}", path, content)),
                     done: false,
                 })
             }
             SgrAction::WriteFile { path, content } => {
-                let is_new = !std::path::Path::new(path).exists();
-                write_file(path, content).await?;
+                let resolved = self.resolve_path(path);
+                let is_new = !std::path::Path::new(&resolved).exists();
+                write_file(&resolved, content).await?;
                 let label = if is_new { "Created" } else { "Wrote" };
                 let lines = content.lines().count();
                 Ok(ActionResult {
@@ -449,7 +467,8 @@ impl Agent {
                 old_string,
                 new_string,
             } => {
-                match crate::tools::edit_file(path, old_string, new_string).await {
+                let resolved = self.resolve_path(path);
+                match crate::tools::edit_file(&resolved, old_string, new_string).await {
                     Ok(()) => {
                         // Reset failure counter on success
                         self.edit_failures.lock().unwrap().remove(path.as_str());
@@ -584,26 +603,22 @@ impl Agent {
                 result.push_str(&format!("Content search results for '{}':\n", query));
                 let safe_query = query.replace("'", "'\\''");
                 let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
-                match run_command(&search_cmd).await {
-                    Ok(output) => {
-                        if output.trim().is_empty() {
-                            result.push_str("No content matches found.");
-                        } else {
-                            let lines: Vec<&str> = output.lines().collect();
-                            if lines.len() > 100 {
-                                result.push_str(&lines[..100].join("\n"));
-                                result.push_str(&format!(
-                                    "\n...[Truncated {} more lines]...",
-                                    lines.len() - 100
-                                ));
-                            } else {
-                                result.push_str(&output);
-                            }
-                        }
+                let current_cwd = self.cwd.lock().unwrap().clone();
+                let search_result = crate::tools::run_command_in(&search_cmd, &current_cwd, None).await;
+                let output = &search_result.output;
+                if search_result.exit_code == 0 && !output.trim().is_empty() {
+                    let lines: Vec<&str> = output.lines().collect();
+                    if lines.len() > 100 {
+                        result.push_str(&lines[..100].join("\n"));
+                        result.push_str(&format!(
+                            "\n...[Truncated {} more lines]...",
+                            lines.len() - 100
+                        ));
+                    } else {
+                        result.push_str(output);
                     }
-                    Err(_) => {
-                        result.push_str("No content matches found or search tool failed.");
-                    }
+                } else {
+                    result.push_str("No content matches found.");
                 }
 
                 Ok(ActionResult {

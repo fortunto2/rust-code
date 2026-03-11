@@ -1,0 +1,743 @@
+Running single prompt mode...
+Provider: Gemini (gemini-2.5-flash)
+[2m2026-03-11T13:09:53.433586Z[0m [32m INFO[0m Starting 3 MCP server(s)...
+[2m2026-03-11T13:09:54.033509Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: Some({}), logging: None, completions: None, prompts: Some(PromptsCapability { list_changed: Some(false) }), resources: Some(ResourcesCapability { subscribe: Some(false), list_changed: Some(false) }), tools: Some(ToolsCapability { list_changed: Some(false) }) }, server_info: Implementation { name: "solograph", title: None, version: "1.26.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:09:54.037385Z[0m [32m INFO[0m MCP 'codegraph': 16 tools
+[2m2026-03-11T13:09:56.091659Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: None, tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "Playwright", title: None, version: "0.0.68", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:09:56.095047Z[0m [32m INFO[0m MCP 'playwright': 22 tools
+[2m2026-03-11T13:09:58.407588Z[0m [32m INFO[0m [1mserve_inner[0m: Service initialized as client [3mpeer_info[0m[2m=[0mSome(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: Some(ResourcesCapability { subscribe: None, list_changed: None }), tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "shadcn", title: None, version: "1.0.0", icons: None, website_url: None }, instructions: None })
+[2m2026-03-11T13:09:58.411477Z[0m [32m INFO[0m MCP 'shadcn': 7 tools
+[2m2026-03-11T13:09:58.412189Z[0m [32m INFO[0m MCP ready: 3 servers, 45 tools
+[2m2026-03-11T13:09:58.412844Z[0m [32m INFO[0m agent_loop_start [3mmax_steps[0m[2m=[0m50 [3mstreaming[0m[2m=[0mtrue
+
+[Step 1] Thinking...[2m2026-03-11T13:09:59.713534Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m1[0m
+Executing 1 tool(s).[2m2026-03-11T13:09:59.714115Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m1 [3mdecide_ms[0m[2m=[0m1301
+[2m2026-03-11T13:09:59.714201Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m1 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/comfort-index.ts
+[2m2026-03-11T13:09:59.715905Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m1 [3maction[0m[2m=[0mread:src/lib/comfort-index.ts [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m2789 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/comfort-index.ts:
+import { DataModule, SubScore, ModuleData } from "./modules/types";
+
+interface ComfortWeights {
+  [key: string]: number;
+}
+
+const defaultWeights: ComfortWeights = {
+  air: 0.22,
+  temperature: 0.18,
+  wind: 0.12,
+  uv: 0.08,
+  sea: 0.12,
+  earthquake: 0.08,
+  fire: 0.05,
+  pollen: 0.05,
+  pressure: 0.05,
+  geomagnetic: 0.03,
+  daylight: 0.02,
+};
+
+export function calculateComfortScore(
+  subScores: { [key: string]: SubScore },
+  weights: ComfortWeights = defaultWeights
+): number {
+  let totalScore = 0;
+  let totalWeight = 0;
+
+  for (const id in subScores) {
+    if (subScores.hasOwnProperty(id) && weights.hasOwnProperty(id)) {
+      totalScore += subScores[id].score * weights[id];
+      totalWeight += weights[id];
+    }
+  }
+
+  if (totalWeight === 0) {
+    return 0; // Avoid division by zero if no active modules
+  }
+
+  return parseFloat(((totalScore / totalWeight)).toFixed(2));
+}
+
+// This will be an array of all registered DataModules, imported from the modules directory
+import { AirModule } from "./modules/air";
+import { WeatherModule } from "./modules/weather";
+import { MarineModule } from "./modules/marine";
+import { UVModule } from "./modules/uv";
+import { DaylightModule } from "./modules/daylight";
+
+export const dataModules: DataModule[] = [
+  AirModule,
+  WeatherModule,
+  MarineModule,
+  UVModule,
+  DaylightModule,
+  // Add other modules here as they are implemented
+];
+
+export function registerDataModule(module: DataModule) {
+  dataModules.push(module);
+}
+
+export async function getCityComfortScore(
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+  let totalConfiguredWeight = 0;
+  activeModules.forEach(m => totalConfiguredWeight += m.weight);
+
+  for (const module of activeModules) {
+    try {
+      const rawData = await module.fetch(lat, lon);
+      subScores[module.id] = module.normalize(rawData);
+      // Re-normalize weights based on active modules
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight;
+    } catch (error) {
+      console.error(`Error fetching or normalizing data for module ${module.id}:`, error);
+      // If a module fails, we can assign a default score or skip it.
+      // For now, let's assign a neutral score (50) and log the error.
+      subScores[module.id] = { score: 50, description: `Data unavailable: ${error.message}` };
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight; // Still include its weight
+    }
+  }
+
+  const comfortScore = calculateComfortScore(subScores, moduleWeights);
+
+  return { score: comfortScore, subScores };
+}
+
+[Step 2] Thinking...[2m2026-03-11T13:10:02.430056Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m2[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:02.430604Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m2 [3mdecide_ms[0m[2m=[0m2713
+[2m2026-03-11T13:10:02.430702Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m2 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/modules/weather.ts
+[2m2026-03-11T13:10:02.432336Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m2 [3maction[0m[2m=[0mread:src/lib/modules/weather.ts [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m2267 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/modules/weather.ts:
+import { DataModule, ModuleData, SubScore } from "./types";
+import { fetchOpenMeteoWeather } from "../apis/open-meteo";
+
+export const WeatherModule: DataModule = {
+  id: "weather",
+  name: "Weather",
+  icon: "☀️",
+  enabled: true,
+  weight: 0.3,
+
+  async fetch(lat: number, lon: number): Promise<ModuleData> {
+    return fetchOpenMeteoWeather(lat, lon);
+  },
+
+  normalize(raw: ModuleData): SubScore {
+    const current = raw.current;
+    if (!current) {
+      return {
+        score: 0,
+        description: "Weather data unavailable",
+      };
+    }
+
+    const temperature = current.temperature_2m;
+    const apparentTemperature = current.apparent_temperature;
+    const humidity = current.relative_humidity_2m;
+    const windSpeed = current.wind_speed_10m;
+    const weatherCode = current.weather_code;
+
+    let score = 0;
+    let description = "";
+
+    // Temperature (ideal: 20-25°C)
+    if (temperature >= 20 && temperature <= 25) {
+      score += 30;
+    } else if (temperature > 15 && temperature < 30) {
+      score += 15;
+    } else {
+      score += 5;
+    }
+
+    // Apparent Temperature (feels like - ideal: 18-24°C)
+    if (apparentTemperature >= 18 && apparentTemperature <= 24) {
+      score += 30;
+    } else if (apparentTemperature > 14 && apparentTemperature < 28) {
+      score += 15;
+    } else {
+      score += 5;
+    }
+
+    // Humidity (ideal: 40-60%)
+    if (humidity >= 40 && humidity <= 60) {
+      score += 20;
+    } else if (humidity > 30 && humidity < 70) {
+      score += 10;
+    } else {
+      score += 5;
+    }
+
+    // Wind Speed (ideal: < 10 km/h)
+    if (windSpeed < 10) {
+      score += 20;
+    } else if (windSpeed < 20) {
+      score += 10;
+    } else {
+      score += 5;
+    }
+
+    // Normalize score to 0-100 scale (max possible score is 100)
+    score = Math.min(100, Math.max(0, score));
+
+    // Generate description based on weather code and key metrics
+    description = `Temp: ${temperature}°C (feels ${apparentTemperature}°C), Humidity: ${humidity}%, Wind: ${windSpeed} km/h.`;
+
+    return {
+      score,
+      description,
+      details: {
+        temperature,
+        apparentTemperature,
+        humidity,
+        windSpeed,
+        weatherCode,
+      },
+    };
+  },
+};
+
+[Step 3] Thinking...[2m2026-03-11T13:10:04.477683Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m3[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:04.478088Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m3 [3mdecide_ms[0m[2m=[0m2044
+[2m2026-03-11T13:10:04.478153Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m3 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:f3f255e5e3efb2a4
+[2m2026-03-11T13:10:04.480804Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m3 [3maction[0m[2m=[0mapply_patch:f3f255e5e3efb2a4 [3mduration_ms[0m[2m=[0m1 [3moutput_bytes[0m[2m=[0m68 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+M /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts
+
+
+[Step 4] Thinking...[2m2026-03-11T13:10:06.706673Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m4[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:06.707274Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m4 [3mdecide_ms[0m[2m=[0m2225
+[2m2026-03-11T13:10:06.707351Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m4 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:f3f255e5e3efb2a4
+[2m2026-03-11T13:10:06.709200Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m4 [3maction[0m[2m=[0mapply_patch:f3f255e5e3efb2a4 [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m68 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+M /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts
+
+
+[Step 5] Thinking...[2m2026-03-11T13:10:08.711061Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m5[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:08.711527Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m5 [3mdecide_ms[0m[2m=[0m2001
+[2m2026-03-11T13:10:08.711592Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m5 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:c1058939e1ff654f
+[2m2026-03-11T13:10:08.713477Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m5 [3maction[0m[2m=[0mapply_patch:c1058939e1ff654f [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m68 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+M /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts
+
+[WARN] Loop detected — 3 repeats
+
+[Step 6] Thinking...[2m2026-03-11T13:10:11.518932Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m6[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:11.519293Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m6 [3mdecide_ms[0m[2m=[0m2805
+[2m2026-03-11T13:10:11.519354Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m6 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:6b8156edbdcb588b
+[2m2026-03-11T13:10:11.520367Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m6 [3maction[0m[2m=[0mapply_patch:6b8156edbdcb588b [3merror[0m[2m=[0mapply_patch error: invalid hunk at line 7: Expected update hunk to start with a @@ context marker, got: '): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {'
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 7] Thinking...[2m2026-03-11T13:10:13.791171Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m7[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:13.791801Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m7 [3mdecide_ms[0m[2m=[0m2270
+[2m2026-03-11T13:10:13.791875Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m7 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/modules/index.ts
+[2m2026-03-11T13:10:13.793054Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m7 [3maction[0m[2m=[0mread:src/lib/modules/index.ts [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m958 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/modules/index.ts:
+import { DataModule } from '../../types';
+import { weatherModule } from './weather';
+import { airModule } from './air';
+import { uvModule } from './uv';
+import { marineModule } from './marine';
+import { earthquakeModule } from './earthquake';
+import { fireModule } from './fire';
+import { pollenModule } from './pollen';
+import { pressureModule } from './pressure';
+import { geomagneticModule } from './geomagnetic';
+import { moonModule } from './moon';
+import { daylightModule } from './daylight';
+
+export const allModules: DataModule[] = [
+  weatherModule,
+  airModule,
+  uvModule,
+  marineModule,
+  earthquakeModule,
+  fireModule,
+  pollenModule,
+  pressureModule,
+  geomagneticModule,
+  moonModule,
+  daylightModule,
+];
+
+export {
+  weatherModule,
+  airModule,
+  uvModule,
+  marineModule,
+  earthquakeModule,
+  fireModule,
+  pollenModule,
+  pressureModule,
+  geomagneticModule,
+  moonModule,
+  daylightModule,
+};
+
+[Step 8] Thinking...[2m2026-03-11T13:10:15.992300Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m8[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:15.993031Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m8 [3mdecide_ms[0m[2m=[0m2199
+[2m2026-03-11T13:10:15.993115Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m8 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:81c943f7cf337e66
+[2m2026-03-11T13:10:15.994432Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m8 [3maction[0m[2m=[0mapply_patch:81c943f7cf337e66 [3merror[0m[2m=[0mapply_patch error: invalid hunk at line 4: Unexpected line in update hunk: '}'. Lines must start with ' ', '+', or '-'
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 9] Thinking...[2m2026-03-11T13:10:20.374549Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m9[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:20.375290Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m9 [3mdecide_ms[0m[2m=[0m4380
+[2m2026-03-11T13:10:20.375363Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m9 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:2e0d2c29e74e1630
+[2m2026-03-11T13:10:20.378954Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m9 [3maction[0m[2m=[0mapply_patch:2e0d2c29e74e1630 [3mduration_ms[0m[2m=[0m1 [3moutput_bytes[0m[2m=[0m68 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+M /Users/rustam/startups/active/air-signal/src/lib/modules/index.ts
+
+
+[Step 10] Thinking...[2m2026-03-11T13:10:27.077427Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m10[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:27.077877Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m10 [3mdecide_ms[0m[2m=[0m6698
+[2m2026-03-11T13:10:27.077942Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m10 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:7f2b1165fcd46d6
+[2m2026-03-11T13:10:27.079960Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m10 [3maction[0m[2m=[0mapply_patch:7f2b1165fcd46d6 [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m68 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+M /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts
+
+
+[Step 11] Thinking...[2m2026-03-11T13:10:31.854776Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m11[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:31.855701Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m11 [3mdecide_ms[0m[2m=[0m4775
+[2m2026-03-11T13:10:31.855796Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m11 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:cdeb639128d47afc
+[2m2026-03-11T13:10:31.859541Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m11 [3maction[0m[2m=[0mapply_patch:cdeb639128d47afc [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 12] Thinking...[2m2026-03-11T13:10:34.947381Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m12[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:34.947834Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m12 [3mdecide_ms[0m[2m=[0m3087
+[2m2026-03-11T13:10:34.947901Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m12 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:7f2b1165fcd46d6
+[2m2026-03-11T13:10:34.950411Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m12 [3maction[0m[2m=[0mapply_patch:7f2b1165fcd46d6 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 13] Thinking...[2m2026-03-11T13:10:41.286822Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m13[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:41.287388Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m13 [3mdecide_ms[0m[2m=[0m6336
+[2m2026-03-11T13:10:41.287507Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m13 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:449c3a144f72ebe1
+[2m2026-03-11T13:10:41.291855Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m13 [3maction[0m[2m=[0mapply_patch:449c3a144f72ebe1 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 14] Thinking...[2m2026-03-11T13:10:45.448543Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m14[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:45.449032Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m14 [3mdecide_ms[0m[2m=[0m4156
+[2m2026-03-11T13:10:45.449108Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m14 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:e6609c841aa1d57b
+[2m2026-03-11T13:10:45.452995Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m14 [3maction[0m[2m=[0mapply_patch:e6609c841aa1d57b [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+export async function getCityComfortScore(
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 15] Thinking...[2m2026-03-11T13:10:51.963773Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m15[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:51.964173Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m15 [3mdecide_ms[0m[2m=[0m6510
+[2m2026-03-11T13:10:51.964238Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m15 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:814ae6df864e40fc
+[2m2026-03-11T13:10:51.966119Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m15 [3maction[0m[2m=[0mapply_patch:814ae6df864e40fc [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/modules/index.ts:
+import { DataModule } from '../../types';
+import { weatherModule } from './weather';
+import { airModule } from './air';
+import { uvModule } from './uv';
+import { marineModule } from './marine';
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 16] Thinking...[2m2026-03-11T13:10:57.948336Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m16[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:57.948925Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m16 [3mdecide_ms[0m[2m=[0m5982
+[2m2026-03-11T13:10:57.949028Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m16 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:824e718c4f94ed17
+[2m2026-03-11T13:10:57.951070Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m16 [3maction[0m[2m=[0mapply_patch:824e718c4f94ed17 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/modules/index.ts:
+import { DataModule } from '../../types';
+import { weatherModule } from './weather';
+import { airModule } from './air';
+import { uvModule } from './uv';
+import { marineModule } from './marine';
+import { earthquakeModule } from './earthquake';
+import { fireModule } from './fire';
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 17] Thinking...[2m2026-03-11T13:10:59.533966Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m17[0m
+Executing 1 tool(s).[2m2026-03-11T13:10:59.534509Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m17 [3mdecide_ms[0m[2m=[0m1582
+[2m2026-03-11T13:10:59.534588Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m17 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: read:src/lib/comfort-index.ts
+[2m2026-03-11T13:10:59.536134Z[0m [32m INFO[0m tool_executed [3mstep[0m[2m=[0m17 [3maction[0m[2m=[0mread:src/lib/comfort-index.ts [3mduration_ms[0m[2m=[0m0 [3moutput_bytes[0m[2m=[0m2793 [3mdone[0m[2m=[0mfalse
+
+Tool Result:
+File contents of src/lib/comfort-index.ts:
+import { DataModule, SubScore, ModuleData } from "./modules/types";
+
+interface ComfortWeights {
+  [key: string]: number;
+}
+
+const defaultWeights: ComfortWeights = {
+  air: 0.22,
+  temperature: 0.18,
+  wind: 0.12,
+  uv: 0.08,
+  sea: 0.12,
+  earthquake: 0.08,
+  fire: 0.05,
+  pollen: 0.05,
+  pressure: 0.05,
+  geomagnetic: 0.03,
+  daylight: 0.02,
+};
+
+export function calculateComfortScore(
+  subScores: { [key: string]: SubScore },
+  weights: ComfortWeights = defaultWeights
+): number {
+  let totalScore = 0;
+  let totalWeight = 0;
+
+  for (const id in subScores) {
+    if (subScores.hasOwnProperty(id) && weights.hasOwnProperty(id)) {
+      totalScore += subScores[id].score * weights[id];
+      totalWeight += weights[id];
+    }
+  }
+
+  if (totalWeight === 0) {
+    return 0; // Avoid division by zero if no active modules
+  }
+
+  return parseFloat(((totalScore / totalWeight)).toFixed(2));
+}
+
+// This will be an array of all registered DataModules, imported from the modules directory
+import { AirModule } from "./modules/air";
+import { WeatherModule } from "./modules/weather";
+import { MarineModule } from "./modules/marine";
+import { UVModule } from "./modules/uv";
+import { DaylightModule } from "./modules/daylight";
+
+export const dataModules: DataModule[] = [
+  AirModule,
+  WeatherModule,
+  MarineModule,
+  UVModule,
+  DaylightModule,
+  // Add other modules here as they are implemented
+];
+
+export function registerDataModule(module: DataModule) {
+  dataModules.push(module);
+}
+
+export async function getCityComfortScore(
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = dataModules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+  let totalConfiguredWeight = 0;
+  activeModules.forEach(m => totalConfiguredWeight += m.weight);
+
+  for (const module of activeModules) {
+    try {
+      const rawData = await module.fetch(lat, lon);
+      subScores[module.id] = module.normalize(rawData);
+      // Re-normalize weights based on active modules
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight;
+    } catch (error) {
+      console.error(`Error fetching or normalizing data for module ${module.id}:`, error);
+      // If a module fails, we can assign a default score or skip it.
+      // For now, let's assign a neutral score (50) and log the error.
+      subScores[module.id] = { score: 50, description: `Data unavailable: ${error.message}` };
+      moduleWeights[module.id] = module.weight / totalConfiguredWeight; // Still include its weight
+    }
+  }
+
+  const comfortScore = calculateComfortScore(subScores, moduleWeights);
+
+  return { score: comfortScore, subScores };
+}
+
+[Step 18] Thinking...[2m2026-03-11T13:11:02.068498Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m18[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:02.069209Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m18 [3mdecide_ms[0m[2m=[0m2532
+[2m2026-03-11T13:11:02.069350Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m18 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:7f2b1165fcd46d6
+[2m2026-03-11T13:11:02.071720Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m18 [3maction[0m[2m=[0mapply_patch:7f2b1165fcd46d6 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 19] Thinking...[2m2026-03-11T13:11:04.952256Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m19[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:04.952795Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m19 [3mdecide_ms[0m[2m=[0m2880
+[2m2026-03-11T13:11:04.952863Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m19 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:650a9d5dc6305a45
+[2m2026-03-11T13:11:04.956259Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m19 [3maction[0m[2m=[0mapply_patch:650a9d5dc6305a45 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+
+[Step 20] Thinking...[2m2026-03-11T13:11:08.308109Z[0m [32m INFO[0m [1magent_step[0m: SGR native function calling [3mn[0m[2m=[0m1 [3msituation[0m[2m=[0m"Executing 1 tool(s)." [2m[3mstep[0m[2m=[0m20[0m
+Executing 1 tool(s).[2m2026-03-11T13:11:08.308550Z[0m [32m INFO[0m llm_decision [3mstep[0m[2m=[0m20 [3mdecide_ms[0m[2m=[0m3351
+[2m2026-03-11T13:11:08.308618Z[0m [32m INFO[0m agent_decision [3mstep[0m[2m=[0m20 [3msituation[0m[2m=[0mExecuting 1 tool(s). [3mactions[0m[2m=[0m1 [3mcompleted[0m[2m=[0mfalse
+[K[2mSituation:[0m Executing 1 tool(s).
+
+Action: apply_patch:650a9d5dc6305a45
+[2m2026-03-11T13:11:08.311846Z[0m [31mERROR[0m tool_error [3mstep[0m[2m=[0m20 [3maction[0m[2m=[0mapply_patch:650a9d5dc6305a45 [3merror[0m[2m=[0mapply_patch error: failed to find match: Failed to find expected lines in /Users/rustam/startups/active/air-signal/src/lib/comfort-index.ts:
+  lat: number,
+  lon: number
+): Promise<{ score: number; subScores: { [key: string]: SubScore } }> {
+  const activeModules = modules.filter((m) => m.enabled);
+  const subScores: { [key: string]: SubScore } = {};
+  const moduleWeights: ComfortWeights = {};
+
+
+IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.
+
+CORRECT FORMAT:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ function_name
+context line (must match file exactly)
+-old line
++new line
+context line
+*** End Patch
+
+Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.
+[2m2026-03-11T13:11:08.312496Z[0m [32m INFO[0m context_trimmed [3mtrimmed[0m[2m=[0m1
+[TRIM] Removed 1 messages
+
+[Step 21] Thinking...
+[2m105.5K→2.2Ktok | 20 steps | $0.017[0m
+Agent error: SGR native FC error: API error 400: {
+  "error": {
+    "code": 400,
+    "message": "Please ensure that function response turn comes immediately after a function call turn.",
+    "status": "INVALID_ARGUMENT"
+  }
+}
+
+[2m2026-03-11T13:11:08.972583Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled
+[2m2026-03-11T13:11:08.972691Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled
+[2m2026-03-11T13:11:08.972794Z[0m [32m INFO[0m [1mserve_inner[0m: task cancelled
