@@ -31,6 +31,9 @@ pub mod gemini;
 #[cfg(feature = "openai")]
 pub mod openai;
 
+#[cfg(feature = "genai")]
+pub mod genai_client;
+
 // Agent framework (behind feature gate)
 #[cfg(feature = "agent")]
 pub mod agent;

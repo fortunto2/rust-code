@@ -3,7 +3,7 @@
 set -e
 
 echo "Running tests..."
-cargo test --workspace --quiet
+cargo test --workspace --quiet --exclude genai
 
 echo "Running clippy..."
 cargo clippy -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings

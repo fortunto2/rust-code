@@ -1,0 +1,3 @@
+[submodule "crates/genai"]
+	path = crates/genai
+	url = git@github.com:fortunto2/rust-genai.git
