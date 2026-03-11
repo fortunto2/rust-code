@@ -730,58 +730,29 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
     None
 }
 
-/// Inner search across 4 tiers of matching within a range.
+/// Inner search across 5 tiers of progressively looser matching.
 fn seek_sequence_range(lines: &[String], pattern: &[String], start: usize) -> Option<usize> {
     let end = lines.len().saturating_sub(pattern.len());
 
-    // Tier 1: exact match
-    for i in start..=end {
-        if lines[i..i + pattern.len()] == *pattern {
-            return Some(i);
-        }
-    }
+    // Tiers ordered from strictest to most lenient.
+    // Each tier gets a full pass before falling through to the next.
+    let tiers: &[fn(&str, &str) -> bool] = &[
+        |a, b| a == b,                                 // 1: exact
+        |a, b| a.trim_end() == b.trim_end(),           // 2: trailing ws
+        |a, b| a.trim() == b.trim(),                   // 3: both sides
+        |a, b| normalise_line(a) == normalise_line(b), // 4: unicode
+        |a, b| collapse_ws(a) == collapse_ws(b),       // 5: ws collapse
+    ];
 
-    // Tier 2: trim trailing whitespace
-    for i in start..=end {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(j, p)| lines[i + j].trim_end() == p.trim_end())
-        {
-            return Some(i);
-        }
-    }
-
-    // Tier 3: trim both sides
-    for i in start..=end {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(j, p)| lines[i + j].trim() == p.trim())
-        {
-            return Some(i);
-        }
-    }
-
-    // Tier 4: Unicode normalization (typographic punctuation → ASCII)
-    for i in start..=end {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(j, p)| normalise_line(&lines[i + j]) == normalise_line(p))
-        {
-            return Some(i);
-        }
-    }
-
-    // Tier 5: collapse internal whitespace (tabs vs spaces, re-indent)
-    for i in start..=end {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(j, p)| collapse_ws(&lines[i + j]) == collapse_ws(p))
-        {
-            return Some(i);
+    for cmp in tiers {
+        for i in start..=end {
+            if pattern
+                .iter()
+                .enumerate()
+                .all(|(j, p)| cmp(&lines[i + j], p))
+            {
+                return Some(i);
+            }
         }
     }
 
