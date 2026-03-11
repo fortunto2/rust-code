@@ -328,12 +328,16 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                     });
                     if let Some(project) = project {
                         let m = model.unwrap_or_else(|| "gemini-3.1-pro-preview".into());
+                        let location = std::env::var("VERTEX_LOCATION")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "global".into());
                         return ProviderSetup {
-                            label: Some(format!("Vertex ({}, {})", m, project)),
+                            label: Some(format!("Vertex ({}, {}, {})", m, project, location)),
                             provider: Some(backend::SgrProvider::Vertex {
                                 project_id: project,
                                 model: m,
-                                location: "us-central1".into(),
+                                location,
                             }),
                             _proxy_handle: None,
                         };
@@ -488,10 +492,10 @@ async fn resolve_sgr_provider(
             .model
             .clone()
             .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
-        let location = match std::env::var("VERTEX_LOCATION").ok() {
-            Some(loc) if loc != "global" && !loc.is_empty() => loc,
-            _ => "us-central1".into(),
-        };
+        let location = std::env::var("VERTEX_LOCATION")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "global".into());
         return (
             backend::SgrProvider::Vertex {
                 project_id,
