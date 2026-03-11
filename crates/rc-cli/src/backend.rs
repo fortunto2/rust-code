@@ -565,7 +565,15 @@ impl SgrProvider {
             .collect();
 
         if actions.is_empty() {
-            return Err(anyhow::anyhow!("SGR: model returned no tool calls"));
+            // Model responded without tool calls — treat as implicit finish.
+            // This happens when the model thinks the task is done.
+            return Ok(SgrNextStep {
+                situation: "Model completed without explicit tool call.".into(),
+                task: vec![],
+                actions: vec![SgrAction::Finish {
+                    summary: "Task completed.".into(),
+                }],
+            });
         }
 
         // Extract situation from a finish tool if present, otherwise generic

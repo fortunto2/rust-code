@@ -193,9 +193,41 @@ const EMPTY_CONTEXT: &str = "@@";
 
 /// Parse a patch string into a list of hunks.
 pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>, ParseError> {
-    let lines: Vec<&str> = patch.trim().lines().collect();
-    let lines = check_boundaries(&lines)?;
+    let input = patch.trim();
+    let lines: Vec<&str> = input.lines().collect();
 
+    // Try parsing as-is first (includes heredoc detection)
+    match check_boundaries(&lines) {
+        Ok(lines) => return parse_patch_inner(lines),
+        Err(_) => {}
+    }
+
+    // Postel's law: auto-fix missing Begin/End markers if content looks like a patch
+    let has_begin = lines.first().map(|l| l.trim()) == Some(BEGIN_PATCH);
+    let has_end = lines.last().map(|l| l.trim()) == Some(END_PATCH);
+    let looks_like_patch = input.contains("*** Add File:")
+        || input.contains("*** Update File:")
+        || input.contains("*** Delete File:")
+        || input.contains("--- ");
+
+    if !looks_like_patch {
+        // Not a patch at all — return original error
+        check_boundaries(&lines)?;
+        unreachable!();
+    }
+
+    let fixed = match (has_begin, has_end) {
+        (false, false) => format!("{}\n{}\n{}", BEGIN_PATCH, input, END_PATCH),
+        (true, false) => format!("{}\n{}", input, END_PATCH),
+        (false, true) => format!("{}\n{}", BEGIN_PATCH, input),
+        (true, true) => unreachable!(), // would have succeeded above
+    };
+    let fixed_lines: Vec<&str> = fixed.lines().collect();
+    let fixed_lines = check_boundaries(&fixed_lines)?;
+    parse_patch_inner(fixed_lines)
+}
+
+fn parse_patch_inner(lines: &[&str]) -> Result<Vec<Hunk>, ParseError> {
     let mut hunks: Vec<Hunk> = Vec::new();
     let last = lines.len().saturating_sub(1);
     let mut remaining = &lines[1..last];
@@ -1516,5 +1548,26 @@ mod tests {
         assert_eq!(result.modified.len(), 1);
         let contents = fs::read_to_string(dir.path().join("async.txt")).unwrap();
         assert_eq!(contents, "new\n");
+    }
+
+    #[test]
+    fn test_auto_fix_missing_end_patch() {
+        let patch = "*** Begin Patch\n*** Add File: test.txt\n+hello";
+        let hunks = parse_patch(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_fix_missing_begin_patch() {
+        let patch = "*** Add File: test.txt\n+hello\n*** End Patch";
+        let hunks = parse_patch(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
+    }
+
+    #[test]
+    fn test_auto_fix_missing_both_markers() {
+        let patch = "*** Add File: test.txt\n+hello";
+        let hunks = parse_patch(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
     }
 }
