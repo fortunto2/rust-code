@@ -1,6 +1,9 @@
 # sgr-agent
 
-Pure Rust LLM client and agent framework. No dlopen, no external binaries.
+[![Crates.io](https://img.shields.io/crates/v/sgr-agent)](https://crates.io/crates/sgr-agent)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Pure Rust LLM client and agent framework based on [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) by [Rinat Abdullin](https://abdullin.com). No dlopen, no external binaries.
 Works on iOS, Android, WASM — anywhere `reqwest` + `rustls` compiles.
 
 ## Two layers
@@ -18,10 +21,10 @@ Build autonomous agents that reason and act.
 # Cargo.toml
 
 # Client only (structured output + function calling)
-sgr-agent = "0.1"
+sgr-agent = "0.2"
 
 # Full agent framework
-sgr-agent = { version = "0.1", features = ["agent"] }
+sgr-agent = { version = "0.2", features = ["agent"] }
 ```
 
 ### Structured output (client only)
@@ -148,6 +151,12 @@ async fn main() {
 | `gemini` | yes | Google AI + Vertex AI backend |
 | `openai` | yes | OpenAI + OpenRouter + Ollama backend |
 | `agent` | no | Full agent framework (traits, loop, registry, routing) |
+| `session` | no | Session persistence, 4-tier loop detection, memory context, hints, tasks, intent guard |
+| `app-tools` | no | Shared tools: bash, fs (read/write/edit), git, apply_patch |
+| `providers` | no | Provider config (TOML), auth, CLI proxy, Codex proxy |
+| `telemetry` | no | OTEL-aware JSONL file telemetry with trace/span context |
+| `logging` | no | File-based JSONL logging |
+| `search` | no | Fuzzy session search (nucleo-matcher) |
 
 ## Architecture
 
@@ -448,21 +457,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sgr-agent = { version = "0.1", features = ["agent", "gemini"] }
+sgr-agent = { version = "0.2", features = ["agent", "gemini"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
 ```
 
 See [`/tmp/my-agent`](https://github.com/fortunto2/rust-code/tree/master/crates/sgr-agent/examples) for a full working standalone project.
-
-## Test count
-
-168 tests covering all modules — parsers, coercion, agents, loop detection, retry, routing, registry, streaming, discovery, factory.
-
-```bash
-cargo test -p sgr-agent --features agent
-```
 
 ## License
 
