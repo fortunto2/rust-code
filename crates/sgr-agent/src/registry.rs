@@ -45,7 +45,9 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: IndexMap::new() }
+        Self {
+            tools: IndexMap::new(),
+        }
     }
 
     /// Register a tool. Builder pattern (chainable).
@@ -75,7 +77,11 @@ impl ToolRegistry {
 
     /// List system tools only.
     pub fn system_tools(&self) -> Vec<&dyn Tool> {
-        self.tools.values().filter(|t| t.is_system()).map(|t| t.as_ref()).collect()
+        self.tools
+            .values()
+            .filter(|t| t.is_system())
+            .map(|t| t.as_ref())
+            .collect()
     }
 
     /// Convert all tools to ToolDef for LLM API.
@@ -94,9 +100,7 @@ impl ToolRegistry {
         let mut best: Option<(&str, f64)> = None;
         for key in self.tools.keys() {
             let score = strsim::normalized_levenshtein(&lower, &key.to_lowercase());
-            if score > 0.6
-                && (best.is_none() || score > best.unwrap().1)
-            {
+            if score > 0.6 && (best.is_none() || score > best.unwrap().1) {
                 best = Some((key.as_str(), score));
             }
         }
@@ -166,10 +170,18 @@ mod tests {
 
     impl MockTool {
         fn new(name: &str, desc: &str) -> Self {
-            Self { tool_name: name.into(), desc: desc.into(), system: false }
+            Self {
+                tool_name: name.into(),
+                desc: desc.into(),
+                system: false,
+            }
         }
         fn system(name: &str, desc: &str) -> Self {
-            Self { tool_name: name.into(), desc: desc.into(), system: true }
+            Self {
+                tool_name: name.into(),
+                desc: desc.into(),
+                system: true,
+            }
         }
     }
 
@@ -202,8 +214,7 @@ mod tests {
 
     #[test]
     fn registry_get_case_insensitive() {
-        let reg =
-            ToolRegistry::new().register(MockTool::new("ReadFile", "Read"));
+        let reg = ToolRegistry::new().register(MockTool::new("ReadFile", "Read"));
         assert!(reg.get("readfile").is_some());
         assert!(reg.get("READFILE").is_some());
         assert!(reg.get("ReadFile").is_some());
@@ -231,8 +242,7 @@ mod tests {
 
     #[test]
     fn registry_to_defs() {
-        let reg = ToolRegistry::new()
-            .register(MockTool::new("bash", "Run command"));
+        let reg = ToolRegistry::new().register(MockTool::new("bash", "Run command"));
         let defs = reg.to_defs();
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "bash");

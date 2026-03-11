@@ -212,7 +212,12 @@ mod tests {
     fn needs_compaction_over_threshold() {
         let compactor = Compactor::new(10);
         let msgs: Vec<Message> = (0..100)
-            .map(|i| Message::user(&format!("Message number {} with some content to pad it out", i)))
+            .map(|i| {
+                Message::user(format!(
+                    "Message number {} with some content to pad it out",
+                    i
+                ))
+            })
             .collect();
         assert!(compactor.needs_compaction(&msgs));
     }
@@ -248,12 +253,23 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for MockClient {
             async fn structured_call(
-                &self, _: &[Message], _: &serde_json::Value,
-            ) -> Result<(Option<serde_json::Value>, Vec<crate::types::ToolCall>, String), SgrError> {
+                &self,
+                _: &[Message],
+                _: &serde_json::Value,
+            ) -> Result<
+                (
+                    Option<serde_json::Value>,
+                    Vec<crate::types::ToolCall>,
+                    String,
+                ),
+                SgrError,
+            > {
                 unimplemented!()
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[crate::tool::ToolDef],
+                &self,
+                _: &[Message],
+                _: &[crate::tool::ToolDef],
             ) -> Result<Vec<crate::types::ToolCall>, SgrError> {
                 unimplemented!()
             }
@@ -276,12 +292,23 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for MockClient {
             async fn structured_call(
-                &self, _: &[Message], _: &serde_json::Value,
-            ) -> Result<(Option<serde_json::Value>, Vec<crate::types::ToolCall>, String), SgrError> {
+                &self,
+                _: &[Message],
+                _: &serde_json::Value,
+            ) -> Result<
+                (
+                    Option<serde_json::Value>,
+                    Vec<crate::types::ToolCall>,
+                    String,
+                ),
+                SgrError,
+            > {
                 unimplemented!()
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[crate::tool::ToolDef],
+                &self,
+                _: &[Message],
+                _: &[crate::tool::ToolDef],
             ) -> Result<Vec<crate::types::ToolCall>, SgrError> {
                 unimplemented!()
             }

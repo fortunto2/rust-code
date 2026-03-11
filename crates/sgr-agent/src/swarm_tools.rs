@@ -197,8 +197,7 @@ impl Tool for WaitAgentsTool {
 
     async fn execute(&self, args: Value, _ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
         let args: WaitArgs = parse_args(&args)?;
-        let timeout =
-            std::time::Duration::from_secs(args.timeout_secs.unwrap_or(300));
+        let timeout = std::time::Duration::from_secs(args.timeout_secs.unwrap_or(300));
 
         // Take receivers under lock, then drop lock before awaiting (avoid deadlock)
         let receivers = {
@@ -229,17 +228,9 @@ impl Tool for WaitAgentsTool {
             match tokio::time::timeout(timeout, rx).await {
                 Ok(Ok(result)) => results.push(result),
                 Ok(Err(_)) => {
-                    return Err(ToolError::Execution(format!(
-                        "Channel closed for {}",
-                        id
-                    )))
+                    return Err(ToolError::Execution(format!("Channel closed for {}", id)))
                 }
-                Err(_) => {
-                    return Err(ToolError::Execution(format!(
-                        "Timeout waiting for {}",
-                        id
-                    )))
-                }
+                Err(_) => return Err(ToolError::Execution(format!("Timeout waiting for {}", id))),
             }
         }
 
@@ -294,7 +285,11 @@ impl Tool for GetStatusTool {
         serde_json::json!({"type": "object"})
     }
 
-    async fn execute(&self, _args: Value, _ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        _args: Value,
+        _ctx: &mut AgentContext,
+    ) -> Result<ToolOutput, ToolError> {
         let swarm = self.swarm.lock().await;
         let statuses = swarm.status_all().await;
 

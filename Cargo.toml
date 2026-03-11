@@ -1,10 +1,9 @@
 [workspace]
 members = [
     "crates/rc-cli",
-    "crates/baml-agent",
-    "crates/baml-agent-tui",
     "crates/solograph",
     "crates/sgr-agent",
+    "crates/sgr-agent-tui",
 ]
 default-members = ["crates/rc-cli"]
 resolver = "2"

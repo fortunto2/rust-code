@@ -52,7 +52,13 @@ fn simplify_object(schema: &Value, lines: &mut Vec<String>, indent: usize) {
             format!(": {}", desc)
         };
 
-        lines.push(format!("{}- {} ({}){}", prefix, name, parts.join(", "), suffix));
+        lines.push(format!(
+            "{}- {} ({}){}",
+            prefix,
+            name,
+            parts.join(", "),
+            suffix
+        ));
 
         // Recurse into nested objects
         if prop.get("type").and_then(|t| t.as_str()) == Some("object") {

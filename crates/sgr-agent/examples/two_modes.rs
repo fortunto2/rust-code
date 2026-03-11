@@ -30,10 +30,8 @@ enum Action {
 }
 
 fn make_messages(schema_hint: bool) -> Vec<Message> {
-    let schema = serde_json::to_string_pretty(
-        &sgr_agent::response_schema_for::<NextStep>(),
-    )
-    .unwrap();
+    let schema =
+        serde_json::to_string_pretty(&sgr_agent::response_schema_for::<NextStep>()).unwrap();
 
     let system = if schema_hint {
         format!(
@@ -73,8 +71,10 @@ async fn main() {
                 }
             }
             if let Some(ref u) = resp.usage {
-                println!("\n  tokens: {} in, {} out, {} total",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens);
+                println!(
+                    "\n  tokens: {} in, {} out, {} total",
+                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                );
             }
             if let Some(ref rl) = resp.rate_limit {
                 println!("  rate_limit: {}", rl.status_line());
@@ -113,8 +113,10 @@ async fn main() {
                     }
                 }
                 if let Some(ref u) = resp.usage {
-                    println!("  tokens: {} in, {} out, {} total",
-                        u.prompt_tokens, u.completion_tokens, u.total_tokens);
+                    println!(
+                        "  tokens: {} in, {} out, {} total",
+                        u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    );
                 }
             }
             Err(e) => {
@@ -125,7 +127,10 @@ async fn main() {
                 // Make a raw call to see what the model returns
                 let raw_resp = client.flexible::<serde_json::Value>(&msgs).await;
                 if let Ok(resp) = raw_resp {
-                    println!("  raw as Value: {}", serde_json::to_string_pretty(&resp.output).unwrap_or_default());
+                    println!(
+                        "  raw as Value: {}",
+                        serde_json::to_string_pretty(&resp.output).unwrap_or_default()
+                    );
                 }
             }
         }

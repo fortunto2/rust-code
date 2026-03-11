@@ -150,7 +150,8 @@ fn strip_unsupported_gemini(value: &mut Value) {
         // Fix type arrays: ["string", "null"] → "string" + nullable: true
         if let Some(type_val) = obj.get("type").cloned() {
             if let Some(arr) = type_val.as_array() {
-                let non_null: Vec<&Value> = arr.iter().filter(|v| v.as_str() != Some("null")).collect();
+                let non_null: Vec<&Value> =
+                    arr.iter().filter(|v| v.as_str() != Some("null")).collect();
                 let has_null = arr.iter().any(|v| v.as_str() == Some("null"));
                 if let Some(first) = non_null.first() {
                     obj.insert("type".to_string(), (*first).clone());

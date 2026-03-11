@@ -32,7 +32,11 @@ enum Action {
     #[serde(rename = "finish")]
     Finish { summary: String },
     #[serde(rename = "edit_file")]
-    EditFile { path: String, old_string: String, new_string: String },
+    EditFile {
+        path: String,
+        old_string: String,
+        new_string: String,
+    },
     #[serde(rename = "write_file")]
     WriteFile { path: String, content: String },
 }
@@ -139,28 +143,42 @@ fn main() {
 
         let s_ok = strict.is_ok();
         let c_ok = coerced.is_ok();
-        if s_ok { strict_pass += 1; }
-        if c_ok { coerced_pass += 1; }
+        if s_ok {
+            strict_pass += 1;
+        }
+        if c_ok {
+            coerced_pass += 1;
+        }
 
         match (&strict, &coerced) {
             (Ok(s), _) => {
-                let tool = s.value.actions.first().map(|a| match a {
-                    Action::ReadFile { .. } => "read_file",
-                    Action::Bash { .. } => "bash",
-                    Action::Finish { .. } => "finish",
-                    Action::EditFile { .. } => "edit_file",
-                    Action::WriteFile { .. } => "write_file",
-                }).unwrap_or("(empty)");
+                let tool = s
+                    .value
+                    .actions
+                    .first()
+                    .map(|a| match a {
+                        Action::ReadFile { .. } => "read_file",
+                        Action::Bash { .. } => "bash",
+                        Action::Finish { .. } => "finish",
+                        Action::EditFile { .. } => "edit_file",
+                        Action::WriteFile { .. } => "write_file",
+                    })
+                    .unwrap_or("(empty)");
                 println!("strict:OK({:?}) tool={}", s.source, tool);
             }
             (Err(_), Ok(c)) => {
-                let tool = c.value.actions.first().map(|a| match a {
-                    Action::ReadFile { .. } => "read_file",
-                    Action::Bash { .. } => "bash",
-                    Action::Finish { .. } => "finish",
-                    Action::EditFile { .. } => "edit_file",
-                    Action::WriteFile { .. } => "write_file",
-                }).unwrap_or("(empty)");
+                let tool = c
+                    .value
+                    .actions
+                    .first()
+                    .map(|a| match a {
+                        Action::ReadFile { .. } => "read_file",
+                        Action::Bash { .. } => "bash",
+                        Action::Finish { .. } => "finish",
+                        Action::EditFile { .. } => "edit_file",
+                        Action::WriteFile { .. } => "write_file",
+                    })
+                    .unwrap_or("(empty)");
                 println!("strict:FAIL  coerced:OK({:?}) tool={}", c.source, tool);
             }
             (Err(se), Err(_)) => {
@@ -174,9 +192,15 @@ fn main() {
     println!("  coerced:  {}/{}", coerced_pass, total);
 
     let expected_hard = 3; // #8 hallucinated tool, #14 YAML, #18 truncated
-    println!("\n  Expected hard failures: {} (#8 unknown tool, #14 YAML, #18 truncated mid-key)", expected_hard);
-    println!("  Effective: {}/{} (strict), {}/{} (coerced)",
-        strict_pass, total - expected_hard,
-        coerced_pass, total - expected_hard,
+    println!(
+        "\n  Expected hard failures: {} (#8 unknown tool, #14 YAML, #18 truncated mid-key)",
+        expected_hard
+    );
+    println!(
+        "  Effective: {}/{} (strict), {}/{} (coerced)",
+        strict_pass,
+        total - expected_hard,
+        coerced_pass,
+        total - expected_hard,
     );
 }

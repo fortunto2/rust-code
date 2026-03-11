@@ -6,7 +6,7 @@
 
 `rust-code` is a terminal coding agent written in Rust.
 
-It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
+It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and an SGR-driven agent loop so you can work on a codebase without leaving the terminal.
 
 ![Fuzzy File Search with preview](docs/assets/screenshot-file-search.png)
 
@@ -48,7 +48,7 @@ rust-code --resume                                 # continue last session
 ## Features
 
 - **Interactive TUI** — chat UI built with `ratatui` and `crossterm`
-- **BAML agent loop** — typed tool execution with fallback chain (Gemini Pro → Flash → Flash Lite)
+- **SGR agent loop** — typed tool execution with fallback chain (Gemini Pro → Flash → Flash Lite)
 - **18 built-in tools** — file read/write/edit, bash, search, git status/diff/add/commit, and more
 - **Task Management** — persistent kanban board tracking via `.tasks/*.md` using the built-in `TaskTool`
 - **Fuzzy file search** (`Ctrl+P`) — fast file navigation with `nucleo` and live file preview
@@ -134,9 +134,8 @@ rust-code
 
 Notes:
 
-- BAML clients are defined in [`crates/rc-baml/baml_src/clients.baml`](crates/rc-baml/baml_src/clients.baml).
 - Default: Gemini 3.1 Pro with fallback to Flash and Flash Lite.
-- `BAML_LOG` is suppressed automatically by the app so the TUI stays clean.
+- Provider configuration via `~/.rust-code/config.toml` or `rust-code setup`.
 
 ## Quick Start
 
@@ -174,7 +173,7 @@ Example:
 - Prefer minimal patches
 - Run `cargo check` after code changes
 - Do not edit generated files directly
-- Put prompt/schema changes under `crates/rc-baml/baml_src/`
+- Run `make check` before committing
 
 ## Commands
 - Build: `cargo build`
@@ -245,27 +244,20 @@ Options:
 
 ## Development
 
-This repository now publishes a single crate, `rust-code`, but it still keeps a logical split in the source tree for the agent loop, tools, and generated BAML client code.
+The workspace consists of 4 crates:
 
-If you change BAML source files, edit them in:
-
-- [`crates/rc-baml/baml_src/`](crates/rc-baml/baml_src/)
-
-Then regenerate:
-
-```bash
-~/.cargo/bin/baml-cli generate --from crates/rc-baml/baml_src
-rm -rf crates/rc-cli/src/baml_client && cp -r crates/rc-baml/src/baml_client crates/rc-cli/src/baml_client
-```
-
-See [`crates/rc-baml/README.md`](crates/rc-baml/README.md) for the full BAML prompt writing guide.
-
-Useful commands:
+| Crate | What |
+|-------|------|
+| `rc-cli` | Main binary — TUI, headless mode, agent loop |
+| `sgr-agent` | LLM client + agent framework + session/memory/tools |
+| `sgr-agent-tui` | Shared TUI shell — chat panel, fuzzy picker, focus system |
+| `solograph` | MCP server for code intelligence |
 
 ```bash
-cargo check
-cargo build
-cargo test
+make build    # dev build
+make test     # run all tests
+make check    # test + clippy + fmt (pre-commit gate)
+make install  # build + install to /usr/local/bin
 ```
 
 ## Built With
@@ -273,7 +265,6 @@ cargo test
 | What | Crate / Link |
 |------|-------------|
 | Agent architecture | [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) — typed tool dispatch via union types |
-| LLM prompt engineering | [BAML](https://github.com/BoundaryML/baml) — DSL for type-safe structured output from LLMs |
 | TUI framework | [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm) |
 | Text input | [tui-textarea](https://github.com/rhysd/tui-textarea) |
 | Fuzzy search | [Nucleo](https://github.com/helix-editor/nucleo) (from Helix editor) |

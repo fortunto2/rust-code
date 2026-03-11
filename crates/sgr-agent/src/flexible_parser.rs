@@ -202,7 +202,11 @@ pub fn collect_candidates(raw: &str) -> Vec<Candidate> {
     }
 
     // Also try fixing the raw input directly if no candidates yet
-    if candidates.is_empty() || !candidates.iter().any(|c| c.source == CandidateSource::Direct) {
+    if candidates.is_empty()
+        || !candidates
+            .iter()
+            .any(|c| c.source == CandidateSource::Direct)
+    {
         if let Some(fixed) = try_fix_json(raw) {
             if !candidates.iter().any(|c| c.json == fixed) {
                 candidates.push(Candidate {
@@ -785,7 +789,8 @@ Hope that helps!"#;
 
     #[test]
     fn extracts_json_from_surrounding_text() {
-        let raw = r#"I think the answer is {"answer": "yes", "confidence": 0.9} based on my analysis."#;
+        let raw =
+            r#"I think the answer is {"answer": "yes", "confidence": 0.9} based on my analysis."#;
         let result = parse_flexible::<Answer>(raw).unwrap();
         assert_eq!(result.value.answer, "yes");
         assert_eq!(result.source, CandidateSource::Grepped);
@@ -947,14 +952,17 @@ The answer seems clear.
         // At least one candidate should have the first complete element
         let has_valid = candidates.iter().any(|c| {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(c) {
-                val["items"].as_array().map_or(false, |a| {
-                    a.len() >= 1 && a[0]["id"] == 1
-                })
+                val["items"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty() && a[0]["id"] == 1)
             } else {
                 false
             }
         });
-        assert!(has_valid, "At least one candidate should have first complete element");
+        assert!(
+            has_valid,
+            "At least one candidate should have first complete element"
+        );
     }
 
     #[test]
@@ -971,7 +979,7 @@ The answer seems clear.
         let step = result.unwrap().value;
         assert_eq!(step.situation, "working");
         // First complete action should survive, truncated second dropped
-        assert!(step.actions.len() >= 1);
+        assert!(!step.actions.is_empty());
     }
 
     #[test]
@@ -1010,10 +1018,7 @@ The answer seems clear.
             strip_comments("{\n// comment\n\"a\": 1\n}"),
             "{\n\n\"a\": 1\n}"
         );
-        assert_eq!(
-            strip_comments("{/* block */\"a\": 1}"),
-            "{\"a\": 1}"
-        );
+        assert_eq!(strip_comments("{/* block */\"a\": 1}"), "{\"a\": 1}");
     }
 
     #[test]

@@ -20,7 +20,10 @@ pub struct SgrAgent<C: LlmClient> {
 
 impl<C: LlmClient> SgrAgent<C> {
     pub fn new(client: C, system_prompt: impl Into<String>) -> Self {
-        Self { client, system_prompt: system_prompt.into() }
+        Self {
+            client,
+            system_prompt: system_prompt.into(),
+        }
     }
 }
 
@@ -36,22 +39,22 @@ impl<C: LlmClient> Agent for SgrAgent<C> {
 
         // Prepend system prompt if not already in messages
         let mut msgs = Vec::with_capacity(messages.len() + 1);
-        let has_system = messages.iter().any(|m| m.role == crate::types::Role::System);
+        let has_system = messages
+            .iter()
+            .any(|m| m.role == crate::types::Role::System);
         if !has_system && !self.system_prompt.is_empty() {
             msgs.push(Message::system(&self.system_prompt));
         }
         msgs.extend_from_slice(messages);
 
-        let (output, native_calls, raw) =
-            self.client.structured_call(&msgs, &schema).await?;
+        let (output, native_calls, raw) = self.client.structured_call(&msgs, &schema).await?;
 
         // Try to parse structured output first
         if let Some(val) = output {
-            if let Ok((situation, tool_calls)) =
-                union_schema::parse_action(&val.to_string(), &defs)
+            if let Ok((situation, tool_calls)) = union_schema::parse_action(&val.to_string(), &defs)
             {
-                let completed = tool_calls.is_empty()
-                    || tool_calls.iter().any(|tc| tc.name == "finish_task");
+                let completed =
+                    tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
                 return Ok(Decision {
                     situation,
                     task: vec![],
@@ -76,7 +79,12 @@ impl<C: LlmClient> Agent for SgrAgent<C> {
         if let Ok((situation, tool_calls)) = union_schema::parse_action(&raw, &defs) {
             let completed =
                 tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
-            return Ok(Decision { situation, task: vec![], tool_calls, completed });
+            return Ok(Decision {
+                situation,
+                task: vec![],
+                tool_calls,
+                completed,
+            });
         }
 
         // No tool calls — completed

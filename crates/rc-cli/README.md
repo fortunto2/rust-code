@@ -2,7 +2,7 @@
 
 `rust-code` is a terminal coding agent written in Rust.
 
-It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and a BAML-driven agent loop so you can work on a codebase without leaving the terminal.
+It combines a Ratatui-based TUI, typed tool execution, fuzzy navigation, session history, and an SGR-driven agent loop so you can work on a codebase without leaving the terminal.
 
 ## Install
 
@@ -50,7 +50,7 @@ rust-code --prompt "Summarize this repo" --resume
 ## Features
 
 - Interactive terminal chat UI built with `ratatui` and `crossterm`
-- Typed agent loop powered by BAML
+- Typed agent loop powered by sgr-agent (Schema-Guided Reasoning)
 - File read/write/edit tools
 - Shell command execution
 - Git status, diff, add, and commit tools
@@ -91,9 +91,8 @@ rust-code
 
 Notes:
 
-- `rust-code` currently initializes BAML clients that are defined in `crates/rc-baml/baml_src/clients.baml`.
-- The checked-in config currently includes Gemini, Vertex AI, and OpenRouter.
-- `BAML_LOG` is suppressed automatically by the app so the TUI stays clean.
+- Provider config stored in `~/.rust-code/config.toml`. Run `rust-code setup` to configure.
+- Default: Gemini 3.1 Pro with fallback to Flash and Flash Lite.
 
 ## Quick Start
 
@@ -131,7 +130,7 @@ Example:
 - Prefer minimal patches
 - Run `cargo check` after code changes
 - Do not edit generated files directly
-- Put prompt/schema changes under `crates/rc-baml/baml_src/`
+- Run `make check` before committing
 
 ## Commands
 - Build: `cargo build`
@@ -196,25 +195,10 @@ Options:
 
 ## Development
 
-This repository now publishes a single crate, `rust-code`, but it still keeps a logical split in the source tree for the agent loop, tools, and generated BAML client code.
-
-If you change BAML source files, edit them in:
-
-- `crates/rc-baml/baml_src/`
-
-Then regenerate:
-
 ```bash
-cd crates/rc-baml
-npx @boundaryml/baml@0.218.0 generate
-```
-
-Useful commands:
-
-```bash
-cargo check
-cargo build
-cargo test
+make build    # dev build
+make test     # run all tests
+make check    # test + clippy + fmt (pre-commit gate)
 ```
 
 ## Status

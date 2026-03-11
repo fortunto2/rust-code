@@ -27,8 +27,8 @@ pub use terminal::{init_terminal, restore_terminal, setup_panic_hook, Tui};
 #[cfg(unix)]
 pub use terminal::{init_tui_telemetry, TuiTelemetryGuard};
 
-// Re-export baml-agent essentials for convenience
-pub use baml_agent::{
-    run_loop, run_loop_stream, ActionResult, AgentConfig, AgentEngine, AgentMessage, BamlRegistry,
-    LoopConfig, LoopEvent, MessageRole, Session, SgrAgent, SgrAgentStream, StepDecision,
+// Re-export sgr-agent essentials for convenience
+pub use sgr_agent::{
+    run_loop, run_loop_stream, ActionResult, AgentConfig, AgentMessage, LoopConfig, LoopEvent,
+    MessageRole, Session, SgrAgent, SgrAgentStream, StepDecision,
 };

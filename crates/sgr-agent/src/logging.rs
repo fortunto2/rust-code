@@ -8,7 +8,7 @@ use tracing_subscriber::prelude::*;
 ///
 /// # Usage
 /// ```ignore
-/// let _guard = baml_agent::init_logging(".my-agent", "agent");
+/// let _guard = sgr_agent::init_logging(".my-agent", "agent");
 /// // all tracing::info!(), warn!(), error!() go to file
 /// // BAML stdout logging suppressed
 /// ```
@@ -30,8 +30,6 @@ pub fn init_logging(log_dir: &str, prefix: &str) -> WorkerGuard {
                 .with_thread_ids(false),
         )
         .init();
-
-    super::suppress_baml_log();
 
     guard
 }

@@ -70,8 +70,8 @@ impl BamlModule {
     pub fn parse_dir(dir: &Path) -> Result<Self, String> {
         let mut module = BamlModule::default();
 
-        let entries = std::fs::read_dir(dir)
-            .map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
+        let entries =
+            std::fs::read_dir(dir).map_err(|e| format!("Cannot read {}: {}", dir.display(), e))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -229,7 +229,10 @@ fn parse_type(s: &str) -> BamlType {
                 .map(|v| v.trim().to_string())
                 .collect();
             // Check if all variants are class references (start with uppercase)
-            if variants.iter().all(|v| v.starts_with(|c: char| c.is_uppercase())) {
+            if variants
+                .iter()
+                .all(|v| v.starts_with(|c: char| c.is_uppercase()))
+            {
                 return BamlType::Array(Box::new(BamlType::Union(variants)));
             }
         }
@@ -260,7 +263,10 @@ fn parse_type(s: &str) -> BamlType {
     // Union of types (without quotes): Type1 | Type2
     if s.contains('|') {
         let variants: Vec<String> = s.split('|').map(|v| v.trim().to_string()).collect();
-        if variants.iter().all(|v| v.starts_with(|c: char| c.is_uppercase())) {
+        if variants
+            .iter()
+            .all(|v| v.starts_with(|c: char| c.is_uppercase()))
+        {
             return BamlType::Union(variants);
         }
     }
@@ -307,9 +313,7 @@ fn remove_annotations(line: &str) -> String {
     // Remove @stream.not_null and other @annotations
     while let Some(start) = result.find('@') {
         let rest = &result[start + 1..];
-        let end = rest
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(rest.len());
+        let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
         result = format!("{}{}", &result[..start], &result[start + 1 + end..]);
     }
     result
@@ -346,10 +350,7 @@ fn parse_function(lines: &[&str]) -> Option<(BamlFunction, usize)> {
     // Extract return type
     let arrow = rest.find("->")?;
     let return_rest = rest[arrow + 2..].trim();
-    let return_type = return_rest
-        .trim_end_matches('{')
-        .trim()
-        .to_string();
+    let return_type = return_rest.trim_end_matches('{').trim().to_string();
 
     // Extract body (client + prompt)
     let mut client = String::new();
@@ -459,7 +460,10 @@ class FfmpegTask {
         assert_eq!(cls.name, "FfmpegTask");
 
         // task has fixed value
-        assert_eq!(cls.fields[0].fixed_value.as_deref(), Some("ffmpeg_operation"));
+        assert_eq!(
+            cls.fields[0].fixed_value.as_deref(),
+            Some("ffmpeg_operation")
+        );
 
         // input_path is Optional<String>
         assert!(matches!(cls.fields[2].ty, BamlType::Optional(_)));
@@ -558,13 +562,21 @@ function AnalyzeSegmentSgr(genre: string, scene: string) -> SgrSegmentDecision {
 
         // MontageAgentNextStep should have union array for next_actions
         let step = module.find_class("MontageAgentNextStep").unwrap();
-        let actions = step.fields.iter().find(|f| f.name == "next_actions").unwrap();
+        let actions = step
+            .fields
+            .iter()
+            .find(|f| f.name == "next_actions")
+            .unwrap();
         match &actions.ty {
             BamlType::Array(inner) => match inner.as_ref() {
                 BamlType::Union(variants) => {
                     assert!(variants.contains(&"AnalysisTask".to_string()));
                     assert!(variants.contains(&"FfmpegTask".to_string()));
-                    assert!(variants.len() >= 10, "Should have 16 tool types, got {}", variants.len());
+                    assert!(
+                        variants.len() >= 10,
+                        "Should have 16 tool types, got {}",
+                        variants.len()
+                    );
                 }
                 other => panic!("Expected Union, got {:?}", other),
             },

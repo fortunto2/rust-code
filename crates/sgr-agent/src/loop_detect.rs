@@ -41,7 +41,7 @@ use std::hash::{Hash, Hasher};
 /// # Examples
 ///
 /// ```
-/// use baml_agent::loop_detect::normalize_signature;
+/// use sgr_agent::loop_detect::normalize_signature;
 ///
 /// // All these normalize to the same category:
 /// let a = normalize_signature("bash:rg -n 'TODO|FIXME' crates/src/");

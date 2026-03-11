@@ -83,10 +83,7 @@ impl AgentConfig {
             .unwrap_or("")
             .to_string();
 
-        let max_retries = val
-            .get("max_retries")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as usize;
+        let max_retries = val.get("max_retries").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
         let max_reasoning_tools = val
             .get("max_reasoning_tools")
@@ -153,16 +150,16 @@ mod tests {
             AgentType::from_str_loose("tool_calling"),
             Some(AgentType::ToolCalling)
         );
-        assert_eq!(AgentType::from_str_loose("fc"), Some(AgentType::ToolCalling));
+        assert_eq!(
+            AgentType::from_str_loose("fc"),
+            Some(AgentType::ToolCalling)
+        );
         assert_eq!(
             AgentType::from_str_loose("flexible"),
             Some(AgentType::Flexible)
         );
         assert_eq!(AgentType::from_str_loose("text"), Some(AgentType::Flexible));
-        assert_eq!(
-            AgentType::from_str_loose("hybrid"),
-            Some(AgentType::Hybrid)
-        );
+        assert_eq!(AgentType::from_str_loose("hybrid"), Some(AgentType::Hybrid));
         assert_eq!(AgentType::from_str_loose("unknown"), None);
     }
 

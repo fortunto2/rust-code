@@ -1,15 +1,15 @@
 [package]
-name = "baml-agent-tui"
+name = "sgr-agent-tui"
 version = "0.4.0"
 edition = "2021"
-description = "Shared TUI shell for BAML SGR agents: chat panel, streaming, agent loop integration"
+description = "Shared TUI shell for SGR agents: chat panel, streaming, agent loop integration"
 license = "MIT"
 repository = "https://github.com/fortunto2/rust-code"
-keywords = ["baml", "agent", "tui", "ratatui", "llm"]
+keywords = ["sgr", "agent", "tui", "ratatui", "llm"]
 categories = ["command-line-interface"]
 
 [dependencies]
-baml-agent = { version = "0.4.0", path = "../baml-agent", features = ["telemetry"] }
+sgr-agent = { version = "0.2.0", path = "../sgr-agent", features = ["session", "telemetry"] }
 ratatui = "0.29.0"
 crossterm = "0.27"
 nucleo-matcher = "0.3"

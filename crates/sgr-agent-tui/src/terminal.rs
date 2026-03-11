@@ -56,7 +56,7 @@ pub fn init_tui_telemetry(log_dir: &str, prefix: &str) -> TuiTelemetryGuard {
     let stderr_file = redirect_stderr(&stderr_path);
 
     // OTEL telemetry → JSONL file
-    let otel = baml_agent::init_telemetry(log_dir, prefix);
+    let otel = sgr_agent::init_telemetry(log_dir, prefix);
 
     TuiTelemetryGuard {
         _stderr_file: stderr_file,
@@ -78,5 +78,5 @@ fn redirect_stderr(path: &str) -> Option<std::fs::File> {
 #[cfg(unix)]
 pub struct TuiTelemetryGuard {
     _stderr_file: Option<std::fs::File>,
-    _otel: baml_agent::TelemetryGuard,
+    _otel: sgr_agent::TelemetryGuard,
 }

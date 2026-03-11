@@ -69,13 +69,11 @@ fn coerce_to_number(value: &mut Value) {
 /// Coerce value to bool: "true"/"yes"/"1"/1 → true
 fn coerce_to_bool(value: &mut Value) {
     match value {
-        Value::String(s) => {
-            match s.to_lowercase().trim() {
-                "true" | "yes" | "1" | "on" | "y" => *value = Value::Bool(true),
-                "false" | "no" | "0" | "off" | "n" => *value = Value::Bool(false),
-                _ => {}
-            }
-        }
+        Value::String(s) => match s.to_lowercase().trim() {
+            "true" | "yes" | "1" | "on" | "y" => *value = Value::Bool(true),
+            "false" | "no" | "0" | "off" | "n" => *value = Value::Bool(false),
+            _ => {}
+        },
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 *value = Value::Bool(i != 0);
@@ -152,7 +150,10 @@ fn coerce_object(value: &mut Value, schema: &Value) {
                     coerce_value(field_value, prop_schema);
                 } else {
                     // Fill missing required fields with defaults
-                    let prop_type = prop_schema.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    let prop_type = prop_schema
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
                     let default_val = match prop_type {
                         "array" => Some(Value::Array(vec![])),
                         "string" => Some(Value::String(String::new())),
@@ -212,9 +213,9 @@ mod tests {
     #[test]
     fn coerce_string_to_number() {
         let schema = json!({"type": "number"});
-        let mut value = json!("3.14");
+        let mut value = json!("4.25");
         coerce_value(&mut value, &schema);
-        assert_eq!(value, json!(3.14));
+        assert_eq!(value, json!(4.25));
     }
 
     #[test]

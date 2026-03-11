@@ -63,10 +63,7 @@ fn generate_struct(
 
         // Fixed value fields become constants (skip in struct, add as default)
         if let Some(fixed) = &field.fixed_value {
-            out.push_str(&format!(
-                "    /// Fixed value: \"{}\"\n",
-                fixed
-            ));
+            out.push_str(&format!("    /// Fixed value: \"{}\"\n", fixed));
             out.push_str(&format!(
                 "    #[serde(default = \"default_{}__{}\")]\n",
                 snake_case(&class.name),
@@ -121,7 +118,11 @@ fn generate_tool_registry(out: &mut String, module: &BamlModule) {
     let tool_classes: Vec<&BamlClass> = module
         .classes
         .iter()
-        .filter(|c| c.fields.iter().any(|f| f.name == "task" && f.fixed_value.is_some()))
+        .filter(|c| {
+            c.fields
+                .iter()
+                .any(|f| f.name == "task" && f.fixed_value.is_some())
+        })
         .collect();
 
     if tool_classes.is_empty() {
@@ -135,16 +136,9 @@ fn generate_tool_registry(out: &mut String, module: &BamlModule) {
     out.push_str("    vec![\n");
 
     for class in &tool_classes {
-        let task_field = class
-            .fields
-            .iter()
-            .find(|f| f.name == "task")
-            .unwrap();
+        let task_field = class.fields.iter().find(|f| f.name == "task").unwrap();
         let tool_name = task_field.fixed_value.as_deref().unwrap();
-        let description = task_field
-            .description
-            .as_deref()
-            .unwrap_or(&class.name);
+        let description = task_field.description.as_deref().unwrap_or(&class.name);
 
         out.push_str(&format!(
             "        crate::tool::tool::<{}>(\"{}\", \"{}\"),\n",
@@ -166,10 +160,7 @@ fn generate_tool_registry(out: &mut String, module: &BamlModule) {
     for class in &tool_classes {
         let task_field = class.fields.iter().find(|f| f.name == "task").unwrap();
         let tool_name = task_field.fixed_value.as_deref().unwrap();
-        out.push_str(&format!(
-            "    #[serde(rename = \"{}\")]\n",
-            tool_name
-        ));
+        out.push_str(&format!("    #[serde(rename = \"{}\")]\n", tool_name));
         out.push_str(&format!("    {}({}),\n", class.name, class.name));
     }
 
@@ -227,11 +218,7 @@ fn baml_type_to_rust(
         }
         BamlType::StringEnum(variants) => {
             // Create a named enum type
-            let enum_name = format!(
-                "{}{}",
-                class_name,
-                pascal_case(field_name)
-            );
+            let enum_name = format!("{}{}", class_name, pascal_case(field_name));
             if !enum_map.iter().any(|(n, _)| n == &enum_name) {
                 enum_map.push((enum_name.clone(), variants.clone()));
             }
@@ -242,11 +229,7 @@ fn baml_type_to_rust(
             // Could generate a proper enum with #[serde(untagged)]
             if variants.len() <= 4 {
                 // Small union → generate enum
-                let enum_name = format!(
-                    "{}{}",
-                    class_name,
-                    pascal_case(field_name)
-                );
+                let enum_name = format!("{}{}", class_name, pascal_case(field_name));
                 if !enum_map.iter().any(|(n, _)| n == &enum_name) {
                     // This is a class union, not string enum — skip for now
                     // Would need #[serde(untagged)] enum

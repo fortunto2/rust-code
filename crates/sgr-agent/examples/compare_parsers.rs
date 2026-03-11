@@ -98,18 +98,24 @@ async fn call_codex_raw(system: &str, user: &str) -> Result<String, String> {
     let mut output = String::new();
     for line in text.lines() {
         if let Some(data) = line.strip_prefix("data: ") {
-            if data == "[DONE]" { break; }
+            if data == "[DONE]" {
+                break;
+            }
             if let Ok(ev) = serde_json::from_str::<serde_json::Value>(data) {
                 let et = ev["type"].as_str().unwrap_or("");
                 if et == "response.output_text.done" {
-                    if let Some(t) = ev["text"].as_str() { output = t.to_string(); }
+                    if let Some(t) = ev["text"].as_str() {
+                        output = t.to_string();
+                    }
                 }
                 if et == "response.completed" && output.is_empty() {
                     if let Some(outs) = ev["response"]["output"].as_array() {
                         for o in outs {
                             if let Some(cs) = o["content"].as_array() {
                                 for c in cs {
-                                    if let Some(t) = c["text"].as_str() { output.push_str(t); }
+                                    if let Some(t) = c["text"].as_str() {
+                                        output.push_str(t);
+                                    }
                                 }
                             }
                         }
@@ -129,7 +135,9 @@ fn base64_decode_url(input: &str) -> Result<Vec<u8>, String> {
     };
     let standard = padded.replace('-', "+").replace('_', "/");
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(&standard).map_err(|e| e.to_string())
+    base64::engine::general_purpose::STANDARD
+        .decode(&standard)
+        .map_err(|e| e.to_string())
 }
 
 // --- Test scenarios ---
@@ -141,7 +149,8 @@ struct TestCase {
 }
 
 fn test_cases() -> Vec<TestCase> {
-    let schema = serde_json::to_string_pretty(&sgr_agent::response_schema_for::<NextStep>()).unwrap();
+    let schema =
+        serde_json::to_string_pretty(&sgr_agent::response_schema_for::<NextStep>()).unwrap();
 
     vec![
         TestCase {
@@ -234,9 +243,16 @@ async fn main() {
     println!("  parse_flexible_coerced:   {}/{}", pass_coerced, total);
     println!();
     println!("Note: BAML parses the same text via its own jsonish SAP engine.");
-    println!("If sgr-agent scores {}/{}, it can fully replace BAML for text-only providers.", total, total);
+    println!(
+        "If sgr-agent scores {}/{}, it can fully replace BAML for text-only providers.",
+        total, total
+    );
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() } else { format!("{}...", &s[..s.floor_char_boundary(max)]) }
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..s.floor_char_boundary(max)])
+    }
 }

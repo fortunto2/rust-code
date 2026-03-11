@@ -64,7 +64,9 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
     ) -> Result<Decision, AgentError> {
         // Prepare messages with system prompt
         let mut msgs = Vec::with_capacity(messages.len() + 1);
-        let has_system = messages.iter().any(|m| m.role == crate::types::Role::System);
+        let has_system = messages
+            .iter()
+            .any(|m| m.role == crate::types::Role::System);
         if !has_system && !self.system_prompt.is_empty() {
             msgs.push(Message::system(&self.system_prompt));
         }
@@ -121,11 +123,7 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
         // Phase 2: Action — FC call with full toolkit + reasoning context
         let mut action_msgs = msgs.clone();
         // Add reasoning as assistant context
-        let reasoning_context = format!(
-            "Reasoning: {}\nPlan: {}",
-            situation,
-            plan.join(", ")
-        );
+        let reasoning_context = format!("Reasoning: {}\nPlan: {}", situation, plan.join(", "));
         action_msgs.push(Message::assistant(&reasoning_context));
         // Prompt to execute
         action_msgs.push(Message::user(
@@ -135,8 +133,8 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
         let defs = tools.to_defs();
         let tool_calls = self.client.tools_call(&action_msgs, &defs).await?;
 
-        let completed = tool_calls.is_empty()
-            || tool_calls.iter().any(|tc| tc.name == "finish_task");
+        let completed =
+            tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
 
         Ok(Decision {
             situation,
@@ -206,8 +204,12 @@ mod tests {
     struct DummyTool;
     #[async_trait::async_trait]
     impl Tool for DummyTool {
-        fn name(&self) -> &str { "read_file" }
-        fn description(&self) -> &str { "read a file" }
+        fn name(&self) -> &str {
+            "read_file"
+        }
+        fn description(&self) -> &str {
+            "read a file"
+        }
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}})
         }
@@ -238,12 +240,18 @@ mod tests {
         struct DoneClient;
         #[async_trait::async_trait]
         impl LlmClient for DoneClient {
-            async fn structured_call(&self, _: &[Message], _: &Value)
-                -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
+            async fn structured_call(
+                &self,
+                _: &[Message],
+                _: &Value,
+            ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
-            async fn tools_call(&self, _: &[Message], _: &[ToolDef])
-                -> Result<Vec<ToolCall>, SgrError> {
+            async fn tools_call(
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
+            ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![ToolCall {
                     id: "r1".into(),
                     name: "reasoning".into(),
@@ -273,12 +281,18 @@ mod tests {
         struct EmptyClient;
         #[async_trait::async_trait]
         impl LlmClient for EmptyClient {
-            async fn structured_call(&self, _: &[Message], _: &Value)
-                -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
+            async fn structured_call(
+                &self,
+                _: &[Message],
+                _: &Value,
+            ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
-            async fn tools_call(&self, _: &[Message], _: &[ToolDef])
-                -> Result<Vec<ToolCall>, SgrError> {
+            async fn tools_call(
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
+            ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![])
             }
             async fn complete(&self, _: &[Message]) -> Result<String, SgrError> {

@@ -13,9 +13,9 @@ use crate::agent::{Action, Agent};
 use crate::backend;
 use crate::preview::CodeHighlighter;
 use crate::tools::{self, FuzzySearcher};
-use baml_agent::{LoopDetector, LoopStatus, SgrAgent};
-use baml_agent_tui::command_palette::{CommandPalette, PaletteAction};
-use baml_agent_tui::focus::{FocusLayer, FocusRing};
+use sgr_agent::{LoopDetector, LoopStatus, SgrAgent};
+use sgr_agent_tui::command_palette::{CommandPalette, PaletteAction};
+use sgr_agent_tui::focus::{FocusLayer, FocusRing};
 
 #[derive(PartialEq)]
 pub enum AppMode {
@@ -61,14 +61,14 @@ impl InteractionMode {
         }
     }
 
-    /// Convert to baml-agent Intent for intent guard.
-    pub fn to_intent(self) -> baml_agent::Intent {
+    /// Convert to sgr-agent Intent for intent guard.
+    pub fn to_intent(self) -> sgr_agent::Intent {
         match self {
-            InteractionMode::Auto => baml_agent::Intent::Auto,
-            InteractionMode::Ask => baml_agent::Intent::Ask,
-            InteractionMode::Build => baml_agent::Intent::Build,
-            InteractionMode::Plan => baml_agent::Intent::Plan,
-            InteractionMode::Bash => baml_agent::Intent::Auto, // bash mode = full access
+            InteractionMode::Auto => sgr_agent::Intent::Auto,
+            InteractionMode::Ask => sgr_agent::Intent::Ask,
+            InteractionMode::Build => sgr_agent::Intent::Build,
+            InteractionMode::Plan => sgr_agent::Intent::Plan,
+            InteractionMode::Bash => sgr_agent::Intent::Auto, // bash mode = full access
         }
     }
 }
@@ -470,8 +470,8 @@ impl<'a> BashHistoryState<'a> {
 /// Task search state — fuzzy search over project tasks.
 pub struct TasksSearchState<'a> {
     pub input: TextArea<'a>,
-    pub all_items: Vec<baml_agent::Task>,
-    pub filtered_items: Vec<baml_agent::Task>,
+    pub all_items: Vec<sgr_agent::Task>,
+    pub filtered_items: Vec<sgr_agent::Task>,
     pub list_state: ListState,
     pub searcher: FuzzySearcher,
 }
@@ -496,7 +496,7 @@ impl<'a> TasksSearchState<'a> {
     }
 
     pub fn refresh(&mut self) {
-        self.all_items = baml_agent::load_tasks(std::path::Path::new("."));
+        self.all_items = sgr_agent::load_tasks(std::path::Path::new("."));
         self.update_search();
     }
 
@@ -510,7 +510,7 @@ impl<'a> TasksSearchState<'a> {
                 pattern::{CaseMatching, Normalization, Pattern},
             };
             let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-            let mut scored: Vec<(u32, baml_agent::Task)> = self
+            let mut scored: Vec<(u32, sgr_agent::Task)> = self
                 .all_items
                 .iter()
                 .filter_map(|t| {
@@ -979,7 +979,7 @@ impl<'a> App<'a> {
             if query.is_empty() {
                 let _ = agent_instance.load_last_session();
             } else {
-                let matches = baml_agent::search_sessions(".rust-code", query);
+                let matches = sgr_agent::search_sessions(".rust-code", query);
                 if let Some((_score, meta)) = matches.first() {
                     let _ = agent_instance.load_session_file(&meta.path);
                 }
@@ -1464,10 +1464,10 @@ impl<'a> App<'a> {
         }
 
         // Sidebar Rendering
-        let tasks = baml_agent::load_tasks(std::path::Path::new("."));
+        let tasks = sgr_agent::load_tasks(std::path::Path::new("."));
         let active_tasks: Vec<_> = tasks
             .iter()
-            .filter(|t| t.status != baml_agent::TaskStatus::Done)
+            .filter(|t| t.status != sgr_agent::TaskStatus::Done)
             .collect();
         let tasks_height = if active_tasks.is_empty() {
             3
@@ -1523,7 +1523,7 @@ impl<'a> App<'a> {
         // Tasks panel — always-visible kanban
         let done_count = tasks
             .iter()
-            .filter(|t| t.status == baml_agent::TaskStatus::Done)
+            .filter(|t| t.status == sgr_agent::TaskStatus::Done)
             .count();
         let tasks_title = format!(" Tasks [{}/{}] (F11) ", done_count, tasks.len());
         let mut task_lines: Vec<Line<'_>> = Vec::new();
@@ -1533,14 +1533,14 @@ impl<'a> App<'a> {
         } else {
             for t in &active_tasks {
                 let (marker, color) = match t.status {
-                    baml_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
-                    baml_agent::TaskStatus::Blocked => ("✗", Color::Red),
+                    sgr_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
+                    sgr_agent::TaskStatus::Blocked => ("✗", Color::Red),
                     _ => ("·", Color::DarkGray),
                 };
                 let priority_marker = match t.priority {
-                    baml_agent::Priority::High => "!",
-                    baml_agent::Priority::Medium => "",
-                    baml_agent::Priority::Low => "",
+                    sgr_agent::Priority::High => "!",
+                    sgr_agent::Priority::Medium => "",
+                    sgr_agent::Priority::Low => "",
                 };
                 task_lines.push(Line::from(vec![
                     Span::styled(format!("{} ", marker), Style::default().fg(color)),
@@ -1590,10 +1590,10 @@ impl<'a> App<'a> {
                         format!(" ({}/{})", installed, total)
                     }
                     8 => {
-                        let t = baml_agent::load_tasks(std::path::Path::new("."));
+                        let t = sgr_agent::load_tasks(std::path::Path::new("."));
                         let done = t
                             .iter()
-                            .filter(|t| t.status == baml_agent::TaskStatus::Done)
+                            .filter(|t| t.status == sgr_agent::TaskStatus::Done)
                             .count();
                         format!(" ({}/{})", done, t.len())
                     }
@@ -1973,15 +1973,15 @@ impl<'a> App<'a> {
                 .iter()
                 .map(|t| {
                     let (marker, color) = match t.status {
-                        baml_agent::TaskStatus::Done => ("✓", Color::Green),
-                        baml_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
-                        baml_agent::TaskStatus::Blocked => ("✗", Color::Red),
-                        baml_agent::TaskStatus::Todo => ("·", Color::DarkGray),
+                        sgr_agent::TaskStatus::Done => ("✓", Color::Green),
+                        sgr_agent::TaskStatus::InProgress => ("▶", Color::Yellow),
+                        sgr_agent::TaskStatus::Blocked => ("✗", Color::Red),
+                        sgr_agent::TaskStatus::Todo => ("·", Color::DarkGray),
                     };
                     let priority_icon = match t.priority {
-                        baml_agent::Priority::High => " !!",
-                        baml_agent::Priority::Medium => "",
-                        baml_agent::Priority::Low => "",
+                        sgr_agent::Priority::High => " !!",
+                        sgr_agent::Priority::Medium => "",
+                        sgr_agent::Priority::Low => "",
                     };
                     ListItem::new(Line::from(vec![
                         Span::styled(format!("{} ", marker), Style::default().fg(color)),
@@ -3474,12 +3474,12 @@ impl<'a> App<'a> {
                 if let Some(selected) = self.tasks_search_state.list_state.selected() {
                     if let Some(task) = self.tasks_search_state.filtered_items.get(selected) {
                         let next_status = match task.status {
-                            baml_agent::TaskStatus::Todo => baml_agent::TaskStatus::InProgress,
-                            baml_agent::TaskStatus::InProgress => baml_agent::TaskStatus::Done,
-                            baml_agent::TaskStatus::Blocked => baml_agent::TaskStatus::InProgress,
-                            baml_agent::TaskStatus::Done => baml_agent::TaskStatus::Todo,
+                            sgr_agent::TaskStatus::Todo => sgr_agent::TaskStatus::InProgress,
+                            sgr_agent::TaskStatus::InProgress => sgr_agent::TaskStatus::Done,
+                            sgr_agent::TaskStatus::Blocked => sgr_agent::TaskStatus::InProgress,
+                            sgr_agent::TaskStatus::Done => sgr_agent::TaskStatus::Todo,
                         };
-                        baml_agent::update_status(std::path::Path::new("."), task.id, next_status);
+                        sgr_agent::update_status(std::path::Path::new("."), task.id, next_status);
                         self.tasks_search_state.refresh();
                     }
                 }
@@ -3488,10 +3488,10 @@ impl<'a> App<'a> {
                 // Mark done
                 if let Some(selected) = self.tasks_search_state.list_state.selected() {
                     if let Some(task) = self.tasks_search_state.filtered_items.get(selected) {
-                        baml_agent::update_status(
+                        sgr_agent::update_status(
                             std::path::Path::new("."),
                             task.id,
-                            baml_agent::TaskStatus::Done,
+                            sgr_agent::TaskStatus::Done,
                         );
                         self.tasks_search_state.refresh();
                     }
@@ -3501,10 +3501,10 @@ impl<'a> App<'a> {
                 // Create new task from search input
                 let title = self.tasks_search_state.input.lines().join("");
                 if !title.trim().is_empty() {
-                    baml_agent::create_task(
+                    sgr_agent::create_task(
                         std::path::Path::new("."),
                         title.trim(),
-                        baml_agent::Priority::Medium,
+                        sgr_agent::Priority::Medium,
                     );
                     self.tasks_search_state.input = TextArea::default();
                     self.tasks_search_state.input.set_block(

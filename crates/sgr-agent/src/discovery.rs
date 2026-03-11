@@ -111,10 +111,18 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Tool for TestTool {
-        fn name(&self) -> &str { self.tool_name }
-        fn description(&self) -> &str { self.desc }
-        fn is_system(&self) -> bool { self.system }
-        fn parameters_schema(&self) -> Value { serde_json::json!({"type": "object"}) }
+        fn name(&self) -> &str {
+            self.tool_name
+        }
+        fn description(&self) -> &str {
+            self.desc
+        }
+        fn is_system(&self) -> bool {
+            self.system
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
         async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("ok"))
         }
@@ -123,9 +131,21 @@ mod tests {
     #[test]
     fn system_tools_always_included() {
         let reg = ToolRegistry::new()
-            .register(TestTool { tool_name: "finish_task", desc: "finish", system: true })
-            .register(TestTool { tool_name: "read_file", desc: "read a file from disk", system: false })
-            .register(TestTool { tool_name: "bash", desc: "run shell command", system: false });
+            .register(TestTool {
+                tool_name: "finish_task",
+                desc: "finish",
+                system: true,
+            })
+            .register(TestTool {
+                tool_name: "read_file",
+                desc: "read a file from disk",
+                system: false,
+            })
+            .register(TestTool {
+                tool_name: "bash",
+                desc: "run shell command",
+                system: false,
+            });
 
         let filter = ToolFilter::new(1);
         let selected = filter.select("read the file", &reg);
@@ -140,9 +160,21 @@ mod tests {
     #[test]
     fn relevant_tool_ranked_higher() {
         let reg = ToolRegistry::new()
-            .register(TestTool { tool_name: "read_file", desc: "read a file from disk", system: false })
-            .register(TestTool { tool_name: "bash", desc: "run shell command", system: false })
-            .register(TestTool { tool_name: "write_file", desc: "write content to a file", system: false });
+            .register(TestTool {
+                tool_name: "read_file",
+                desc: "read a file from disk",
+                system: false,
+            })
+            .register(TestTool {
+                tool_name: "bash",
+                desc: "run shell command",
+                system: false,
+            })
+            .register(TestTool {
+                tool_name: "write_file",
+                desc: "write content to a file",
+                system: false,
+            });
 
         let filter = ToolFilter::new(2);
         let selected = filter.select("read the file main.rs", &reg);
@@ -153,9 +185,21 @@ mod tests {
     #[test]
     fn empty_query_returns_all_up_to_max() {
         let reg = ToolRegistry::new()
-            .register(TestTool { tool_name: "a", desc: "tool a", system: false })
-            .register(TestTool { tool_name: "b", desc: "tool b", system: false })
-            .register(TestTool { tool_name: "c", desc: "tool c", system: false });
+            .register(TestTool {
+                tool_name: "a",
+                desc: "tool a",
+                system: false,
+            })
+            .register(TestTool {
+                tool_name: "b",
+                desc: "tool b",
+                system: false,
+            })
+            .register(TestTool {
+                tool_name: "c",
+                desc: "tool c",
+                system: false,
+            });
 
         let filter = ToolFilter::new(2);
         let selected = filter.select("", &reg);

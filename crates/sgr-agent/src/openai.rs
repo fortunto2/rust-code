@@ -327,8 +327,7 @@ impl OpenAIClient {
                             .get("arguments")
                             .and_then(|a| a.as_str())
                             .unwrap_or("{}");
-                        let args: Value =
-                            serde_json::from_str(args_str).unwrap_or(json!({}));
+                        let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
                         tool_calls.push(ToolCall {
                             id,
                             name,
@@ -378,12 +377,27 @@ impl OpenAIClient {
                     .and_then(|t| t.as_array())
                 {
                     for tc in tcs {
-                        let id = tc.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                        let id = tc
+                            .get("id")
+                            .and_then(|i| i.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         if let Some(func) = tc.get("function") {
-                            let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                            let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
+                            let name = func
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let args_str = func
+                                .get("arguments")
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("{}");
                             let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                            calls.push(ToolCall { id, name, arguments: args });
+                            calls.push(ToolCall {
+                                id,
+                                name,
+                                arguments: args,
+                            });
                         }
                     }
                 }

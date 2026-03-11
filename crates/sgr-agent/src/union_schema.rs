@@ -68,8 +68,7 @@ pub fn parse_action(raw: &str, _tools: &[ToolDef]) -> Result<(String, Vec<ToolCa
     // Try to parse as JSON via flexible parser, fall back to direct serde
     let value: Value = match crate::flexible_parser::parse_flexible::<Value>(raw) {
         Ok(r) => r.value,
-        Err(_) => serde_json::from_str::<Value>(raw)
-            .map_err(|e| ParseError(e.to_string()))?,
+        Err(_) => serde_json::from_str::<Value>(raw).map_err(|e| ParseError(e.to_string()))?,
     };
 
     let situation = match value.get("situation") {

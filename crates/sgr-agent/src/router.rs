@@ -153,12 +153,16 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for DummyClient {
             async fn structured_call(
-                &self, _: &[Message], _: &Value,
+                &self,
+                _: &[Message],
+                _: &Value,
             ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[ToolDef],
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
             ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![])
             }
@@ -184,12 +188,16 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for DummyClient {
             async fn structured_call(
-                &self, _: &[Message], _: &Value,
+                &self,
+                _: &[Message],
+                _: &Value,
             ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[ToolDef],
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
             ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![])
             }
@@ -228,12 +236,16 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for DummyClient {
             async fn structured_call(
-                &self, _: &[Message], _: &Value,
+                &self,
+                _: &[Message],
+                _: &Value,
             ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[ToolDef],
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
             ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![])
             }
@@ -242,8 +254,10 @@ mod tests {
             }
         }
 
-        let router = ModelRouter::new(DummyClient, DummyClient)
-            .with_config(RouterConfig { always_smart: true, ..Default::default() });
+        let router = ModelRouter::new(DummyClient, DummyClient).with_config(RouterConfig {
+            always_smart: true,
+            ..Default::default()
+        });
 
         let msgs = vec![Message::user("hi")];
         assert_eq!(router.route_messages(&msgs), ModelChoice::Smart);
@@ -256,12 +270,16 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmClient for DummyClient {
             async fn structured_call(
-                &self, _: &[Message], _: &Value,
+                &self,
+                _: &[Message],
+                _: &Value,
             ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
                 Ok((None, vec![], String::new()))
             }
             async fn tools_call(
-                &self, _: &[Message], _: &[ToolDef],
+                &self,
+                _: &[Message],
+                _: &[ToolDef],
             ) -> Result<Vec<ToolCall>, SgrError> {
                 Ok(vec![])
             }

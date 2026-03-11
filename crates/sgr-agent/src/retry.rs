@@ -192,7 +192,10 @@ mod tests {
         ) -> Result<Vec<ToolCall>, SgrError> {
             let n = self.call_count.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_count {
-                Err(SgrError::Api { status: 500, body: "internal error".into() })
+                Err(SgrError::Api {
+                    status: 500,
+                    body: "internal error".into(),
+                })
             } else {
                 Ok(vec![])
             }
@@ -235,9 +238,7 @@ mod tests {
             max_delay_ms: 10,
         });
 
-        let result = client
-            .tools_call(&[Message::user("hi")], &[])
-            .await;
+        let result = client.tools_call(&[Message::user("hi")], &[]).await;
         assert!(result.is_ok());
         assert_eq!(count.load(Ordering::SeqCst), 2);
     }
@@ -269,10 +270,18 @@ mod tests {
             body: "bad request".into()
         }));
         assert!(!is_retryable(&SgrError::Schema("parse".into())));
-        assert!(is_retryable(&SgrError::Schema("Empty response from model (parts: text)".into())));
+        assert!(is_retryable(&SgrError::Schema(
+            "Empty response from model (parts: text)".into()
+        )));
         assert!(is_retryable(&SgrError::EmptyResponse));
-        assert!(is_retryable(&SgrError::Api { status: 503, body: "server error".into() }));
-        assert!(is_retryable(&SgrError::Api { status: 429, body: "rate limit".into() }));
+        assert!(is_retryable(&SgrError::Api {
+            status: 503,
+            body: "server error".into()
+        }));
+        assert!(is_retryable(&SgrError::Api {
+            status: 429,
+            body: "rate limit".into()
+        }));
     }
 
     #[test]

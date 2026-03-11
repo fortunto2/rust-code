@@ -15,12 +15,12 @@ pub use search::*;
 pub use skills::*;
 pub use truncate::truncate_output;
 
-// Re-export shared tools from baml-agent
-pub use baml_agent::tools::fs::{edit_file, read_file, write_file};
-pub use baml_agent::tools::git::{GitStatus, git_add, git_commit, git_diff, git_status};
+// Re-export shared tools from sgr-agent
+pub use sgr_agent::app_tools::fs::{edit_file, read_file, write_file};
+pub use sgr_agent::app_tools::git::{GitStatus, git_add, git_commit, git_diff, git_status};
 
-// Re-export shared provider infrastructure from baml-agent
-pub use baml_agent::providers::{
+// Re-export shared provider infrastructure from sgr-agent
+pub use sgr_agent::providers::{
     CliProvider, CodexAuth, ProviderAuth, UserConfig, load_claude_keychain_token, load_config,
     save_config, start_cli_proxy, start_codex_proxy,
 };

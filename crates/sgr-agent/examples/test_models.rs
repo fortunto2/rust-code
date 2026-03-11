@@ -22,7 +22,11 @@ enum Action {
     #[serde(rename = "write_file")]
     WriteFile { path: String, content: String },
     #[serde(rename = "edit_file")]
-    EditFile { path: String, old_string: String, new_string: String },
+    EditFile {
+        path: String,
+        old_string: String,
+        new_string: String,
+    },
     #[serde(rename = "bash")]
     Bash { command: String },
     #[serde(rename = "search_code")]
@@ -32,19 +36,37 @@ enum Action {
     #[serde(rename = "ask_user")]
     AskUser { question: String },
     #[serde(rename = "git_status")]
-    GitStatus { #[serde(default)] dummy: Option<String> },
+    GitStatus {
+        #[serde(default)]
+        dummy: Option<String>,
+    },
     #[serde(rename = "git_diff")]
-    GitDiff { #[serde(default)] path: Option<String> },
+    GitDiff {
+        #[serde(default)]
+        path: Option<String>,
+    },
     #[serde(rename = "git_add")]
     GitAdd { paths: Vec<String> },
     #[serde(rename = "git_commit")]
     GitCommit { message: String },
     #[serde(rename = "mcp_call")]
-    McpCall { server: String, tool: String, #[serde(default)] arguments: Option<String> },
+    McpCall {
+        server: String,
+        tool: String,
+        #[serde(default)]
+        arguments: Option<String>,
+    },
     #[serde(rename = "memory")]
-    Memory { operation: String, #[serde(default)] content: Option<String> },
+    Memory {
+        operation: String,
+        #[serde(default)]
+        content: Option<String>,
+    },
     #[serde(rename = "project_map")]
-    ProjectMap { #[serde(default)] path: Option<String> },
+    ProjectMap {
+        #[serde(default)]
+        path: Option<String>,
+    },
 }
 
 const SYSTEM: &str = "You are an AI coding agent. Available tools: read_file, write_file, edit_file, bash, search_code, finish, ask_user, git_status, git_diff, git_add, git_commit, mcp_call, memory, project_map.\n\
@@ -157,16 +179,22 @@ async fn main() {
                     if let Some(step) = resp.output {
                         let first = step.actions.first().map(tool_name).unwrap_or("(none)");
                         let ok = case.accept.contains(&first);
-                        if ok { passed += 1; }
+                        if ok {
+                            passed += 1;
+                        }
 
-                        println!("{} tool={:<14} acts={} sit={}",
+                        println!(
+                            "{} tool={:<14} acts={} sit={}",
                             if ok { "OK   " } else { "WRONG" },
                             first,
                             step.actions.len(),
                             step.situation.chars().take(40).collect::<String>(),
                         );
                     } else {
-                        println!("FAIL: empty output (raw: {})", &resp.raw_text[..resp.raw_text.len().min(60)]);
+                        println!(
+                            "FAIL: empty output (raw: {})",
+                            &resp.raw_text[..resp.raw_text.len().min(60)]
+                        );
                     }
                 }
                 Err(e) => {

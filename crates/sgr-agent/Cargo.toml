@@ -1,6 +1,6 @@
 [package]
 name = "sgr-agent"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "SGR LLM client + agent framework — structured output, function calling, agent loop, 3 agent variants"
 license = "MIT"
@@ -13,14 +13,19 @@ default = ["gemini", "openai"]
 gemini = []
 openai = []
 agent = ["async-trait", "indexmap", "futures", "tokio-util"]
-genai = ["dep:genai", "async-trait"]
+session = ["agent", "dep:uuid"]
+app-tools = ["session", "dep:anyhow"]
+providers = ["dep:toml", "dep:base64"]
+telemetry = ["dep:tracing-subscriber", "dep:tracing-log", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:chrono"]
+logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
+search = ["dep:nucleo-matcher"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net", "process", "io-util", "fs"] }
 strsim = "0.11"
 thiserror = "2"
 tracing = "0.1"
@@ -28,7 +33,18 @@ async-trait = { version = "0.1", optional = true }
 indexmap = { version = "2", optional = true }
 futures = { version = "0.3", optional = true }
 tokio-util = { version = "0.7", optional = true }
-genai = { path = "../genai", optional = true }
+uuid = { version = "1", optional = true, features = ["v7"] }
+anyhow = { version = "1", optional = true }
+toml = { version = "0.8", optional = true }
+base64 = { version = "0.22", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }
+tracing-appender = { version = "0.2", optional = true }
+tracing-log = { version = "0.2", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
+chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+nucleo-matcher = { version = "0.3", optional = true }
 
 # Uniffi for iOS/Android Swift/Kotlin bindings (optional)
 # uniffi = { version = "0.31", optional = true }
@@ -38,6 +54,7 @@ base64 = "0.22"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
+anyhow = "1"
 
 [[example]]
 name = "agent_demo"

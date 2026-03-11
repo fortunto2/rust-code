@@ -43,11 +43,15 @@ pub mod agents;
 #[cfg(feature = "agent")]
 pub mod client;
 #[cfg(feature = "agent")]
+pub mod compaction;
+#[cfg(feature = "agent")]
 pub mod context;
 #[cfg(feature = "agent")]
 pub mod discovery;
 #[cfg(feature = "agent")]
 pub mod factory;
+#[cfg(feature = "agent")]
+pub mod prompt_loader;
 #[cfg(feature = "agent")]
 pub mod registry;
 #[cfg(feature = "agent")]
@@ -59,18 +63,92 @@ pub mod schema_simplifier;
 #[cfg(feature = "agent")]
 pub mod streaming;
 #[cfg(feature = "agent")]
-pub mod prompt_loader;
-#[cfg(feature = "agent")]
 pub mod swarm;
 #[cfg(feature = "agent")]
 pub mod swarm_tools;
 #[cfg(feature = "agent")]
-pub mod compaction;
-#[cfg(feature = "agent")]
 pub mod union_schema;
 
-#[cfg(feature = "genai")]
-pub mod genai_client;
+// Session / app modules (from baml-agent migration)
+#[cfg(feature = "session")]
+pub mod app_config;
+#[cfg(feature = "session")]
+pub mod app_loop;
+#[cfg(feature = "session")]
+pub mod doctor;
+#[cfg(feature = "session")]
+pub mod hints;
+#[cfg(feature = "session")]
+pub mod intent_guard;
+#[cfg(feature = "session")]
+pub mod loop_detect;
+#[cfg(feature = "session")]
+pub mod memory;
+#[cfg(feature = "session")]
+pub mod prompt_template;
+#[cfg(feature = "session")]
+pub mod session;
+#[cfg(feature = "session")]
+pub mod tasks;
+
+#[cfg(feature = "app-tools")]
+pub mod app_tools;
+
+#[cfg(feature = "providers")]
+pub mod providers;
+
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
+
+#[cfg(feature = "logging")]
+pub mod logging;
+
+// Re-exports from session modules
+#[cfg(feature = "session")]
+pub use app_config::{AgentConfig, AgentConfigError};
+#[cfg(feature = "session")]
+pub use app_loop::{
+    process_step, run_loop, run_loop_stream, ActionResult, LoopConfig, LoopEvent, SgrAgent,
+    SgrAgentStream, StepDecision,
+};
+#[cfg(feature = "session")]
+pub use doctor::{
+    check_gcloud_adc, check_provider_auth, default_tool_checks, fix_missing, format_check,
+    optional_tool_checks, print_doctor_report, run_doctor, run_tool_check, CheckResult,
+    CheckStatus, DoctorCheck,
+};
+#[cfg(feature = "session")]
+pub use hints::{
+    collect_hints, default_sources, default_sources_with_tasks, HintContext, HintSource,
+    PatternHints, TaskHints, ToolHints, WorkflowHints,
+};
+#[cfg(feature = "session")]
+pub use intent_guard::{guard_step, intent_allows, ActionKind, Intent, IntentCheck};
+#[cfg(feature = "logging")]
+pub use logging::init_logging;
+#[cfg(feature = "session")]
+pub use loop_detect::{normalize_signature, LoopDetector, LoopStatus};
+#[cfg(feature = "session")]
+pub use memory::{
+    action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
+    load_manifesto_from, norm, norm_owned, truncate_json_array, MemoryContext,
+};
+#[cfg(feature = "session")]
+pub use prompt_template::{build_system_prompt, BASE_SYSTEM_PROMPT};
+#[cfg(feature = "search")]
+pub use session::search_sessions;
+#[cfg(feature = "session")]
+pub use session::{
+    import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
+    SessionHeader, SessionMeta,
+};
+#[cfg(feature = "session")]
+pub use tasks::{
+    append_notes, create_task, load_tasks, save_task, tasks_context, tasks_dir, tasks_summary,
+    update_status, Priority, Task, TaskStatus,
+};
+#[cfg(feature = "telemetry")]
+pub use telemetry::{init_telemetry, TelemetryGuard};
 
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};

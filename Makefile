@@ -20,17 +20,17 @@ test:
 run: build
 	$(CARGO) run -- -p "$(PROMPT)"
 
-## Clippy lint (baml-agent clean, rc-cli has legacy warnings)
+## Clippy lint (sgr-agent + sgr-agent-tui clean, rc-cli has legacy warnings)
 lint:
-	$(CARGO) clippy -p baml-agent -p baml-agent-tui -p solograph --all-targets -- -D warnings
+	$(CARGO) clippy -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings
 
-## Format check (skip rc-baml/rc-cli which contain generated baml_client)
+## Format check
 fmt-check:
-	$(CARGO) fmt -p baml-agent -p baml-agent-tui -p solograph -p solograph -- --check
+	$(CARGO) fmt -p sgr-agent -p sgr-agent-tui -p rust-code -p solograph -- --check
 
 ## Format fix
 fmt:
-	$(CARGO) fmt -p baml-agent -p baml-agent-tui -p solograph
+	$(CARGO) fmt -p sgr-agent -p sgr-agent-tui -p rust-code -p solograph
 
 ## Pre-commit check (test + lint + fmt)
 check: test lint fmt-check

@@ -5,6 +5,7 @@
 //! Run: cargo run -p sgr-agent --features agent --example agent_demo
 //! Custom: cargo run -p sgr-agent --features agent --example agent_demo -- "your prompt"
 
+use serde_json::Value;
 use sgr_agent::agent_loop::{run_loop, LoopConfig, LoopEvent};
 use sgr_agent::agent_tool::{Tool, ToolError, ToolOutput};
 use sgr_agent::agents::sgr::SgrAgent;
@@ -14,7 +15,6 @@ use sgr_agent::registry::ToolRegistry;
 use sgr_agent::router::{ModelRouter, RouterConfig};
 use sgr_agent::types::Message;
 use sgr_agent::ProviderConfig;
-use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -61,7 +61,9 @@ fn run_shell(cmd: &str, cwd: &std::path::Path) -> Result<String, ToolError> {
         result.push_str(&stdout);
     }
     if !stderr.is_empty() {
-        if !result.is_empty() { result.push('\n'); }
+        if !result.is_empty() {
+            result.push('\n');
+        }
         result.push_str("[stderr] ");
         result.push_str(&stderr);
     }
@@ -77,8 +79,12 @@ struct ReadFileTool;
 
 #[async_trait::async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "Read a file from disk. Returns file contents. Supports offset/limit for large files." }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "Read a file from disk. Returns file contents. Supports offset/limit for large files."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -108,12 +114,23 @@ impl Tool for ReadFileTool {
                     .map(|(i, l)| format!("{:>4}  {}", offset + i + 1, l))
                     .collect::<Vec<_>>()
                     .join("\n");
-                let header = format!("[{} — {} lines total, showing {}-{}]\n",
-                    full_path.display(), total,
-                    offset + 1, (offset + limit).min(total));
-                Ok(ToolOutput::text(truncate(&format!("{}{}", header, selected), 8000)))
+                let header = format!(
+                    "[{} — {} lines total, showing {}-{}]\n",
+                    full_path.display(),
+                    total,
+                    offset + 1,
+                    (offset + limit).min(total)
+                );
+                Ok(ToolOutput::text(truncate(
+                    &format!("{}{}", header, selected),
+                    8000,
+                )))
             }
-            Err(e) => Ok(ToolOutput::text(format!("Error: {}: {}", full_path.display(), e))),
+            Err(e) => Ok(ToolOutput::text(format!(
+                "Error: {}: {}",
+                full_path.display(),
+                e
+            ))),
         }
     }
 }
@@ -124,8 +141,12 @@ struct WriteFileTool;
 
 #[async_trait::async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "Write content to a file (creates or overwrites)." }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "Write content to a file (creates or overwrites)."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -148,7 +169,11 @@ impl Tool for WriteFileTool {
         std::fs::write(&full_path, content)
             .map_err(|e| ToolError::Execution(format!("write: {}", e)))?;
 
-        Ok(ToolOutput::text(format!("Written {} bytes to {}", content.len(), full_path.display())))
+        Ok(ToolOutput::text(format!(
+            "Written {} bytes to {}",
+            content.len(),
+            full_path.display()
+        )))
     }
 }
 
@@ -158,8 +183,12 @@ struct EditFileTool;
 
 #[async_trait::async_trait]
 impl Tool for EditFileTool {
-    fn name(&self) -> &str { "edit_file" }
-    fn description(&self) -> &str { "Edit a file by replacing old_string with new_string. The old_string must match exactly." }
+    fn name(&self) -> &str {
+        "edit_file"
+    }
+    fn description(&self) -> &str {
+        "Edit a file by replacing old_string with new_string. The old_string must match exactly."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -182,11 +211,15 @@ impl Tool for EditFileTool {
 
         let count = content.matches(old_string).count();
         if count == 0 {
-            return Ok(ToolOutput::text(format!("old_string not found in {}", full_path.display())));
+            return Ok(ToolOutput::text(format!(
+                "old_string not found in {}",
+                full_path.display()
+            )));
         }
         if count > 1 {
             return Ok(ToolOutput::text(format!(
-                "old_string found {} times — provide more context to make it unique", count
+                "old_string found {} times — provide more context to make it unique",
+                count
             )));
         }
 
@@ -194,7 +227,10 @@ impl Tool for EditFileTool {
         std::fs::write(&full_path, &updated)
             .map_err(|e| ToolError::Execution(format!("write: {}", e)))?;
 
-        Ok(ToolOutput::text(format!("Edited {} — replaced 1 occurrence", full_path.display())))
+        Ok(ToolOutput::text(format!(
+            "Edited {} — replaced 1 occurrence",
+            full_path.display()
+        )))
     }
 }
 
@@ -204,8 +240,12 @@ struct BashTool;
 
 #[async_trait::async_trait]
 impl Tool for BashTool {
-    fn name(&self) -> &str { "bash" }
-    fn description(&self) -> &str { "Run a shell command and return stdout+stderr. For short-lived commands." }
+    fn name(&self) -> &str {
+        "bash"
+    }
+    fn description(&self) -> &str {
+        "Run a shell command and return stdout+stderr. For short-lived commands."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -229,8 +269,12 @@ struct BashBgTool;
 
 #[async_trait::async_trait]
 impl Tool for BashBgTool {
-    fn name(&self) -> &str { "bash_bg" }
-    fn description(&self) -> &str { "Run a long-running command in background (tmux). Use for servers, watchers, etc." }
+    fn name(&self) -> &str {
+        "bash_bg"
+    }
+    fn description(&self) -> &str {
+        "Run a long-running command in background (tmux). Use for servers, watchers, etc."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -252,7 +296,10 @@ impl Tool for BashBgTool {
             name, command
         );
         let result = run_shell(&tmux_cmd, &ctx.cwd)?;
-        Ok(ToolOutput::text(format!("Background task '{}' started.\n{}", name, result)))
+        Ok(ToolOutput::text(format!(
+            "Background task '{}' started.\n{}",
+            name, result
+        )))
     }
 }
 
@@ -262,8 +309,12 @@ struct SearchCodeTool;
 
 #[async_trait::async_trait]
 impl Tool for SearchCodeTool {
-    fn name(&self) -> &str { "search_code" }
-    fn description(&self) -> &str { "Search code: ripgrep content search + fuzzy file name matching. Returns matching lines with context." }
+    fn name(&self) -> &str {
+        "search_code"
+    }
+    fn description(&self) -> &str {
+        "Search code: ripgrep content search + fuzzy file name matching. Returns matching lines with context."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -296,7 +347,9 @@ impl Tool for SearchCodeTool {
             result.push_str(&content_results);
         }
         if !file_results.contains("[exit code:") {
-            if !result.is_empty() { result.push_str("\n\n"); }
+            if !result.is_empty() {
+                result.push_str("\n\n");
+            }
             result.push_str("## File name matches:\n");
             result.push_str(&file_results);
         }
@@ -314,8 +367,12 @@ struct GitStatusTool;
 
 #[async_trait::async_trait]
 impl Tool for GitStatusTool {
-    fn name(&self) -> &str { "git_status" }
-    fn description(&self) -> &str { "Show git status: branch, modified files, staged changes." }
+    fn name(&self) -> &str {
+        "git_status"
+    }
+    fn description(&self) -> &str {
+        "Show git status: branch, modified files, staged changes."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -329,7 +386,13 @@ impl Tool for GitStatusTool {
 
         let result = format!(
             "Branch: {}\nRecent commits:\n{}\nStatus:\n{}",
-            branch.trim(), log.trim(), if status.trim().is_empty() { "  (clean)" } else { status.trim() }
+            branch.trim(),
+            log.trim(),
+            if status.trim().is_empty() {
+                "  (clean)"
+            } else {
+                status.trim()
+            }
         );
         Ok(ToolOutput::text(result))
     }
@@ -341,8 +404,12 @@ struct GitDiffTool;
 
 #[async_trait::async_trait]
 impl Tool for GitDiffTool {
-    fn name(&self) -> &str { "git_diff" }
-    fn description(&self) -> &str { "Show git diff. Optional: specific file, staged changes." }
+    fn name(&self) -> &str {
+        "git_diff"
+    }
+    fn description(&self) -> &str {
+        "Show git diff. Optional: specific file, staged changes."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -354,14 +421,22 @@ impl Tool for GitDiffTool {
     }
     async fn execute(&self, args: Value, ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
         let mut cmd = String::from("git diff");
-        if args.get("cached").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if args
+            .get("cached")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             cmd.push_str(" --cached");
         }
         if let Some(path) = get_opt_str(&args, "path") {
             cmd.push_str(&format!(" -- '{}'", path));
         }
         let result = run_shell(&cmd, &ctx.cwd)?;
-        Ok(ToolOutput::text(if result.trim().is_empty() { "No changes.".into() } else { truncate(&result, 8000) }))
+        Ok(ToolOutput::text(if result.trim().is_empty() {
+            "No changes.".into()
+        } else {
+            truncate(&result, 8000)
+        }))
     }
 }
 
@@ -371,8 +446,12 @@ struct GitAddTool;
 
 #[async_trait::async_trait]
 impl Tool for GitAddTool {
-    fn name(&self) -> &str { "git_add" }
-    fn description(&self) -> &str { "Stage files for git commit." }
+    fn name(&self) -> &str {
+        "git_add"
+    }
+    fn description(&self) -> &str {
+        "Stage files for git commit."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -387,11 +466,13 @@ impl Tool for GitAddTool {
         })
     }
     async fn execute(&self, args: Value, ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
-        let paths = args.get("paths")
+        let paths = args
+            .get("paths")
             .and_then(|v| v.as_array())
             .ok_or_else(|| ToolError::InvalidArgs("missing 'paths' array".into()))?;
 
-        let path_strs: Vec<String> = paths.iter()
+        let path_strs: Vec<String> = paths
+            .iter()
             .filter_map(|v| v.as_str().map(|s| format!("'{}'", s)))
             .collect();
 
@@ -401,7 +482,11 @@ impl Tool for GitAddTool {
 
         let cmd = format!("git add {}", path_strs.join(" "));
         let result = run_shell(&cmd, &ctx.cwd)?;
-        Ok(ToolOutput::text(format!("Staged {} file(s).\n{}", path_strs.len(), result)))
+        Ok(ToolOutput::text(format!(
+            "Staged {} file(s).\n{}",
+            path_strs.len(),
+            result
+        )))
     }
 }
 
@@ -411,8 +496,12 @@ struct GitCommitTool;
 
 #[async_trait::async_trait]
 impl Tool for GitCommitTool {
-    fn name(&self) -> &str { "git_commit" }
-    fn description(&self) -> &str { "Create a git commit with the given message." }
+    fn name(&self) -> &str {
+        "git_commit"
+    }
+    fn description(&self) -> &str {
+        "Create a git commit with the given message."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -436,8 +525,12 @@ struct ProjectMapTool;
 
 #[async_trait::async_trait]
 impl Tool for ProjectMapTool {
-    fn name(&self) -> &str { "project_map" }
-    fn description(&self) -> &str { "Show project structure: directory tree with key files and their roles." }
+    fn name(&self) -> &str {
+        "project_map"
+    }
+    fn description(&self) -> &str {
+        "Show project structure: directory tree with key files and their roles."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -467,8 +560,12 @@ impl Tool for ProjectMapTool {
         );
         let key_info = run_shell(&key_files_cmd, &ctx.cwd).unwrap_or_default();
 
-        let result = format!("## Project: {}\n\n### Files:\n{}\n\n### Key files:\n{}",
-            full_path.display(), files, key_info);
+        let result = format!(
+            "## Project: {}\n\n### Files:\n{}\n\n### Key files:\n{}",
+            full_path.display(),
+            files,
+            key_info
+        );
         Ok(ToolOutput::text(truncate(&result, 8000)))
     }
 }
@@ -479,8 +576,12 @@ struct DependenciesTool;
 
 #[async_trait::async_trait]
 impl Tool for DependenciesTool {
-    fn name(&self) -> &str { "dependencies" }
-    fn description(&self) -> &str { "Show project dependencies from Cargo.toml / package.json / pyproject.toml." }
+    fn name(&self) -> &str {
+        "dependencies"
+    }
+    fn description(&self) -> &str {
+        "Show project dependencies from Cargo.toml / package.json / pyproject.toml."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -497,7 +598,8 @@ impl Tool for DependenciesTool {
         } else {
             // Auto-detect
             let candidates = ["Cargo.toml", "package.json", "pyproject.toml"];
-            candidates.iter()
+            candidates
+                .iter()
                 .map(|c| ctx.cwd.join(c))
                 .find(|p| p.exists())
                 .ok_or_else(|| ToolError::Execution("No manifest found".into()))?
@@ -506,7 +608,11 @@ impl Tool for DependenciesTool {
         let content = std::fs::read_to_string(&manifest)
             .map_err(|e| ToolError::Execution(format!("read: {}", e)))?;
 
-        Ok(ToolOutput::text(format!("[{}]\n{}", manifest.display(), truncate(&content, 6000))))
+        Ok(ToolOutput::text(format!(
+            "[{}]\n{}",
+            manifest.display(),
+            truncate(&content, 6000)
+        )))
     }
 }
 
@@ -516,8 +622,12 @@ struct MemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for MemoryTool {
-    fn name(&self) -> &str { "memory" }
-    fn description(&self) -> &str { "Save or forget a learned insight. Persists across sessions in MEMORY.jsonl." }
+    fn name(&self) -> &str {
+        "memory"
+    }
+    fn description(&self) -> &str {
+        "Save or forget a learned insight. Persists across sessions in MEMORY.jsonl."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -553,33 +663,49 @@ impl Tool for MemoryTool {
                     "created": chrono_now(),
                 });
                 let mut f = std::fs::OpenOptions::new()
-                    .create(true).append(true).open(&memory_file)
+                    .create(true)
+                    .append(true)
+                    .open(&memory_file)
                     .map_err(|e| ToolError::Execution(e.to_string()))?;
                 writeln!(f, "{}", entry).map_err(|e| ToolError::Execution(e.to_string()))?;
-                Ok(ToolOutput::text(format!("Saved to memory: [{}] {}", section, content)))
+                Ok(ToolOutput::text(format!(
+                    "Saved to memory: [{}] {}",
+                    section, content
+                )))
             }
             "forget" => {
                 // Read, filter out matching content, rewrite
                 if let Ok(data) = std::fs::read_to_string(&memory_file) {
-                    let filtered: Vec<&str> = data.lines()
+                    let filtered: Vec<&str> = data
+                        .lines()
                         .filter(|line| !line.contains(content))
                         .collect();
                     std::fs::write(&memory_file, filtered.join("\n"))
                         .map_err(|e| ToolError::Execution(e.to_string()))?;
-                    Ok(ToolOutput::text(format!("Forgot memory matching: {}", content)))
+                    Ok(ToolOutput::text(format!(
+                        "Forgot memory matching: {}",
+                        content
+                    )))
                 } else {
                     Ok(ToolOutput::text("No memories to forget."))
                 }
             }
-            _ => Ok(ToolOutput::text(format!("Unknown operation: {}", operation))),
+            _ => Ok(ToolOutput::text(format!(
+                "Unknown operation: {}",
+                operation
+            ))),
         }
     }
 }
 
 fn chrono_now() -> String {
     // Simple ISO timestamp without chrono dep
-    let output = Command::new("date").arg("-u").arg("+%Y-%m-%dT%H:%M:%SZ").output();
-    output.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    let output = Command::new("date")
+        .arg("-u")
+        .arg("+%Y-%m-%dT%H:%M:%SZ")
+        .output();
+    output
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".into())
 }
 
@@ -589,8 +715,12 @@ struct TaskTool;
 
 #[async_trait::async_trait]
 impl Tool for TaskTool {
-    fn name(&self) -> &str { "task" }
-    fn description(&self) -> &str { "Manage tasks: create, list, update status, mark done. Stored in .agent-demo/tasks.json." }
+    fn name(&self) -> &str {
+        "task"
+    }
+    fn description(&self) -> &str {
+        "Manage tasks: create, list, update status, mark done. Stored in .agent-demo/tasks.json."
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -636,18 +766,30 @@ impl Tool for TaskTool {
                 if tasks.is_empty() {
                     return Ok(ToolOutput::text("No tasks."));
                 }
-                let list: Vec<String> = tasks.iter().map(|t| {
-                    format!("#{} [{}] {} ({})",
-                        t["id"], t["status"].as_str().unwrap_or("?"),
-                        t["title"].as_str().unwrap_or("?"),
-                        t["priority"].as_str().unwrap_or("?"))
-                }).collect();
+                let list: Vec<String> = tasks
+                    .iter()
+                    .map(|t| {
+                        format!(
+                            "#{} [{}] {} ({})",
+                            t["id"],
+                            t["status"].as_str().unwrap_or("?"),
+                            t["title"].as_str().unwrap_or("?"),
+                            t["priority"].as_str().unwrap_or("?")
+                        )
+                    })
+                    .collect();
                 Ok(ToolOutput::text(list.join("\n")))
             }
             "update" | "done" => {
-                let task_id = args.get("task_id").and_then(|v| v.as_u64())
-                    .ok_or_else(|| ToolError::InvalidArgs("missing task_id".into()))? as usize;
-                if let Some(task) = tasks.iter_mut().find(|t| t["id"].as_u64() == Some(task_id as u64)) {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| ToolError::InvalidArgs("missing task_id".into()))?
+                    as usize;
+                if let Some(task) = tasks
+                    .iter_mut()
+                    .find(|t| t["id"].as_u64() == Some(task_id as u64))
+                {
                     if operation == "done" {
                         task["status"] = serde_json::json!("done");
                     } else if let Some(status) = get_opt_str(&args, "status") {
@@ -663,7 +805,10 @@ impl Tool for TaskTool {
                     Ok(ToolOutput::text(format!("Task #{} not found.", task_id)))
                 }
             }
-            _ => Ok(ToolOutput::text(format!("Unknown operation: {}", operation))),
+            _ => Ok(ToolOutput::text(format!(
+                "Unknown operation: {}",
+                operation
+            ))),
         }
     }
 }
@@ -674,9 +819,15 @@ struct AskUserTool;
 
 #[async_trait::async_trait]
 impl Tool for AskUserTool {
-    fn name(&self) -> &str { "ask_user" }
-    fn description(&self) -> &str { "Ask the user a clarifying question. Use when the task is ambiguous or you need confirmation before a destructive action." }
-    fn is_system(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "ask_user"
+    }
+    fn description(&self) -> &str {
+        "Ask the user a clarifying question. Use when the task is ambiguous or you need confirmation before a destructive action."
+    }
+    fn is_system(&self) -> bool {
+        true
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -694,10 +845,14 @@ impl Tool for AskUserTool {
         std::io::stdout().flush().ok();
 
         let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)
+        std::io::stdin()
+            .read_line(&mut answer)
             .map_err(|e| ToolError::Execution(format!("stdin: {}", e)))?;
 
-        Ok(ToolOutput::text(format!("User answered: {}", answer.trim())))
+        Ok(ToolOutput::text(format!(
+            "User answered: {}",
+            answer.trim()
+        )))
     }
 }
 
@@ -707,9 +862,15 @@ struct FinishTaskTool;
 
 #[async_trait::async_trait]
 impl Tool for FinishTaskTool {
-    fn name(&self) -> &str { "finish_task" }
-    fn description(&self) -> &str { "Call when the user's task is complete. Provide a summary of what was accomplished." }
-    fn is_system(&self) -> bool { true }
+    fn name(&self) -> &str {
+        "finish_task"
+    }
+    fn description(&self) -> &str {
+        "Call when the user's task is complete. Provide a summary of what was accomplished."
+    }
+    fn is_system(&self) -> bool {
+        true
+    }
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -720,7 +881,8 @@ impl Tool for FinishTaskTool {
         })
     }
     async fn execute(&self, args: Value, _ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
-        let summary = args.get("summary")
+        let summary = args
+            .get("summary")
             .and_then(|v| v.as_str())
             .unwrap_or("Done");
         Ok(ToolOutput::done(summary))
@@ -764,8 +926,10 @@ AVAILABLE TOOLS:
 
 #[tokio::main]
 async fn main() {
-    let smart_model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.1-pro-preview".into());
-    let fast_model = std::env::var("GEMINI_FAST_MODEL").unwrap_or_else(|_| "gemini-3.1-flash-lite-preview".into());
+    let smart_model =
+        std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.1-pro-preview".into());
+    let fast_model = std::env::var("GEMINI_FAST_MODEL")
+        .unwrap_or_else(|_| "gemini-3.1-flash-lite-preview".into());
 
     let prompt = std::env::args().nth(1).unwrap_or_else(|| {
         "Explore this project: show the project map, read the main Cargo.toml, then list all crates with a one-line description of each.".into()
@@ -776,8 +940,14 @@ async fn main() {
     println!("╠══════════════════════════════════════════════════════╣");
     println!("║  Smart: {:<44} ║", smart_model);
     println!("║  Fast:  {:<44} ║", fast_model);
-    println!("║  Prompt: {:<43} ║",
-        if prompt.len() > 43 { format!("{}...", &prompt[..40]) } else { prompt.clone() });
+    println!(
+        "║  Prompt: {:<43} ║",
+        if prompt.len() > 43 {
+            format!("{}...", &prompt[..40])
+        } else {
+            prompt.clone()
+        }
+    );
     println!("╚══════════════════════════════════════════════════════╝");
     println!();
 
@@ -803,18 +973,26 @@ async fn main() {
     println!("Registered {} tools\n", tools.len());
 
     // Build dual-model router — Vertex AI or Google AI
-    let (smart_config, fast_config) = if let Ok(project_id) = std::env::var("GOOGLE_CLOUD_PROJECT") {
+    let (smart_config, fast_config) = if let Ok(project_id) = std::env::var("GOOGLE_CLOUD_PROJECT")
+    {
         let access_token = String::from_utf8(
-            Command::new("gcloud").args(["auth", "print-access-token"])
-                .output().expect("gcloud not found").stdout
-        ).unwrap().trim().to_string();
+            Command::new("gcloud")
+                .args(["auth", "print-access-token"])
+                .output()
+                .expect("gcloud not found")
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
         println!("  Backend: Vertex AI (project: {})", project_id);
         (
             ProviderConfig::vertex(&access_token, &project_id, &smart_model),
             ProviderConfig::vertex(&access_token, &project_id, &fast_model),
         )
     } else {
-        let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT required");
+        let api_key = std::env::var("GEMINI_API_KEY")
+            .expect("GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT required");
         println!("  Backend: Google AI (API key)");
         (
             ProviderConfig::gemini(&api_key, &smart_model),
@@ -823,22 +1001,30 @@ async fn main() {
     };
     let smart_client = GeminiClient::new(smart_config);
     let fast_client = GeminiClient::new(fast_config);
-    let router = ModelRouter::new(smart_client, fast_client)
-        .with_config(RouterConfig {
-            message_threshold: 10,
-            tool_threshold: 8,
-            always_smart: false,
-        });
+    let router = ModelRouter::new(smart_client, fast_client).with_config(RouterConfig {
+        message_threshold: 10,
+        tool_threshold: 8,
+        always_smart: false,
+    });
     let agent = SgrAgent::new(router, SYSTEM_PROMPT);
 
     // Context
     let mut ctx = AgentContext::new();
     let mut messages = vec![Message::user(&prompt)];
-    let loop_config = LoopConfig { max_steps: 15, loop_abort_threshold: 4, ..Default::default() };
+    let loop_config = LoopConfig {
+        max_steps: 15,
+        loop_abort_threshold: 4,
+        ..Default::default()
+    };
 
     // Run!
-    let result = run_loop(&agent, &tools, &mut ctx, &mut messages, &loop_config, |event| {
-        match event {
+    let result = run_loop(
+        &agent,
+        &tools,
+        &mut ctx,
+        &mut messages,
+        &loop_config,
+        |event| match event {
             LoopEvent::StepStart { step } => {
                 println!("── Step {} ──────────────────────────────────────", step);
             }
@@ -864,7 +1050,11 @@ async fn main() {
             LoopEvent::ToolResult { name, output } => {
                 let lines: Vec<&str> = output.lines().collect();
                 let preview = if lines.len() > 5 {
-                    format!("{}\n       ... ({} more lines)", lines[..5].join("\n       "), lines.len() - 5)
+                    format!(
+                        "{}\n       ... ({} more lines)",
+                        lines[..5].join("\n       "),
+                        lines.len() - 5
+                    )
                 } else {
                     lines.join("\n       ")
                 };
@@ -882,8 +1072,9 @@ async fn main() {
             LoopEvent::WaitingForInput { question, .. } => {
                 println!("  ?? {}", question);
             }
-        }
-    }).await;
+        },
+    )
+    .await;
 
     match result {
         Ok(steps) => println!("Total steps: {}", steps),

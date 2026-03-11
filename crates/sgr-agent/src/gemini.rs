@@ -146,17 +146,17 @@ impl GeminiClient {
         let raw_text = self.extract_raw_text(&response_body);
         if raw_text.trim().is_empty() {
             // Log finish reason and response parts for debugging
-            if let Some(candidate) = response_body
-                .get("candidates")
-                .and_then(|c| c.get(0))
-            {
+            if let Some(candidate) = response_body.get("candidates").and_then(|c| c.get(0)) {
                 let reason = candidate
                     .get("finishReason")
                     .and_then(|r| r.as_str())
                     .unwrap_or("unknown");
                 tracing::warn!(
                     finish_reason = reason,
-                    has_parts = candidate.get("content").and_then(|c| c.get("parts")).is_some(),
+                    has_parts = candidate
+                        .get("content")
+                        .and_then(|c| c.get("parts"))
+                        .is_some(),
                     "empty raw_text from Gemini"
                 );
             }
@@ -189,13 +189,19 @@ impl GeminiClient {
                 .and_then(|c| c.get("parts"))
                 .and_then(|p| p.as_array())
                 .map(|parts| {
-                    parts.iter()
+                    parts
+                        .iter()
                         .map(|p| {
-                            if p.get("text").is_some() { "text".to_string() }
-                            else if p.get("functionCall").is_some() {
-                                format!("functionCall:{}", p["functionCall"]["name"].as_str().unwrap_or("?"))
+                            if p.get("text").is_some() {
+                                "text".to_string()
+                            } else if p.get("functionCall").is_some() {
+                                format!(
+                                    "functionCall:{}",
+                                    p["functionCall"]["name"].as_str().unwrap_or("?")
+                                )
+                            } else {
+                                format!("unknown:{}", p)
                             }
-                            else { format!("unknown:{}", p) }
                         })
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -212,7 +218,10 @@ impl GeminiClient {
                 candidate = candidate_json.as_str(),
                 "SGR empty response"
             );
-            return Err(SgrError::Schema(format!("Empty response from model (parts: {})", parts_summary)));
+            return Err(SgrError::Schema(format!(
+                "Empty response from model (parts: {})",
+                parts_summary
+            )));
         }
 
         Ok(SgrResponse {
@@ -315,8 +324,7 @@ impl GeminiClient {
         }
 
         if !tools.is_empty() {
-            let function_declarations: Vec<Value> =
-                tools.iter().map(|t| t.to_gemini()).collect();
+            let function_declarations: Vec<Value> = tools.iter().map(|t| t.to_gemini()).collect();
             body["tools"] = json!([{
                 "functionDeclarations": function_declarations,
             }]);
@@ -345,8 +353,7 @@ impl GeminiClient {
             gen_config["maxOutputTokens"] = json!(max_tokens);
         }
 
-        let function_declarations: Vec<Value> =
-            tools.iter().map(|t| t.to_gemini()).collect();
+        let function_declarations: Vec<Value> = tools.iter().map(|t| t.to_gemini()).collect();
 
         let mut body = json!({
             "contents": contents,
@@ -383,7 +390,11 @@ impl GeminiClient {
         self.messages_to_contents_inner(messages, false)
     }
 
-    fn messages_to_contents_inner(&self, messages: &[Message], use_function_response: bool) -> Vec<Value> {
+    fn messages_to_contents_inner(
+        &self,
+        messages: &[Message],
+        use_function_response: bool,
+    ) -> Vec<Value> {
         let mut contents = Vec::new();
 
         let mut i = 0;
@@ -435,7 +446,8 @@ impl GeminiClient {
                         while i < messages.len() && messages[i].role == Role::Tool {
                             let tool_msg = &messages[i];
                             let call_id = tool_msg.tool_call_id.as_deref().unwrap_or("unknown");
-                            let func_name = match call_id.split('#').collect::<Vec<_>>().as_slice() {
+                            let func_name = match call_id.split('#').collect::<Vec<_>>().as_slice()
+                            {
                                 ["call", name, _counter] => *name,
                                 _ => call_id,
                             };
@@ -615,7 +627,10 @@ impl GeminiClient {
                 // Format: "Unexpected tool call: {\"tool_name\": \"bash\", \"command\": \"...\"}"
                 if calls.is_empty() {
                     if let Some(msg) = candidate.get("finishMessage").and_then(|m| m.as_str()) {
-                        tracing::debug!(finish_message = msg, "parsing finishMessage for tool calls");
+                        tracing::debug!(
+                            finish_message = msg,
+                            "parsing finishMessage for tool calls"
+                        );
                         if let Some(json_start) = msg.find('{') {
                             let json_str = &msg[json_start..];
                             // Try to find matching closing brace for clean extraction
@@ -628,7 +643,9 @@ impl GeminiClient {
                                 // Handle two formats:
                                 // 1. Flat: {"tool_name": "bash", "command": "..."}
                                 // 2. Actions array: {"actions": [{"tool_name": "read_file", "path": "..."}]}
-                                let items: Vec<Value> = if let Some(actions) = tc_json.get("actions").and_then(|a| a.as_array()) {
+                                let items: Vec<Value> = if let Some(actions) =
+                                    tc_json.get("actions").and_then(|a| a.as_array())
+                                {
                                     actions.clone()
                                 } else {
                                     vec![tc_json]
@@ -660,7 +677,6 @@ impl GeminiClient {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,13 +692,12 @@ mod tests {
     #[test]
     fn builds_request_with_tools_no_json_mode() {
         let client = GeminiClient::from_api_key("test-key", "gemini-2.5-flash");
-        let messages = vec![
-            Message::system("You are a helper."),
-            Message::user("Hello"),
-        ];
+        let messages = vec![Message::system("You are a helper."), Message::user("Hello")];
         let tools = vec![crate::tool::tool::<TestResponse>("test_tool", "A test")];
 
-        let body = client.build_request::<TestResponse>(&messages, &tools).unwrap();
+        let body = client
+            .build_request::<TestResponse>(&messages, &tools)
+            .unwrap();
 
         // When tools are present, no JSON mode (Gemini doesn't support both)
         assert!(body["generationConfig"]["responseSchema"].is_null());
@@ -706,11 +721,16 @@ mod tests {
         let client = GeminiClient::from_api_key("test-key", "gemini-2.5-flash");
         let messages = vec![Message::user("Hello")];
 
-        let body = client.build_request::<TestResponse>(&messages, &[]).unwrap();
+        let body = client
+            .build_request::<TestResponse>(&messages, &[])
+            .unwrap();
 
         // Without tools, JSON mode is enabled
         assert!(body["generationConfig"]["responseSchema"].is_object());
-        assert_eq!(body["generationConfig"]["responseMimeType"], "application/json");
+        assert_eq!(
+            body["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
         assert!(body["tools"].is_null());
     }
 
@@ -801,7 +821,7 @@ mod tests {
             Message::tool("call#write_file#1", "Wrote file"),
             Message::tool("call#bash#2", "Output"),
             Message::tool("call#my_custom_tool#10", "Result"),
-            Message::tool("old_format_id", "Legacy"),  // fallback
+            Message::tool("old_format_id", "Legacy"), // fallback
         ];
 
         let contents = client.messages_to_contents(&messages);

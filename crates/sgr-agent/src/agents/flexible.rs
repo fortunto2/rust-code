@@ -53,7 +53,9 @@ fn format_error_prompt(errors: &[String]) -> String {
     for (i, err) in errors.iter().enumerate() {
         prompt.push_str(&format!("{}. {}\n", i + 1, err));
     }
-    prompt.push_str("\nRespond with ONLY valid JSON matching the schema. No markdown, no explanations.");
+    prompt.push_str(
+        "\nRespond with ONLY valid JSON matching the schema. No markdown, no explanations.",
+    );
     prompt
 }
 
@@ -69,7 +71,9 @@ impl<C: LlmClient> Agent for FlexibleAgent<C> {
         // Build system prompt with tool descriptions
         let full_system = format!("{}\n\n{}", self.system_prompt, tools_prompt(tools));
         let mut msgs = Vec::with_capacity(messages.len() + 1);
-        let has_system = messages.iter().any(|m| m.role == crate::types::Role::System);
+        let has_system = messages
+            .iter()
+            .any(|m| m.role == crate::types::Role::System);
         if !has_system {
             msgs.push(Message::system(&full_system));
         }
@@ -168,11 +172,7 @@ mod tests {
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}})
         }
-        async fn execute(
-            &self,
-            _: Value,
-            _: &mut AgentContext,
-        ) -> Result<ToolOutput, ToolError> {
+        async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("ok"))
         }
     }
@@ -268,7 +268,9 @@ mod tests {
         let decision = agent.decide(&msgs, &tools).await.unwrap();
         assert!(decision.completed);
         assert!(decision.tool_calls.is_empty());
-        assert!(decision.situation.contains("Failed to parse after 3 attempts"));
+        assert!(decision
+            .situation
+            .contains("Failed to parse after 3 attempts"));
     }
 
     #[test]

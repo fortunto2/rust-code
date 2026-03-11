@@ -21,17 +21,29 @@ pub struct ToolOutput {
 
 impl ToolOutput {
     pub fn text(content: impl Into<String>) -> Self {
-        Self { content: content.into(), done: false, waiting: false }
+        Self {
+            content: content.into(),
+            done: false,
+            waiting: false,
+        }
     }
 
     pub fn done(content: impl Into<String>) -> Self {
-        Self { content: content.into(), done: true, waiting: false }
+        Self {
+            content: content.into(),
+            done: true,
+            waiting: false,
+        }
     }
 
     /// Signal that the agent needs user input before continuing.
     /// The content is the question to present to the user.
     pub fn waiting(question: impl Into<String>) -> Self {
-        Self { content: question.into(), done: false, waiting: true }
+        Self {
+            content: question.into(),
+            done: false,
+            waiting: true,
+        }
     }
 }
 

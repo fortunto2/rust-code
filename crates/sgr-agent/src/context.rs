@@ -192,8 +192,8 @@ mod tests {
 
     #[test]
     fn writable_roots_restricts() {
-        let ctx = AgentContext::new()
-            .with_writable_roots(vec![PathBuf::from("/home/user/project")]);
+        let ctx =
+            AgentContext::new().with_writable_roots(vec![PathBuf::from("/home/user/project")]);
         assert!(ctx.is_writable(std::path::Path::new("/home/user/project/src/main.rs")));
         assert!(!ctx.is_writable(std::path::Path::new("/etc/passwd")));
     }

@@ -4,11 +4,11 @@ use crate::tools::{
     git_status, is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
 };
 use anyhow::Result;
-use baml_agent::{
+use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
+use sgr_agent::{
     ActionKind, ActionResult, AgentMessage, HintContext, Intent, LoopDetector, MessageRole,
     Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints,
 };
-use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
@@ -16,7 +16,7 @@ use tokio::sync::Mutex as TokioMutex;
 /// Action type — the 18-variant tool enum.
 pub type Action = SgrAction;
 
-// Implement baml-agent traits for BAML's generated Message type
+// Implement sgr-agent traits for the Message type
 
 #[derive(Clone, PartialEq)]
 pub struct Role(String);
@@ -79,7 +79,7 @@ pub struct Agent {
     /// Current user intent for action filtering.
     pub intent: Intent,
     /// Pluggable hint sources.
-    hint_sources: Vec<Box<dyn baml_agent::HintSource>>,
+    hint_sources: Vec<Box<dyn sgr_agent::HintSource>>,
     /// Persistent CWD for bash commands (tracks `cd` across steps).
     /// Interior mutability: execute() takes &self but needs to update CWD.
     cwd: std::sync::Mutex<std::path::PathBuf>,
@@ -172,8 +172,8 @@ impl Agent {
             Session::new(AGENT_HOME, MAX_HISTORY).expect("failed to create session directory");
 
         // Load layered context: agent home (SOUL, IDENTITY, etc.) + project (AGENTS.md/CLAUDE.md + rules)
-        let mut ctx = baml_agent::AgentContext::load(AGENT_HOME);
-        ctx.merge(baml_agent::AgentContext::load_project(Path::new(".")));
+        let mut ctx = sgr_agent::MemoryContext::load(AGENT_HOME);
+        ctx.merge(sgr_agent::MemoryContext::load_project(Path::new(".")));
         if let Some(msg) = ctx.to_system_message() {
             session.push(Role::system(), msg);
         }
@@ -190,7 +190,7 @@ impl Agent {
             last_input_chars: 0,
             provider: None,
             intent: Intent::Auto,
-            hint_sources: baml_agent::default_sources_with_tasks(Path::new(".")),
+            hint_sources: sgr_agent::default_sources_with_tasks(Path::new(".")),
             cwd: std::sync::Mutex::new(
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             ),
@@ -563,7 +563,7 @@ impl Agent {
             }
             SgrAction::ApplyPatch { patch } => {
                 let current_cwd = self.cwd.lock().unwrap().clone();
-                match baml_agent::tools::apply_patch::apply_patch_to_files(patch, &current_cwd)
+                match sgr_agent::app_tools::apply_patch::apply_patch_to_files(patch, &current_cwd)
                     .await
                 {
                     Ok(result) => {
@@ -928,12 +928,12 @@ impl Agent {
                         let t = title.as_deref().unwrap_or("Untitled");
                         let pri = priority
                             .as_ref()
-                            .and_then(|p| baml_agent::Priority::parse(&p.to_lowercase()))
-                            .unwrap_or(baml_agent::Priority::Medium);
-                        let mut task = baml_agent::create_task(project_root, t, pri);
+                            .and_then(|p| sgr_agent::Priority::parse(&p.to_lowercase()))
+                            .unwrap_or(sgr_agent::Priority::Medium);
+                        let mut task = sgr_agent::create_task(project_root, t, pri);
                         if let Some(n) = notes {
                             task.body = n.clone();
-                            baml_agent::save_task(project_root, &task);
+                            sgr_agent::save_task(project_root, &task);
                         }
                         Ok(ActionResult {
                             output: format!(
@@ -944,7 +944,7 @@ impl Agent {
                         })
                     }
                     "list" => {
-                        let tasks = baml_agent::load_tasks(project_root);
+                        let tasks = sgr_agent::load_tasks(project_root);
                         if tasks.is_empty() {
                             Ok(ActionResult {
                                 output:
@@ -976,14 +976,14 @@ impl Agent {
                         let id = *id as u16;
                         if let Some(status_val) = status {
                             let status_str = status_val.to_lowercase();
-                            if let Some(s) = baml_agent::TaskStatus::parse(&status_str) {
-                                baml_agent::update_status(project_root, id, s);
+                            if let Some(s) = sgr_agent::TaskStatus::parse(&status_str) {
+                                sgr_agent::update_status(project_root, id, s);
                             }
                         }
                         if let Some(n) = notes {
-                            baml_agent::append_notes(project_root, id, n);
+                            sgr_agent::append_notes(project_root, id, n);
                         }
-                        let tasks = baml_agent::load_tasks(project_root);
+                        let tasks = sgr_agent::load_tasks(project_root);
                         let task = tasks.iter().find(|t| t.id == id);
                         match task {
                             Some(t) => Ok(ActionResult {
@@ -1006,10 +1006,10 @@ impl Agent {
                                 done: false,
                             });
                         };
-                        match baml_agent::update_status(
+                        match sgr_agent::update_status(
                             project_root,
                             *id as u16,
-                            baml_agent::TaskStatus::Done,
+                            sgr_agent::TaskStatus::Done,
                         ) {
                             Some(t) => Ok(ActionResult {
                                 output: format!("Completed task #{}: {}", t.id, t.title),
@@ -1294,7 +1294,7 @@ impl SgrAgent for Agent {
                     format!("apply_patch:{}", files.join(","))
                 }
             }
-            other => baml_agent::loop_detect::normalize_signature(&Self::action_signature(other)),
+            other => sgr_agent::loop_detect::normalize_signature(&Self::action_signature(other)),
         }
     }
 
@@ -1502,7 +1502,7 @@ mod tests {
     #[test]
     fn loop_detector_works() {
         let mut ld = Agent::new_loop_detector();
-        use baml_agent::LoopStatus;
+        use sgr_agent::LoopStatus;
         assert_eq!(ld.check("a"), LoopStatus::Ok);
         assert_eq!(ld.check("a"), LoopStatus::Ok);
         assert_eq!(ld.check("a"), LoopStatus::Ok);
@@ -1518,7 +1518,7 @@ mod tests {
         std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
         std::fs::write(dir.join("IDENTITY.md"), "Name: test-agent").unwrap();
 
-        let ctx = baml_agent::AgentContext::load(dir.to_str().unwrap());
+        let ctx = sgr_agent::MemoryContext::load(dir.to_str().unwrap());
         assert_eq!(ctx.parts.len(), 2);
         let msg = ctx.to_system_message().unwrap();
         assert!(msg.contains("Be direct"));

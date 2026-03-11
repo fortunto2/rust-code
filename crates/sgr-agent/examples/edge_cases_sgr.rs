@@ -286,7 +286,10 @@ fn main() {
             }
             (Ok(s), Err(_)) => {
                 strict_pass += 1;
-                println!("strict:OK({:?},{})  coerced:FAIL", s.source, s.candidates_tried);
+                println!(
+                    "strict:OK({:?},{})  coerced:FAIL",
+                    s.source, s.candidates_tried
+                );
             }
             (Err(_), Ok(c)) => {
                 coerced_pass += 1;
@@ -296,7 +299,10 @@ fn main() {
                 );
             }
             (Err(se), Err(_)) => {
-                println!("strict:FAIL({} cands)     coerced:FAIL", se.candidates.len());
+                println!(
+                    "strict:FAIL({} cands)     coerced:FAIL",
+                    se.candidates.len()
+                );
             }
         }
     }
@@ -307,7 +313,10 @@ fn main() {
 
     // Expected failures: #23 (truncated mid-action), #24 (plain text), #25 (YAML)
     let expected_fails = 3;
-    println!("\n  Expected hard failures: {} (#23 truncated mid-field, #24 no JSON, #25 YAML)", expected_fails);
+    println!(
+        "\n  Expected hard failures: {} (#23 truncated mid-field, #24 no JSON, #25 YAML)",
+        expected_fails
+    );
     println!(
         "  Effective: {}/{} (strict), {}/{} (coerced)",
         strict_pass,

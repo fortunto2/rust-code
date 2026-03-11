@@ -36,10 +36,14 @@ enum Action {
 fn test_responses() -> Vec<(&'static str, &'static str)> {
     vec![
         // 1. Clean JSON (ideal case)
-        ("Clean JSON", r#"{"situation":"Need to read the main file","task":"Read src/main.rs to understand the project","actions":[{"tool_name":"read_file","path":"src/main.rs"}]}"#),
-
+        (
+            "Clean JSON",
+            r#"{"situation":"Need to read the main file","task":"Read src/main.rs to understand the project","actions":[{"tool_name":"read_file","path":"src/main.rs"}]}"#,
+        ),
         // 2. JSON in markdown code block
-        ("Markdown ```json block", r#"Here's my plan:
+        (
+            "Markdown ```json block",
+            r#"Here's my plan:
 
 ```json
 {
@@ -51,10 +55,12 @@ fn test_responses() -> Vec<(&'static str, &'static str)> {
 }
 ```
 
-This will help us understand the project structure."#),
-
+This will help us understand the project structure."#,
+        ),
         // 3. Markdown ``` block (no language tag)
-        ("Markdown ``` block (no lang)", r#"I'll read the file first.
+        (
+            "Markdown ``` block (no lang)",
+            r#"I'll read the file first.
 
 ```
 {
@@ -65,10 +71,12 @@ This will help us understand the project structure."#),
     {"tool_name": "write_file", "path": "src/lib.rs", "content": "fn foo() -> i32 { 42 }"}
   ]
 }
-```"#),
-
+```"#,
+        ),
         // 4. Chain-of-thought then JSON
-        ("CoT before JSON", r#"Let me think about this step by step:
+        (
+            "CoT before JSON",
+            r#"Let me think about this step by step:
 
 1. First, I need to understand the current state of the code
 2. The function foo() is missing a return type
@@ -81,39 +89,49 @@ This will help us understand the project structure."#),
     {"tool_name": "read_file", "path": "src/lib.rs"},
     {"tool_name": "write_file", "path": "src/lib.rs", "content": "pub fn foo() -> String {\n    \"hello\".to_string()\n}"}
   ]
-}"#),
-
+}"#,
+        ),
         // 5. JSON with trailing commas (common LLM mistake)
-        ("Trailing commas", r#"{
+        (
+            "Trailing commas",
+            r#"{
   "situation": "Creating hello world",
   "task": "Write hello.rs",
   "actions": [
     {"tool_name": "write_file", "path": "hello.rs", "content": "fn main() {\n    println!(\"Hello!\");\n}"},
   ],
-}"#),
-
+}"#,
+        ),
         // 6. JSON with comments (another common mistake)
-        ("JSON with comments", r#"{
+        (
+            "JSON with comments",
+            r#"{
   // Current state
   "situation": "Project needs a new file",
   "task": "Create the requested file",
   "actions": [
     {"tool_name": "write_file", "path": "hello.rs", "content": "fn main() { println!(\"Hi\"); }"}
   ]
-}"#),
-
+}"#,
+        ),
         // 7. Single-quoted JSON
-        ("Single quotes", r#"{'situation': 'Reading the project', 'task': 'Check main.rs', 'actions': [{'tool_name': 'read_file', 'path': 'src/main.rs'}]}"#),
-
+        (
+            "Single quotes",
+            r#"{'situation': 'Reading the project', 'task': 'Check main.rs', 'actions': [{'tool_name': 'read_file', 'path': 'src/main.rs'}]}"#,
+        ),
         // 8. Text wrapping with explanation after
-        ("JSON sandwiched in text", r#"Based on my analysis, here is the action plan:
+        (
+            "JSON sandwiched in text",
+            r#"Based on my analysis, here is the action plan:
 
 {"situation":"Need to run tests","task":"Execute cargo test","actions":[{"tool_name":"bash","command":"cargo test"}]}
 
-I'll execute the tests and report back with the results."#),
-
+I'll execute the tests and report back with the results."#,
+        ),
         // 9. Multiple JSON objects (should pick the right one)
-        ("Multiple JSON objects", r#"Here are two options:
+        (
+            "Multiple JSON objects",
+            r#"Here are two options:
 
 Option A (simpler):
 {"situation":"Quick check","task":"Just read","actions":[{"tool_name":"read_file","path":"README.md"}]}
@@ -121,19 +139,27 @@ Option A (simpler):
 Option B (thorough):
 {"situation":"Full analysis","task":"Read and test","actions":[{"tool_name":"read_file","path":"src/main.rs"},{"tool_name":"bash","command":"cargo test"}]}
 
-I recommend Option B."#),
-
+I recommend Option B."#,
+        ),
         // 10. Truncated JSON (unclosed brackets)
-        ("Truncated JSON (unclosed)", r#"{"situation":"Working on the fix","task":"Apply patch","actions":[{"tool_name":"write_file","path":"fix.rs","content":"fn fixed() {}"}]"#),
-
+        (
+            "Truncated JSON (unclosed)",
+            r#"{"situation":"Working on the fix","task":"Apply patch","actions":[{"tool_name":"write_file","path":"fix.rs","content":"fn fixed() {}"}]"#,
+        ),
         // 11. Type coercion needed: number as string
-        ("Type coercion: no actions array", r#"{"situation":"Done with task","task":"Finished","actions":[{"tool_name":"finish","summary":"All done"}]}"#),
-
+        (
+            "Type coercion: no actions array",
+            r#"{"situation":"Done with task","task":"Finished","actions":[{"tool_name":"finish","summary":"All done"}]}"#,
+        ),
         // 12. Unicode in content
-        ("Unicode content", r#"{"situation":"Создание файла","task":"Написать hello.rs","actions":[{"tool_name":"write_file","path":"hello.rs","content":"fn main() {\n    println!(\"Привет мир!\");\n}"}]}"#),
-
+        (
+            "Unicode content",
+            r#"{"situation":"Создание файла","task":"Написать hello.rs","actions":[{"tool_name":"write_file","path":"hello.rs","content":"fn main() {\n    println!(\"Привет мир!\");\n}"}]}"#,
+        ),
         // 13. Deeply nested markdown
-        ("Nested markdown blocks", r#"## Plan
+        (
+            "Nested markdown blocks",
+            r#"## Plan
 
 Here's what I'll do:
 
@@ -151,10 +177,12 @@ Here's what I'll do:
 ```
 
 ### Next steps
-After building, I'll run tests."#),
-
+After building, I'll run tests."#,
+        ),
         // 14. JSON with extra whitespace/newlines
-        ("Extra whitespace", r#"
+        (
+            "Extra whitespace",
+            r#"
 
   {
     "situation"  :  "Checking the code"  ,
@@ -164,10 +192,13 @@ After building, I'll run tests."#),
     ]
   }
 
-"#),
-
+"#,
+        ),
         // 15. Response that's just the text (should fail gracefully)
-        ("Plain text (no JSON)", "I'll read the file src/main.rs and check for any issues with the return type."),
+        (
+            "Plain text (no JSON)",
+            "I'll read the file src/main.rs and check for any issues with the return type.",
+        ),
     ]
 }
 
@@ -198,7 +229,10 @@ fn main() {
             }
             (Ok(s), Err(_)) => {
                 pass_strict += 1;
-                println!("strict ✓ ({:?}, tried {})  coerced ✗", s.source, s.candidates_tried);
+                println!(
+                    "strict ✓ ({:?}, tried {})  coerced ✗",
+                    s.source, s.candidates_tried
+                );
             }
             (Err(_), Ok(c)) => {
                 pass_coerced += 1;
@@ -208,10 +242,7 @@ fn main() {
                 );
             }
             (Err(se), Err(_ce)) => {
-                println!(
-                    "strict ✗ ({} cands)        coerced ✗",
-                    se.candidates.len()
-                );
+                println!("strict ✗ ({} cands)        coerced ✗", se.candidates.len());
             }
         }
     }

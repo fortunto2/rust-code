@@ -19,7 +19,7 @@ use tracing_subscriber::prelude::*;
 /// span context (name, trace_id, span_id), and any custom attributes.
 ///
 /// ```ignore
-/// let _guard = baml_agent::init_telemetry(".agent", "coach");
+/// let _guard = sgr_agent::init_telemetry(".agent", "coach");
 ///
 /// let span = tracing::info_span!("coaching_turn", turn = 3);
 /// let _enter = span.enter();
@@ -77,9 +77,6 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
 
     // Bridge log crate → tracing (captures library log::info!/warn!/etc)
     let _ = tracing_log::LogTracer::init();
-
-    // Suppress BAML's direct stderr output (it bypasses log/tracing)
-    super::suppress_baml_log();
 
     TelemetryGuard { tracer_provider }
 }

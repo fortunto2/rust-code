@@ -16,7 +16,10 @@ pub struct ToolCallingAgent<C: LlmClient> {
 
 impl<C: LlmClient> ToolCallingAgent<C> {
     pub fn new(client: C, system_prompt: impl Into<String>) -> Self {
-        Self { client, system_prompt: system_prompt.into() }
+        Self {
+            client,
+            system_prompt: system_prompt.into(),
+        }
     }
 }
 
@@ -30,7 +33,9 @@ impl<C: LlmClient> Agent for ToolCallingAgent<C> {
         let defs = tools.to_defs();
 
         let mut msgs = Vec::with_capacity(messages.len() + 1);
-        let has_system = messages.iter().any(|m| m.role == crate::types::Role::System);
+        let has_system = messages
+            .iter()
+            .any(|m| m.role == crate::types::Role::System);
         if !has_system && !self.system_prompt.is_empty() {
             msgs.push(Message::system(&self.system_prompt));
         }
@@ -88,8 +93,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::agent_tool::Tool for DummyTool {
-        fn name(&self) -> &str { "bash" }
-        fn description(&self) -> &str { "run command" }
+        fn name(&self) -> &str {
+            "bash"
+        }
+        fn description(&self) -> &str {
+            "run command"
+        }
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}})
         }

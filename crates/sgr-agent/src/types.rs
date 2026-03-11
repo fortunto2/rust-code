@@ -25,20 +25,48 @@ pub enum Role {
 
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: Role::System, content: content.into(), tool_call_id: None, tool_calls: vec![] }
+        Self {
+            role: Role::System,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+        }
     }
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: vec![] }
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+        }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls: vec![] }
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+        }
     }
     /// Create an assistant message that includes function calls (for Gemini FC protocol).
-    pub fn assistant_with_tool_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls }
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ToolCall>,
+    ) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls,
+        }
     }
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(call_id.into()), tool_calls: vec![] }
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some(call_id.into()),
+            tool_calls: vec![],
+        }
     }
 }
 
@@ -96,17 +124,15 @@ pub struct RateLimitInfo {
 impl RateLimitInfo {
     /// Parse from HTTP response headers (OpenAI/Gemini/OpenRouter standard).
     pub fn from_headers(headers: &reqwest::header::HeaderMap) -> Option<Self> {
-        let get_u32 = |name: &str| -> Option<u32> {
-            headers.get(name)?.to_str().ok()?.parse().ok()
-        };
-        let get_u64 = |name: &str| -> Option<u64> {
-            headers.get(name)?.to_str().ok()?.parse().ok()
-        };
+        let get_u32 =
+            |name: &str| -> Option<u32> { headers.get(name)?.to_str().ok()?.parse().ok() };
+        let get_u64 =
+            |name: &str| -> Option<u64> { headers.get(name)?.to_str().ok()?.parse().ok() };
 
         let requests_remaining = get_u32("x-ratelimit-remaining-requests");
         let tokens_remaining = get_u32("x-ratelimit-remaining-tokens");
-        let retry_after_secs = get_u64("retry-after")
-            .or_else(|| get_u64("x-ratelimit-reset-requests"));
+        let retry_after_secs =
+            get_u64("retry-after").or_else(|| get_u64("x-ratelimit-reset-requests"));
         let resets_at = get_u64("x-ratelimit-reset-tokens");
 
         if requests_remaining.is_some() || tokens_remaining.is_some() || retry_after_secs.is_some()
@@ -130,7 +156,10 @@ impl RateLimitInfo {
         let err = json.get("error")?;
 
         let error_type = err.get("type").and_then(|v| v.as_str()).map(String::from);
-        let message = err.get("message").and_then(|v| v.as_str()).map(String::from);
+        let message = err
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let resets_at = err.get("resets_at").and_then(|v| v.as_u64());
         let retry_after_secs = err.get("resets_in_seconds").and_then(|v| v.as_u64());
 
@@ -174,7 +203,9 @@ impl RateLimitInfo {
             parts.push(format!("reset:{}", self.reset_display()));
         }
         if parts.is_empty() {
-            self.message.clone().unwrap_or_else(|| "rate limited".into())
+            self.message
+                .clone()
+                .unwrap_or_else(|| "rate limited".into())
         } else {
             parts.join(" | ")
         }
@@ -357,7 +388,8 @@ mod tests {
 
     #[test]
     fn parse_openai_rate_limit_error() {
-        let body = r#"{"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-4"}}"#;
+        let body =
+            r#"{"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-4"}}"#;
         let err = SgrError::from_api_response(429, body.to_string());
         assert!(err.is_rate_limit());
         let info = err.rate_limit_info().unwrap();

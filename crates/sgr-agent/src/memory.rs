@@ -2,7 +2,7 @@
 //!
 //! Common patterns extracted from va-agent, rc-cli, and other BAML-based agents.
 
-use crate::agent_loop::ActionResult;
+use crate::app_loop::ActionResult;
 
 /// Normalize BAML-generated enum variant names.
 ///
@@ -10,7 +10,7 @@ use crate::agent_loop::ActionResult;
 /// This strips it and lowercases for use in IO adapters, signatures, and display.
 ///
 /// ```
-/// use baml_agent::helpers::norm;
+/// use sgr_agent::memory::norm;
 /// assert_eq!(norm("Ksystem"), "system");
 /// assert_eq!(norm("Kdefault"), "default");
 /// assert_eq!(norm("already_clean"), "already_clean");
@@ -67,7 +67,7 @@ pub fn action_result_done(summary: &str) -> ActionResult {
 /// Useful for keeping context window manageable (segments, beats, etc.).
 ///
 /// ```
-/// use baml_agent::helpers::truncate_json_array;
+/// use sgr_agent::memory::truncate_json_array;
 /// let mut v = serde_json::json!({"items": [1,2,3,4,5,6,7,8,9,10,11,12]});
 /// truncate_json_array(&mut v, "items", 3);
 /// assert_eq!(v["items"].as_array().unwrap().len(), 4); // 3 items + note
@@ -135,12 +135,12 @@ pub fn load_manifesto_from(dir: &std::path::Path) -> String {
 ///
 /// All files are optional. Missing files are silently skipped.
 #[derive(Debug, Default)]
-pub struct AgentContext {
+pub struct MemoryContext {
     /// Combined context text for system message injection.
     pub parts: Vec<(String, String)>, // (label, content)
 }
 
-impl AgentContext {
+impl MemoryContext {
     /// Load context from an agent home directory (SOUL, IDENTITY, MANIFESTO, etc.).
     pub fn load(home_dir: &str) -> Self {
         let dir = std::path::Path::new(home_dir);
@@ -466,7 +466,7 @@ fn expand_line_imports(line: &str, base_dir: &std::path::Path, depth: u8) -> Str
 }
 
 /// Load all `*.md` files from a directory, sorted alphabetically.
-fn load_rules_dir(dir: &std::path::Path, ctx: &mut AgentContext) {
+fn load_rules_dir(dir: &std::path::Path, ctx: &mut MemoryContext) {
     if !dir.is_dir() {
         return;
     }
@@ -495,9 +495,9 @@ fn load_rules_dir(dir: &std::path::Path, ctx: &mut AgentContext) {
 
 /// Load all `.md` files from a directory (flat, no convention).
 ///
-/// Simpler alternative to [`AgentContext`] when you just need raw file concat.
+/// Simpler alternative to [`MemoryContext`] when you just need raw file concat.
 pub fn load_context_dir(dir: &str) -> Option<String> {
-    let ctx = AgentContext::load(dir);
+    let ctx = MemoryContext::load(dir);
     ctx.to_system_message()
 }
 
@@ -586,7 +586,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("MANIFESTO.md"), "TDD first. Ship > perfect.").unwrap();
 
-        let ctx = AgentContext::load(dir.to_str().unwrap());
+        let ctx = MemoryContext::load(dir.to_str().unwrap());
         assert_eq!(ctx.parts.len(), 3);
         assert_eq!(ctx.parts[0].0, "Soul");
         assert_eq!(ctx.parts[1].0, "Identity");
@@ -610,7 +610,7 @@ mod tests {
         std::fs::write(ctx_dir.join("stacks.md"), "Rust + Tokio").unwrap();
         std::fs::write(ctx_dir.join("ignore.txt"), "not loaded").unwrap();
 
-        let ctx = AgentContext::load(dir.to_str().unwrap());
+        let ctx = MemoryContext::load(dir.to_str().unwrap());
         assert_eq!(ctx.parts.len(), 2); // RULES + stacks
         assert_eq!(ctx.parts[1].0, "stacks");
 
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn agent_context_empty_when_no_dir() {
-        let ctx = AgentContext::load("/nonexistent/path");
+        let ctx = MemoryContext::load("/nonexistent/path");
         assert!(ctx.is_empty());
         assert!(ctx.to_system_message().is_none());
     }
@@ -637,7 +637,7 @@ mod tests {
         std::fs::write(dir.join("AGENTS.md"), "Use pnpm.").unwrap();
         std::fs::write(dir.join("CLAUDE.md"), "Use npm.").unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         assert_eq!(ctx.parts.len(), 1);
         assert_eq!(ctx.parts[0].0, "Project Instructions");
         assert!(ctx.parts[0].1.contains("pnpm")); // AGENTS.md wins
@@ -652,7 +652,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("CLAUDE.md"), "Build with cargo.").unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         assert_eq!(ctx.parts.len(), 1);
         assert!(ctx.parts[0].1.contains("cargo"));
 
@@ -670,7 +670,7 @@ mod tests {
         std::fs::write(rules_dir.join("testing.md"), "Run pytest").unwrap();
         std::fs::write(rules_dir.join("style.md"), "Use black").unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         assert_eq!(ctx.parts.len(), 4); // CLAUDE + local + 2 rules
         assert_eq!(ctx.parts[0].0, "Project Instructions");
         assert_eq!(ctx.parts[1].0, "Local Instructions");
@@ -690,7 +690,7 @@ mod tests {
         std::fs::write(dir.join(".agents/rules/main.md"), "Agents rule").unwrap();
         std::fs::write(dir.join(".claude/rules/main.md"), "Claude rule").unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         assert_eq!(ctx.parts.len(), 1);
         assert!(ctx.parts[0].1.contains("Agents rule")); // .agents/ wins
 
@@ -709,7 +709,7 @@ mod tests {
             r#"{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":1772700200}"#, "\n",
         )).unwrap();
 
-        let ctx = AgentContext::load(dir.to_str().unwrap());
+        let ctx = MemoryContext::load(dir.to_str().unwrap());
         // SOUL + Memory (learned)
         assert!(ctx.parts.iter().any(|(l, _)| l == "Memory (learned)"));
         let mem = ctx
@@ -732,7 +732,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
 
-        let ctx = AgentContext::load(dir.to_str().unwrap());
+        let ctx = MemoryContext::load(dir.to_str().unwrap());
         assert!(!ctx.parts.iter().any(|(l, _)| l.contains("learned")));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -740,10 +740,10 @@ mod tests {
 
     #[test]
     fn merge_combines_contexts() {
-        let mut a = AgentContext::default();
+        let mut a = MemoryContext::default();
         a.parts.push(("Soul".into(), "Be direct.".into()));
 
-        let mut b = AgentContext::default();
+        let mut b = MemoryContext::default();
         b.parts.push(("Project".into(), "Use Rust.".into()));
 
         a.merge(b);
@@ -801,7 +801,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         let msg = ctx.to_system_message().unwrap();
         assert!(msg.contains("This is the readme")); // imported
         assert!(msg.contains("Do stuff")); // original content preserved
@@ -816,7 +816,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("CLAUDE.md"), "See @nonexistent.md for info.").unwrap();
 
-        let ctx = AgentContext::load_project(&dir);
+        let ctx = MemoryContext::load_project(&dir);
         let msg = ctx.to_system_message().unwrap();
         assert!(msg.contains("@nonexistent.md")); // kept as-is
 
@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     fn token_budget_drops_low_priority() {
-        let mut ctx = AgentContext::default();
+        let mut ctx = MemoryContext::default();
         ctx.parts.push(("Soul".into(), "Be direct.".into())); // priority 10
         ctx.parts.push(("Manifesto".into(), "x".repeat(10000))); // priority 5, big
         ctx.parts.push(("Identity".into(), "Name: test".into())); // priority 8
@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn token_budget_never_drops_soul() {
-        let mut ctx = AgentContext::default();
+        let mut ctx = MemoryContext::default();
         ctx.parts.push(("Soul".into(), "x".repeat(5000)));
 
         // Even tiny budget keeps Soul

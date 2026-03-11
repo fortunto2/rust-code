@@ -50,11 +50,20 @@ impl Default for LoopConfig {
 /// Events emitted during the agent loop.
 #[derive(Debug)]
 pub enum LoopEvent {
-    StepStart { step: usize },
+    StepStart {
+        step: usize,
+    },
     Decision(Decision),
-    ToolResult { name: String, output: String },
-    Completed { steps: usize },
-    LoopDetected { count: usize },
+    ToolResult {
+        name: String,
+        output: String,
+    },
+    Completed {
+        steps: usize,
+    },
+    LoopDetected {
+        count: usize,
+    },
     Error(AgentError),
     /// Agent needs user input. Content is the question.
     WaitingForInput {
@@ -118,7 +127,9 @@ pub async fn run_loop(
                     "Parse error (attempt {}/{}): {}. Please respond with valid JSON matching the schema.",
                     parse_retries, MAX_PARSE_RETRIES, e
                 );
-                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(err_msg.clone()))));
+                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(
+                    err_msg.clone(),
+                ))));
                 messages.push(Message::user(&err_msg));
                 continue;
             }
@@ -147,11 +158,17 @@ pub async fn run_loop(
         }
 
         // Loop detection
-        let sig: Vec<String> = decision.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+        let sig: Vec<String> = decision
+            .tool_calls
+            .iter()
+            .map(|tc| tc.name.clone())
+            .collect();
         match detector.check(&sig) {
             LoopCheckResult::Abort => {
                 ctx.state = AgentState::Failed;
-                on_event(LoopEvent::LoopDetected { count: detector.consecutive });
+                on_event(LoopEvent::LoopDetected {
+                    count: detector.consecutive,
+                });
                 return Err(AgentError::LoopDetected(detector.consecutive));
             }
             LoopCheckResult::Tier2Warning(dominant_tool) => {
@@ -293,7 +310,9 @@ pub async fn run_loop(
         // Tier 3: output stagnation
         if detector.check_outputs(&step_outputs) {
             ctx.state = AgentState::Failed;
-            on_event(LoopEvent::LoopDetected { count: detector.output_repeat_count });
+            on_event(LoopEvent::LoopDetected {
+                count: detector.output_repeat_count,
+            });
             return Err(AgentError::LoopDetected(detector.output_repeat_count));
         }
     }
@@ -361,7 +380,9 @@ where
                     "Parse error (attempt {}/{}): {}. Please respond with valid JSON matching the schema.",
                     parse_retries, MAX_PARSE_RETRIES, e
                 );
-                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(err_msg.clone()))));
+                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(
+                    err_msg.clone(),
+                ))));
                 messages.push(Message::user(&err_msg));
                 continue;
             }
@@ -387,11 +408,17 @@ where
             return Ok(step);
         }
 
-        let sig: Vec<String> = decision.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+        let sig: Vec<String> = decision
+            .tool_calls
+            .iter()
+            .map(|tc| tc.name.clone())
+            .collect();
         match detector.check(&sig) {
             LoopCheckResult::Abort => {
                 ctx.state = AgentState::Failed;
-                on_event(LoopEvent::LoopDetected { count: detector.consecutive });
+                on_event(LoopEvent::LoopDetected {
+                    count: detector.consecutive,
+                });
                 return Err(AgentError::LoopDetected(detector.consecutive));
             }
             LoopCheckResult::Tier2Warning(dominant_tool) => {
@@ -532,7 +559,9 @@ where
 
         if detector.check_outputs(&step_outputs) {
             ctx.state = AgentState::Failed;
-            on_event(LoopEvent::LoopDetected { count: detector.output_repeat_count });
+            on_event(LoopEvent::LoopDetected {
+                count: detector.output_repeat_count,
+            });
             return Err(AgentError::LoopDetected(detector.output_repeat_count));
         }
     }
@@ -727,7 +756,9 @@ fn trim_messages(messages: &mut Vec<Message>, max: usize) {
     // Extend trim_end to also remove those Tool messages.
     if trim_end > keep_start && trim_end < messages.len() {
         let last_removed = trim_end - 1;
-        if messages[last_removed].role == Role::Assistant && !messages[last_removed].tool_calls.is_empty() {
+        if messages[last_removed].role == Role::Assistant
+            && !messages[last_removed].tool_calls.is_empty()
+        {
             // The assistant had tool_calls but we're keeping it... actually we're removing it.
             // So remove all following Tool messages too.
             while trim_end < messages.len() && messages[trim_end].role == Role::Tool {
@@ -795,8 +826,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Tool for EchoTool {
-        fn name(&self) -> &str { "echo" }
-        fn description(&self) -> &str { "echo" }
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn description(&self) -> &str {
+            "echo"
+        }
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object"})
         }
@@ -816,7 +851,9 @@ mod tests {
         let mut messages = vec![Message::user("go")];
         let config = LoopConfig::default();
 
-        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
+        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {})
+            .await
+            .unwrap();
         assert_eq!(steps, 4); // 3 tool calls + 1 completion
         assert_eq!(ctx.state, AgentState::Completed);
     }
@@ -827,7 +864,11 @@ mod tests {
         struct LoopingAgent;
         #[async_trait::async_trait]
         impl Agent for LoopingAgent {
-            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                _: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 Ok(Decision {
                     situation: "stuck".into(),
                     task: vec![],
@@ -851,7 +892,15 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_loop(&LoopingAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        let result = run_loop(
+            &LoopingAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await;
         assert!(matches!(result, Err(AgentError::LoopDetected(3))));
         assert_eq!(ctx.state, AgentState::Failed);
     }
@@ -862,7 +911,11 @@ mod tests {
         struct NeverDoneAgent;
         #[async_trait::async_trait]
         impl Agent for NeverDoneAgent {
-            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                _: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 // Different tool names to avoid loop detection
                 static COUNTER: AtomicUsize = AtomicUsize::new(0);
                 let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -882,9 +935,21 @@ mod tests {
         let tools = ToolRegistry::new().register(EchoTool);
         let mut ctx = AgentContext::new();
         let mut messages = vec![Message::user("go")];
-        let config = LoopConfig { max_steps: 5, loop_abort_threshold: 100, ..Default::default() };
+        let config = LoopConfig {
+            max_steps: 5,
+            loop_abort_threshold: 100,
+            ..Default::default()
+        };
 
-        let result = run_loop(&NeverDoneAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        let result = run_loop(
+            &NeverDoneAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await;
         assert!(matches!(result, Err(AgentError::MaxSteps(5))));
     }
 
@@ -914,8 +979,8 @@ mod tests {
         // Calls 1-2: build up frequency, total_calls < threshold so tier 2 not checked
         assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=1, edit=1, cons=1
         assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=2, edit=2, cons=2
-        // Call 3: break consecutive (different sig) but edit_file still in sig
-        // total=3, edit=3, cons=1 → tier 2: 3/3=1.0 > 0.9 → first warning
+                                                                         // Call 3: break consecutive (different sig) but edit_file still in sig
+                                                                         // total=3, edit=3, cons=1 → tier 2: 3/3=1.0 > 0.9 → first warning
         assert_eq!(
             d.check(&["edit_file".into(), "read_file".into()]),
             LoopCheckResult::Tier2Warning("edit_file".into())
@@ -946,7 +1011,11 @@ mod tests {
         let d = Decision {
             situation: "The task is complete, all files written.".into(),
             task: vec![],
-            tool_calls: vec![ToolCall { id: "1".into(), name: "echo".into(), arguments: serde_json::json!({}) }],
+            tool_calls: vec![ToolCall {
+                id: "1".into(),
+                name: "echo".into(),
+                arguments: serde_json::json!({}),
+            }],
             completed: false,
         };
         assert!(cd.check(&d));
@@ -958,7 +1027,11 @@ mod tests {
         let d = Decision {
             situation: "working on it".into(),
             task: vec![],
-            tool_calls: vec![ToolCall { id: "1".into(), name: "echo".into(), arguments: serde_json::json!({}) }],
+            tool_calls: vec![ToolCall {
+                id: "1".into(),
+                name: "echo".into(),
+                arguments: serde_json::json!({}),
+            }],
             completed: false,
         };
         assert!(!cd.check(&d));
@@ -981,7 +1054,7 @@ mod tests {
 
     #[test]
     fn trim_messages_basic() {
-        let mut msgs: Vec<Message> = (0..10).map(|i| Message::user(&format!("msg {i}"))).collect();
+        let mut msgs: Vec<Message> = (0..10).map(|i| Message::user(format!("msg {i}"))).collect();
         trim_messages(&mut msgs, 6);
         // first 2 + summary + last 3 = 6
         assert_eq!(msgs.len(), 6);
@@ -1005,8 +1078,16 @@ mod tests {
             Message::assistant_with_tool_calls(
                 "calling",
                 vec![
-                    ToolCall { id: "c1".into(), name: "read".into(), arguments: serde_json::json!({}) },
-                    ToolCall { id: "c2".into(), name: "read".into(), arguments: serde_json::json!({}) },
+                    ToolCall {
+                        id: "c1".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                    ToolCall {
+                        id: "c2".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({}),
+                    },
                 ],
             ),
             Message::tool("c1", "result1"),
@@ -1046,7 +1127,11 @@ mod tests {
         struct FailingAgent;
         #[async_trait::async_trait]
         impl Agent for FailingAgent {
-            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                _: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 Err(AgentError::Llm(SgrError::Api {
                     status: 500,
                     body: "internal server error".into(),
@@ -1059,7 +1144,15 @@ mod tests {
         let mut messages = vec![Message::user("go")];
         let config = LoopConfig::default();
 
-        let result = run_loop(&FailingAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        let result = run_loop(
+            &FailingAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await;
         // Non-recoverable: should fail immediately, no retries
         assert!(result.is_err());
         assert_eq!(messages.len(), 1); // no feedback messages added
@@ -1073,15 +1166,25 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl Agent for ParseRetryAgent {
-            async fn decide(&self, msgs: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                msgs: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
                     // First call: simulate parse error
-                    Err(AgentError::Llm(SgrError::Schema("Missing required field: situation".into())))
+                    Err(AgentError::Llm(SgrError::Schema(
+                        "Missing required field: situation".into(),
+                    )))
                 } else {
                     // Second call: should see error feedback in messages
                     let last = msgs.last().unwrap();
-                    assert!(last.content.contains("Parse error"), "expected parse error feedback, got: {}", last.content);
+                    assert!(
+                        last.content.contains("Parse error"),
+                        "expected parse error feedback, got: {}",
+                        last.content
+                    );
                     Ok(Decision {
                         situation: "recovered from parse error".into(),
                         task: vec![],
@@ -1096,9 +1199,13 @@ mod tests {
         let mut ctx = AgentContext::new();
         let mut messages = vec![Message::user("go")];
         let config = LoopConfig::default();
-        let agent = ParseRetryAgent { call_count: Arc::new(AtomicUsize::new(0)) };
+        let agent = ParseRetryAgent {
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
 
-        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
+        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {})
+            .await
+            .unwrap();
         assert_eq!(steps, 2); // step 1 failed parse, step 2 succeeded
         assert_eq!(ctx.state, AgentState::Completed);
     }
@@ -1108,7 +1215,11 @@ mod tests {
         struct AlwaysFailParseAgent;
         #[async_trait::async_trait]
         impl Agent for AlwaysFailParseAgent {
-            async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                _: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 Err(AgentError::Llm(SgrError::Schema("bad json".into())))
             }
         }
@@ -1118,10 +1229,21 @@ mod tests {
         let mut messages = vec![Message::user("go")];
         let config = LoopConfig::default();
 
-        let result = run_loop(&AlwaysFailParseAgent, &tools, &mut ctx, &mut messages, &config, |_| {}).await;
+        let result = run_loop(
+            &AlwaysFailParseAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await;
         assert!(result.is_err());
         // Should have added MAX_PARSE_RETRIES feedback messages
-        let feedback_count = messages.iter().filter(|m| m.content.contains("Parse error")).count();
+        let feedback_count = messages
+            .iter()
+            .filter(|m| m.content.contains("Parse error"))
+            .count();
         assert_eq!(feedback_count, MAX_PARSE_RETRIES);
     }
 
@@ -1133,7 +1255,11 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl Agent for ErrorRecoveryAgent {
-            async fn decide(&self, msgs: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
+            async fn decide(
+                &self,
+                msgs: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
                     // First: call unknown tool
@@ -1165,9 +1291,13 @@ mod tests {
         let mut ctx = AgentContext::new();
         let mut messages = vec![Message::user("go")];
         let config = LoopConfig::default();
-        let agent = ErrorRecoveryAgent { call_count: Arc::new(AtomicUsize::new(0)) };
+        let agent = ErrorRecoveryAgent {
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
 
-        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {}).await.unwrap();
+        let steps = run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {})
+            .await
+            .unwrap();
         assert_eq!(steps, 2);
         assert_eq!(ctx.state, AgentState::Completed);
     }
@@ -1275,7 +1405,9 @@ mod tests {
         let mut events = Vec::new();
         run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |e| {
             events.push(format!("{:?}", std::mem::discriminant(&e)));
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         // Should have: StepStart, Decision, ToolResult, StepStart, Decision, Completed
         assert!(events.len() >= 4);

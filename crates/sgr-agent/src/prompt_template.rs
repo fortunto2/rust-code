@@ -53,7 +53,7 @@ Respond with a JSON object matching the schema below.
 ///
 /// # Example
 /// ```
-/// use baml_agent::prompt::build_system_prompt;
+/// use sgr_agent::prompt_template::build_system_prompt;
 ///
 /// let prompt = build_system_prompt(
 ///     "video montage director",

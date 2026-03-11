@@ -126,7 +126,9 @@ mod tests {
         let chunks = rx.collect_all().await;
         assert_eq!(chunks.len(), 4);
         assert!(matches!(&chunks[0], StreamChunk::ToolStart { name, .. } if name == "bash"));
-        assert!(matches!(&chunks[1], StreamChunk::ToolResult { output, .. } if output == "output here"));
+        assert!(
+            matches!(&chunks[1], StreamChunk::ToolResult { output, .. } if output == "output here")
+        );
         assert!(matches!(&chunks[2], StreamChunk::StepDone { step: 1 }));
     }
 

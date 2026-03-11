@@ -274,10 +274,7 @@ impl SwarmManager {
                 config.role.name()
             )
         });
-        let mut messages = vec![
-            Message::system(&system_prompt),
-            Message::user(&config.task),
-        ];
+        let mut messages = vec![Message::system(&system_prompt), Message::user(&config.task)];
 
         let loop_config = LoopConfig {
             max_steps: config.max_steps,
@@ -320,12 +317,8 @@ impl SwarmManager {
                         .unwrap_or_else(|| "Completed".to_string());
                     (AgentStatus::Completed, summary, steps)
                 }
-                Err(AgentError::Cancelled) => {
-                    (AgentStatus::Cancelled, "Cancelled".to_string(), 0)
-                }
-                Err(e) => {
-                    (AgentStatus::Failed(e.to_string()), e.to_string(), 0)
-                }
+                Err(AgentError::Cancelled) => (AgentStatus::Cancelled, "Cancelled".to_string(), 0),
+                Err(e) => (AgentStatus::Failed(e.to_string()), e.to_string(), 0),
             };
 
             // Update status
@@ -467,7 +460,10 @@ impl SwarmManager {
         timeout: std::time::Duration,
     ) -> Option<AgentNotification> {
         let mut rx = self.notification_rx.lock().await;
-        tokio::time::timeout(timeout, rx.recv()).await.ok().flatten()
+        tokio::time::timeout(timeout, rx.recv())
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Remove a completed agent handle (cleanup).
@@ -525,7 +521,9 @@ impl SwarmManager {
                 Ok(Ok(result)) => {
                     let summary = format!(
                         "{} ({}, {} steps): {}",
-                        result.status, result.role, result.steps,
+                        result.status,
+                        result.role,
+                        result.steps,
                         if result.summary.len() > 500 {
                             format!("{}...", &result.summary[..500])
                         } else {
@@ -551,10 +549,7 @@ impl SwarmManager {
         let mut lines = Vec::new();
         for handle in self.agents.values() {
             let status = handle.status.lock().await;
-            lines.push(format!(
-                "  {} ({}) — {}",
-                handle.id, handle.role, *status
-            ));
+            lines.push(format!("  {} ({}) — {}", handle.id, handle.role, *status));
         }
         if lines.is_empty() {
             "  (none)".to_string()
@@ -609,7 +604,10 @@ mod tests {
             _tools: &ToolRegistry,
         ) -> Result<Decision, AgentError> {
             // Count tool messages to determine step
-            let tool_msgs = msgs.iter().filter(|m| m.role == crate::types::Role::Tool).count();
+            let tool_msgs = msgs
+                .iter()
+                .filter(|m| m.role == crate::types::Role::Tool)
+                .count();
             if tool_msgs >= self.steps {
                 Ok(Decision {
                     situation: "All steps done.".into(),
@@ -645,11 +643,7 @@ mod tests {
         fn parameters_schema(&self) -> Value {
             serde_json::json!({"type": "object"})
         }
-        async fn execute(
-            &self,
-            _: Value,
-            _: &mut AgentContext,
-        ) -> Result<ToolOutput, ToolError> {
+        async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("echoed"))
         }
     }

@@ -162,11 +162,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Agent for MockAgent {
-        async fn decide(
-            &self,
-            _: &[Message],
-            _: &ToolRegistry,
-        ) -> Result<Decision, AgentError> {
+        async fn decide(&self, _: &[Message], _: &ToolRegistry) -> Result<Decision, AgentError> {
             Ok(Decision {
                 situation: "planning".into(),
                 task: vec![],
@@ -179,9 +175,15 @@ mod tests {
     struct ReadFileTool;
     #[async_trait::async_trait]
     impl Tool for ReadFileTool {
-        fn name(&self) -> &str { "read_file" }
-        fn description(&self) -> &str { "read" }
-        fn parameters_schema(&self) -> Value { serde_json::json!({"type": "object"}) }
+        fn name(&self) -> &str {
+            "read_file"
+        }
+        fn description(&self) -> &str {
+            "read"
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
         async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("content"))
         }
@@ -190,9 +192,15 @@ mod tests {
     struct WriteFileTool;
     #[async_trait::async_trait]
     impl Tool for WriteFileTool {
-        fn name(&self) -> &str { "write_file" }
-        fn description(&self) -> &str { "write" }
-        fn parameters_schema(&self) -> Value { serde_json::json!({"type": "object"}) }
+        fn name(&self) -> &str {
+            "write_file"
+        }
+        fn description(&self) -> &str {
+            "write"
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
         async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("written"))
         }
@@ -201,9 +209,15 @@ mod tests {
     struct BashTool;
     #[async_trait::async_trait]
     impl Tool for BashTool {
-        fn name(&self) -> &str { "bash" }
-        fn description(&self) -> &str { "bash" }
-        fn parameters_schema(&self) -> Value { serde_json::json!({"type": "object"}) }
+        fn name(&self) -> &str {
+            "bash"
+        }
+        fn description(&self) -> &str {
+            "bash"
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
         async fn execute(&self, _: Value, _: &mut AgentContext) -> Result<ToolOutput, ToolError> {
             Ok(ToolOutput::text("output"))
         }
@@ -281,8 +295,7 @@ mod tests {
 
     #[test]
     fn allow_extra_tools() {
-        let planner = PlanningAgent::new(Box::new(MockAgent))
-            .allow_tool("custom_search");
+        let planner = PlanningAgent::new(Box::new(MockAgent)).allow_tool("custom_search");
 
         let tools = ToolRegistry::new()
             .register(ReadFileTool)

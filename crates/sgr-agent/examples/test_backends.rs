@@ -8,7 +8,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-
 // Mirror of rc-cli's backend::SgrNextStep — same schema the agent uses
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct NextStep {
@@ -60,13 +59,41 @@ async fn main() {
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY required");
 
     let prompts: Vec<(&str, &str, &str)> = vec![
-        ("1. Read file", "Read the file src/main.rs to understand the project structure.", "read_file"),
-        ("2. Run command", "Run `cargo test` to check if tests pass.", "bash"),
-        ("3. Edit file", "In src/lib.rs, change the function name from `old_name` to `new_name`.", "edit_file"),
-        ("4. Multi-action", "First read Cargo.toml, then run `cargo build`.", "read_file"),
-        ("5. Finish", "All tasks are complete. Summarize: fixed 3 bugs, added 2 tests.", "finish"),
-        ("6. Search", "Find all uses of `parse_flexible` in the codebase.", "search_code"),
-        ("7. Ask user", "I need clarification about which database to use.", "ask_user"),
+        (
+            "1. Read file",
+            "Read the file src/main.rs to understand the project structure.",
+            "read_file",
+        ),
+        (
+            "2. Run command",
+            "Run `cargo test` to check if tests pass.",
+            "bash",
+        ),
+        (
+            "3. Edit file",
+            "In src/lib.rs, change the function name from `old_name` to `new_name`.",
+            "edit_file",
+        ),
+        (
+            "4. Multi-action",
+            "First read Cargo.toml, then run `cargo build`.",
+            "read_file",
+        ),
+        (
+            "5. Finish",
+            "All tasks are complete. Summarize: fixed 3 bugs, added 2 tests.",
+            "finish",
+        ),
+        (
+            "6. Search",
+            "Find all uses of `parse_flexible` in the codebase.",
+            "search_code",
+        ),
+        (
+            "7. Ask user",
+            "I need clarification about which database to use.",
+            "ask_user",
+        ),
     ];
 
     let config = sgr_agent::ProviderConfig::gemini(&api_key, "gemini-2.5-flash");
@@ -87,20 +114,27 @@ async fn main() {
         match client.flexible::<NextStep>(&messages).await {
             Ok(resp) => {
                 if let Some(step) = resp.output {
-                    let first_tool = step.actions.first().map(|a| match a {
-                        Action::ReadFile { .. } => "read_file",
-                        Action::WriteFile { .. } => "write_file",
-                        Action::EditFile { .. } => "edit_file",
-                        Action::Bash { .. } => "bash",
-                        Action::SearchCode { .. } => "search_code",
-                        Action::Finish { .. } => "finish",
-                        Action::AskUser { .. } => "ask_user",
-                    }).unwrap_or("(none)");
+                    let first_tool = step
+                        .actions
+                        .first()
+                        .map(|a| match a {
+                            Action::ReadFile { .. } => "read_file",
+                            Action::WriteFile { .. } => "write_file",
+                            Action::EditFile { .. } => "edit_file",
+                            Action::Bash { .. } => "bash",
+                            Action::SearchCode { .. } => "search_code",
+                            Action::Finish { .. } => "finish",
+                            Action::AskUser { .. } => "ask_user",
+                        })
+                        .unwrap_or("(none)");
 
                     let tool_ok = first_tool == *expected_tool;
-                    if tool_ok { passed += 1; }
+                    if tool_ok {
+                        passed += 1;
+                    }
 
-                    println!("{} tool={:<12} sit={:<35} acts={}",
+                    println!(
+                        "{} tool={:<12} sit={:<35} acts={}",
                         if tool_ok { "OK " } else { "WRONG" },
                         first_tool,
                         step.situation.chars().take(35).collect::<String>(),
@@ -117,5 +151,8 @@ async fn main() {
         }
     }
 
-    println!("\n=== Results: {}/{} correct tool selection ===", passed, total);
+    println!(
+        "\n=== Results: {}/{} correct tool selection ===",
+        passed, total
+    );
 }

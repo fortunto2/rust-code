@@ -87,7 +87,11 @@ async fn call_codex_text(prompt: &str) -> Result<String, String> {
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("Codex API error {}: {}", status, &text[..text.len().min(300)]));
+        return Err(format!(
+            "Codex API error {}: {}",
+            status,
+            &text[..text.len().min(300)]
+        ));
     }
 
     // Parse SSE
@@ -145,7 +149,7 @@ fn base64_decode_url(input: &str) -> Result<Vec<u8>, String> {
 async fn main() {
     println!("=== Testing Codex → flexible parser ===\n");
 
-    let prompts = vec![
+    let prompts: &[&str] = &[
         // 1. Clean JSON expected
         "What is the capital of France? Respond with JSON containing answer, confidence (0-1), and category.",
         // 2. Might wrap in markdown
@@ -165,7 +169,10 @@ async fn main() {
                 println!("parse_flexible (strict):");
                 match parse_flexible::<Answer>(&raw) {
                     Ok(result) => {
-                        println!("  OK! Source: {:?}, tried: {}", result.source, result.candidates_tried);
+                        println!(
+                            "  OK! Source: {:?}, tried: {}",
+                            result.source, result.candidates_tried
+                        );
                         println!("  {:?}", result.value);
                     }
                     Err(e) => {
@@ -173,7 +180,10 @@ async fn main() {
                         println!("\nparse_flexible_coerced:");
                         match parse_flexible_coerced::<Answer>(&raw) {
                             Ok(result) => {
-                                println!("  OK! Source: {:?}, tried: {}", result.source, result.candidates_tried);
+                                println!(
+                                    "  OK! Source: {:?}, tried: {}",
+                                    result.source, result.candidates_tried
+                                );
                                 println!("  {:?}", result.value);
                             }
                             Err(e) => {

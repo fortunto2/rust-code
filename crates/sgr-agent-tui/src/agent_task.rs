@@ -1,4 +1,4 @@
-use baml_agent::{
+use sgr_agent::{
     process_step, AgentMessage, LoopConfig, LoopDetector, LoopEvent, MessageRole, Session,
     SgrAgentStream,
 };

@@ -8,8 +8,8 @@ pub mod tui;
 
 use crate::agent::Agent;
 use anyhow::Result;
-use baml_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
 use clap::{Parser, Subcommand};
+use sgr_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -273,7 +273,7 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
 
 /// Resolve provider from CLI flags (override) → config file (default) → auto-detect.
 async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
-    use baml_agent::providers::{self, ProviderAuth};
+    use sgr_agent::providers::{self, ProviderAuth};
 
     // --sgr flag or --gemini-cli: resolve SGR provider from env/flags
     if args.sgr || args.gemini_cli {
@@ -573,7 +573,7 @@ fn apply_provider(setup: &ProviderSetup, agent: &mut Agent) {
 }
 
 fn run_config_command(action: ConfigAction) -> Result<()> {
-    use baml_agent::providers;
+    use sgr_agent::providers;
 
     match action {
         ConfigAction::Show => {
@@ -613,7 +613,7 @@ fn run_config_command(action: ConfigAction) -> Result<()> {
 }
 
 async fn run_setup() -> Result<()> {
-    use baml_agent::providers::{self, ProviderAuth};
+    use sgr_agent::providers::{self, ProviderAuth};
     use std::io::{self, BufRead, Write};
 
     println!("rust-code setup\n");
@@ -687,7 +687,7 @@ async fn run_setup() -> Result<()> {
             "vertex" => {
                 if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
                     || std::env::var("VERTEX_PROJECT").is_ok()
-                    || baml_agent::check_gcloud_adc()
+                    || sgr_agent::check_gcloud_adc()
                 {
                     "\x1b[32m✓\x1b[0m"
                 } else {
@@ -788,7 +788,7 @@ async fn run_setup() -> Result<()> {
                 let found = std::env::var(var).is_ok()
                     || (provider_name == "vertex"
                         && (std::env::var("VERTEX_PROJECT").is_ok()
-                            || baml_agent::check_gcloud_adc()));
+                            || sgr_agent::check_gcloud_adc()));
                 if found {
                     true
                 } else {
@@ -878,12 +878,12 @@ async fn run_setup() -> Result<()> {
     Ok(())
 }
 
-fn init_telemetry_headless() -> baml_agent::TelemetryGuard {
-    baml_agent::init_telemetry(".rust-code", "rust-code")
+fn init_telemetry_headless() -> sgr_agent::TelemetryGuard {
+    sgr_agent::init_telemetry(".rust-code", "rust-code")
 }
 
-fn init_telemetry_tui() -> baml_agent_tui::TuiTelemetryGuard {
-    baml_agent_tui::init_tui_telemetry(".rust-code", "rust-code")
+fn init_telemetry_tui() -> sgr_agent_tui::TuiTelemetryGuard {
+    sgr_agent_tui::init_tui_telemetry(".rust-code", "rust-code")
 }
 
 fn setup_panic_hook() {
@@ -1122,7 +1122,7 @@ async fn run_mcp_command(action: McpAction) -> Result<()> {
 }
 
 async fn run_doctor(fix: bool) -> Result<()> {
-    use baml_agent::doctor;
+    use sgr_agent::doctor;
 
     // Agent-specific extra checks (MCP, skills)
     let home = std::env::var("HOME").unwrap_or_default();
@@ -1169,7 +1169,7 @@ async fn run_doctor(fix: bool) -> Result<()> {
 
 fn run_sessions_command(query: Option<String>) -> Result<()> {
     let sessions = if let Some(ref q) = query {
-        let matches = baml_agent::search_sessions(".rust-code", q);
+        let matches = sgr_agent::search_sessions(".rust-code", q);
         if matches.is_empty() {
             println!("No sessions matching '{}'.", q);
             return Ok(());
@@ -1180,7 +1180,7 @@ fn run_sessions_command(query: Option<String>) -> Result<()> {
             .map(|(score, m)| (Some(score), m))
             .collect::<Vec<_>>()
     } else {
-        let all = baml_agent::list_sessions(".rust-code");
+        let all = sgr_agent::list_sessions(".rust-code");
         if all.is_empty() {
             println!("No sessions found in .rust-code/");
             return Ok(());
@@ -1231,9 +1231,9 @@ fn run_task_command(action: TaskAction) -> Result<()> {
 
     match action {
         TaskAction::List { status } => {
-            let tasks = baml_agent::load_tasks(root);
+            let tasks = sgr_agent::load_tasks(root);
             let filtered: Vec<_> = if let Some(ref s) = status {
-                let target = baml_agent::TaskStatus::parse(s);
+                let target = sgr_agent::TaskStatus::parse(s);
                 if target.is_none() {
                     eprintln!(
                         "Unknown status: {}. Use: todo, in_progress, blocked, done",
@@ -1257,10 +1257,10 @@ fn run_task_command(action: TaskAction) -> Result<()> {
             println!("Tasks ({}):\n", filtered.len());
             for t in &filtered {
                 let marker = match t.status {
-                    baml_agent::TaskStatus::Done => "\x1b[32m✓\x1b[0m",
-                    baml_agent::TaskStatus::InProgress => "\x1b[33m▶\x1b[0m",
-                    baml_agent::TaskStatus::Blocked => "\x1b[31m✗\x1b[0m",
-                    baml_agent::TaskStatus::Todo => "\x1b[2m·\x1b[0m",
+                    sgr_agent::TaskStatus::Done => "\x1b[32m✓\x1b[0m",
+                    sgr_agent::TaskStatus::InProgress => "\x1b[33m▶\x1b[0m",
+                    sgr_agent::TaskStatus::Blocked => "\x1b[31m✗\x1b[0m",
+                    sgr_agent::TaskStatus::Todo => "\x1b[2m·\x1b[0m",
                 };
                 println!(
                     "  {} #{:03} [{}] ({}) {}",
@@ -1269,7 +1269,7 @@ fn run_task_command(action: TaskAction) -> Result<()> {
             }
         }
         TaskAction::Show { id } => {
-            let tasks = baml_agent::load_tasks(root);
+            let tasks = sgr_agent::load_tasks(root);
             match tasks.iter().find(|t| t.id == id) {
                 Some(t) => {
                     println!("#{:03} {}", t.id, t.title);
@@ -1290,8 +1290,8 @@ fn run_task_command(action: TaskAction) -> Result<()> {
             }
         }
         TaskAction::Create { title, priority } => {
-            let p = baml_agent::Priority::parse(&priority).unwrap_or(baml_agent::Priority::Medium);
-            let task = baml_agent::create_task(root, &title, p);
+            let p = sgr_agent::Priority::parse(&priority).unwrap_or(sgr_agent::Priority::Medium);
+            let task = sgr_agent::create_task(root, &title, p);
             println!(
                 "\x1b[32m✓\x1b[0m Created #{:03}: {} [{}]",
                 task.id, task.title, task.priority
@@ -1299,7 +1299,7 @@ fn run_task_command(action: TaskAction) -> Result<()> {
             println!("  {}", task.path.display());
         }
         TaskAction::Done { id } => {
-            match baml_agent::update_status(root, id, baml_agent::TaskStatus::Done) {
+            match sgr_agent::update_status(root, id, sgr_agent::TaskStatus::Done) {
                 Some(t) => println!("\x1b[32m✓\x1b[0m Completed #{:03}: {}", t.id, t.title),
                 None => {
                     eprintln!("Task #{} not found", id);
@@ -1308,14 +1308,14 @@ fn run_task_command(action: TaskAction) -> Result<()> {
             }
         }
         TaskAction::Update { id, status } => {
-            let Some(s) = baml_agent::TaskStatus::parse(&status) else {
+            let Some(s) = sgr_agent::TaskStatus::parse(&status) else {
                 eprintln!(
                     "Unknown status: {}. Use: todo, in_progress, blocked, done",
                     status
                 );
                 std::process::exit(1);
             };
-            match baml_agent::update_status(root, id, s) {
+            match sgr_agent::update_status(root, id, s) {
                 Some(t) => println!("Updated #{:03}: {} → {}", t.id, t.title, t.status),
                 None => {
                     eprintln!("Task #{} not found", id);
@@ -1334,7 +1334,7 @@ async fn main() -> Result<()> {
     // Setup panic hook to restore terminal
     setup_panic_hook();
 
-    // Handle subcommands first (no BAML init needed)
+    // Handle subcommands first (no init needed)
     if let Some(command) = args.command {
         return match command {
             Commands::Skills { action } => run_skills_command(action).await,
@@ -1350,7 +1350,7 @@ async fn main() -> Result<()> {
     // Auto-setup on first run if no config and no CLI flags
     // Runs BEFORE telemetry init so eprintln! is visible to user
     if !args.codex && !args.local && args.model.is_none() {
-        let cfg = baml_agent::providers::load_config(".rust-code");
+        let cfg = sgr_agent::providers::load_config(".rust-code");
         if cfg.provider.is_none() && std::env::var("GEMINI_API_KEY").is_err() {
             eprintln!("First run detected — checking environment...\n");
             let _ = run_doctor(false).await;
@@ -1367,7 +1367,7 @@ async fn main() -> Result<()> {
     let provider_setup = resolve_provider_setup(&args).await;
 
     // Initialize OTEL-aware structured telemetry (JSONL + span context)
-    // TUI mode redirects stderr to file (prevents BAML output from corrupting ratatui)
+    // TUI mode redirects stderr to file (prevents log output from corrupting ratatui)
     let is_headless = args.prompt.is_some();
     let _telemetry: Box<dyn std::any::Any> = if is_headless {
         Box::new(init_telemetry_headless())
@@ -1391,12 +1391,12 @@ async fn main() -> Result<()> {
         apply_provider(&provider_setup, &mut agent);
         // Set intent from CLI flag
         agent.intent = match args.intent.as_str() {
-            "ask" => baml_agent::Intent::Ask,
-            "build" => baml_agent::Intent::Build,
-            "plan" => baml_agent::Intent::Plan,
-            _ => baml_agent::Intent::Auto,
+            "ask" => sgr_agent::Intent::Ask,
+            "build" => sgr_agent::Intent::Build,
+            "plan" => sgr_agent::Intent::Plan,
+            _ => sgr_agent::Intent::Auto,
         };
-        if agent.intent != baml_agent::Intent::Auto {
+        if agent.intent != sgr_agent::Intent::Auto {
             println!("Intent: {:?}", agent.intent);
         }
         // Initialize MCP servers
@@ -1411,7 +1411,7 @@ async fn main() -> Result<()> {
                 let _ = agent.load_last_session();
             } else {
                 // Fuzzy search for matching session
-                let matches = baml_agent::search_sessions(".rust-code", query);
+                let matches = sgr_agent::search_sessions(".rust-code", query);
                 if let Some((score, meta)) = matches.first() {
                     println!("Resuming: \"{}\" (score: {})", meta.topic, score);
                     let _ = agent.load_session_file(&meta.path);
@@ -1430,7 +1430,7 @@ async fn main() -> Result<()> {
         // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
         let mut session = std::mem::replace(
             agent.session_mut(),
-            baml_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
+            sgr_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
         );
 
         use std::io::Write as _;
