@@ -323,7 +323,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                             .filter(|s| !s.is_empty())
                     });
                     if let Some(project) = project {
-                        let m = model.unwrap_or_else(|| "gemini-2.5-flash".into());
+                        let m = model.unwrap_or_else(|| "gemini-3.1-pro-preview".into());
                         return ProviderSetup {
                             label: Some(format!("Vertex ({}, {})", m, project)),
                             provider: Some(backend::SgrProvider::Vertex {
@@ -337,7 +337,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                 }
                 ProviderAuth::EnvKey(key) if prov_name == "gemini" || prov_name == "google" => {
                     if let Ok(api_key) = std::env::var(&key) {
-                        let m = model.unwrap_or_else(|| "gemini-2.5-flash".into());
+                        let m = model.unwrap_or_else(|| "gemini-3.1-pro-preview".into());
                         return ProviderSetup {
                             label: Some(format!("Gemini ({})", m)),
                             provider: Some(backend::SgrProvider::Gemini { api_key, model: m }),
@@ -386,7 +386,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
         let model = args
             .model
             .clone()
-            .unwrap_or_else(|| "gemini-2.5-flash".into());
+            .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
         return ProviderSetup {
             label: Some(format!("Gemini ({})", model)),
             provider: Some(backend::SgrProvider::Gemini { api_key, model }),
@@ -445,7 +445,7 @@ async fn resolve_sgr_provider(
             let model = args
                 .model
                 .clone()
-                .unwrap_or_else(|| "gemini-2.5-flash".into());
+                .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
             return (backend::SgrProvider::Gemini { api_key, model }, None);
         }
     }
@@ -483,7 +483,7 @@ async fn resolve_sgr_provider(
         let model = args
             .model
             .clone()
-            .unwrap_or_else(|| "gemini-2.5-flash".into());
+            .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
         let location = match std::env::var("VERTEX_LOCATION").ok() {
             Some(loc) if loc != "global" && !loc.is_empty() => loc,
             _ => "us-central1".into(),
