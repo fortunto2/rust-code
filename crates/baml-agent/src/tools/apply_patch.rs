@@ -717,15 +717,32 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
         start
     };
 
+    // Try forward from search_start first, then wrap-around from 0
+    if let Some(idx) = seek_sequence_range(lines, pattern, search_start) {
+        return Some(idx);
+    }
+    // Wrap-around: search from beginning up to search_start
+    if search_start > 0 {
+        if let Some(idx) = seek_sequence_range(lines, pattern, 0) {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+/// Inner search across 4 tiers of matching within a range.
+fn seek_sequence_range(lines: &[String], pattern: &[String], start: usize) -> Option<usize> {
+    let end = lines.len().saturating_sub(pattern.len());
+
     // Tier 1: exact match
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in start..=end {
         if lines[i..i + pattern.len()] == *pattern {
             return Some(i);
         }
     }
 
     // Tier 2: trim trailing whitespace
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in start..=end {
         if pattern
             .iter()
             .enumerate()
@@ -736,7 +753,7 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
     }
 
     // Tier 3: trim both sides
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
+    for i in start..=end {
         if pattern
             .iter()
             .enumerate()
@@ -747,28 +764,172 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
     }
 
     // Tier 4: Unicode normalization (typographic punctuation → ASCII)
-    fn normalise(s: &str) -> String {
-        s.trim()
-            .chars()
-            .map(|c| match c {
-                '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
-                | '\u{2212}' => '-',
-                '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-                '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-                '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
-                | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
-                | '\u{3000}' => ' ',
-                other => other,
-            })
-            .collect()
-    }
-
-    (search_start..=lines.len().saturating_sub(pattern.len())).find(|&i| {
-        pattern
+    for i in start..=end {
+        if pattern
             .iter()
             .enumerate()
-            .all(|(j, p)| normalise(&lines[i + j]) == normalise(p))
-    })
+            .all(|(j, p)| normalise_line(&lines[i + j]) == normalise_line(p))
+        {
+            return Some(i);
+        }
+    }
+
+    // Tier 5: collapse internal whitespace (tabs vs spaces, re-indent)
+    for i in start..=end {
+        if pattern
+            .iter()
+            .enumerate()
+            .all(|(j, p)| collapse_ws(&lines[i + j]) == collapse_ws(p))
+        {
+            return Some(i);
+        }
+    }
+
+    None
+}
+
+/// Normalize Unicode typography to ASCII.
+fn normalise_line(s: &str) -> String {
+    s.trim()
+        .chars()
+        .map(|c| match c {
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+            '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
+            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
+            | '\u{3000}' => ' ',
+            other => other,
+        })
+        .collect()
+}
+
+/// Collapse all runs of whitespace to a single space, then trim.
+fn collapse_ws(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_ws = true; // start true to skip leading whitespace
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !in_ws {
+                result.push(' ');
+                in_ws = true;
+            }
+        } else {
+            result.push(c);
+            in_ws = false;
+        }
+    }
+    // Trim trailing space
+    if result.ends_with(' ') {
+        result.pop();
+    }
+    result
+}
+
+/// Substring context match: find a line containing `ctx` as a substring.
+/// Used when `@@ normalize` should match `  normalize(data: any) {`.
+fn seek_context_substring(lines: &[String], ctx: &str, start: usize) -> Option<usize> {
+    let ctx_trimmed = ctx.trim();
+    if ctx_trimmed.is_empty() {
+        return None;
+    }
+    // Forward search
+    for i in start..lines.len() {
+        if lines[i].contains(ctx_trimmed) {
+            return Some(i);
+        }
+    }
+    // Wrap-around
+    for i in 0..start {
+        if lines[i].contains(ctx_trimmed) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Find the closest matching single line for error reporting.
+fn find_closest_line(lines: &[String], target: &str, start: usize) -> String {
+    let target_lower = target.trim().to_lowercase();
+    let mut best = ("(no lines in file)", usize::MAX);
+    for (i, line) in lines.iter().enumerate() {
+        let line_lower = line.trim().to_lowercase();
+        let dist = if line_lower.contains(&target_lower) || target_lower.contains(&line_lower) {
+            0
+        } else {
+            levenshtein_bounded(&target_lower, &line_lower, 50)
+        };
+        if dist < best.1 {
+            best = (line, dist);
+        }
+        // Prefer lines near start
+        if dist == best.1 && i >= start && i < start + 20 {
+            best = (line, dist);
+        }
+    }
+    format!("line: '{}'", best.0.trim())
+}
+
+/// Find the closest matching block for error reporting.
+fn find_closest_block(lines: &[String], pattern: &[String], start: usize) -> String {
+    if lines.is_empty() || pattern.is_empty() {
+        return "(empty)".into();
+    }
+    // Find the line most similar to pattern[0]
+    let target = pattern[0].trim().to_lowercase();
+    let mut best_idx = start.min(lines.len().saturating_sub(1));
+    let mut best_dist = usize::MAX;
+    for (i, line) in lines.iter().enumerate() {
+        let dist = levenshtein_bounded(&target, &line.trim().to_lowercase(), 80);
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = i;
+        }
+    }
+    // Show context around best match
+    let show_start = best_idx;
+    let show_end = (best_idx + pattern.len()).min(lines.len());
+    lines[show_start..show_end]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{:4}: {}", show_start + i + 1, l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Bounded Levenshtein distance (stops early if distance exceeds bound).
+fn levenshtein_bounded(a: &str, b: &str, bound: usize) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+    if m.abs_diff(n) > bound {
+        return bound + 1;
+    }
+    let mut prev = vec![0usize; n + 1];
+    let mut curr = vec![0usize; n + 1];
+    for j in 0..=n {
+        prev[j] = j;
+    }
+    for i in 1..=m {
+        curr[0] = i;
+        let mut row_min = i;
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+            row_min = row_min.min(curr[j]);
+        }
+        if row_min > bound {
+            return bound + 1;
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
 }
 
 // ---------------------------------------------------------------------------
@@ -785,17 +946,24 @@ fn compute_replacements(
     let mut line_index: usize = 0;
 
     for chunk in chunks {
-        // Seek to change_context if present
+        // Seek to change_context if present (the @@ header text)
         if let Some(ctx) = &chunk.change_context {
             if let Some(idx) =
                 seek_sequence(original_lines, std::slice::from_ref(ctx), line_index, false)
             {
                 line_index = idx + 1;
+            } else if let Some(idx) = seek_context_substring(original_lines, ctx, line_index) {
+                // Fallback: substring match — model sent bare name like "normalize"
+                // but file has "  normalize(data: any) {"
+                line_index = idx + 1;
             } else {
+                let closest = find_closest_line(original_lines, ctx, line_index);
                 return Err(ApplyPatchError::MatchFailed(format!(
-                    "Failed to find context '{}' in {}",
+                    "Failed to find context '{}' in {}\n\
+                     Closest match: {}",
                     ctx,
-                    path.display()
+                    path.display(),
+                    closest,
                 )));
             }
         }
@@ -829,10 +997,14 @@ fn compute_replacements(
             replacements.push((start, pattern.len(), new_slice.to_vec()));
             line_index = start + pattern.len();
         } else {
+            // Find the closest matching region to help the model self-correct
+            let closest = find_closest_block(original_lines, pattern, line_index);
             return Err(ApplyPatchError::MatchFailed(format!(
-                "Failed to find expected lines in {}:\n{}",
+                "Failed to find expected lines in {}:\n{}\n\
+                 \n--- Closest match in file (use read_file to see actual content): ---\n{}",
                 path.display(),
                 chunk.old_lines.join("\n"),
+                closest,
             )));
         }
     }
@@ -1569,5 +1741,75 @@ mod tests {
         let patch = "*** Add File: test.txt\n+hello";
         let hunks = parse_patch(patch).unwrap();
         assert_eq!(hunks.len(), 1);
+    }
+
+    #[test]
+    fn test_context_substring_match() {
+        // Model sends "@@ normalize" but file has "  normalize(data: any) {"
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("mod.ts"),
+            "export const m = {\n  id: 'test',\n  normalize(data: any) {\n    return data + 1;\n  }\n};\n",
+        )
+        .unwrap();
+        let patch = wrap(
+            "*** Update File: mod.ts\n@@ normalize\n-    return data + 1;\n+    return data * 2;",
+        );
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("mod.ts")).unwrap();
+        assert!(contents.contains("data * 2"));
+        assert!(!contents.contains("data + 1"));
+    }
+
+    #[test]
+    fn test_wrap_around_search() {
+        // Context line is above the start position — should wrap around
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("wrap.txt"), "aaa\nbbb\nccc\nddd\n").unwrap();
+        // Two chunks: first matches "ccc" (line 3), second matches "aaa" (line 1, before)
+        let patch = wrap("*** Update File: wrap.txt\n@@\n-ccc\n+CCC\n@@\n-aaa\n+AAA");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("wrap.txt")).unwrap();
+        assert!(contents.contains("AAA"));
+        assert!(contents.contains("CCC"));
+    }
+
+    #[test]
+    fn test_whitespace_collapse_match() {
+        // Model sends "  if (x  &&  y)" but file has "    if (x && y)"
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("ws.ts"),
+            "function f() {\n    if (x && y) {\n        return true;\n    }\n}\n",
+        )
+        .unwrap();
+        let patch = wrap("*** Update File: ws.ts\n@@\n-  if (x  &&  y) {\n+  if (x || y) {");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("ws.ts")).unwrap();
+        assert!(contents.contains("x || y"));
+    }
+
+    #[test]
+    fn test_error_shows_closest_match() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("err.ts"),
+            "const x = 1;\nconst y = 2;\nconst z = 3;\n",
+        )
+        .unwrap();
+        let patch = wrap("*** Update File: err.ts\n@@\n-const y = 999;\n+const y = 0;");
+        let err = apply_patch_to_files_sync(&patch, dir.path()).unwrap_err();
+        let msg = err.to_string();
+        // Error should contain the closest match hint
+        assert!(
+            msg.contains("Closest match"),
+            "Error should show closest match: {}",
+            msg
+        );
+        assert!(
+            msg.contains("const y = 2"),
+            "Error should show actual line: {}",
+            msg
+        );
     }
 }
