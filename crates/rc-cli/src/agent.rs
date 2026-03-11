@@ -80,6 +80,8 @@ pub struct Agent {
     /// Persistent CWD for bash commands (tracks `cd` across steps).
     /// Interior mutability: execute() takes &self but needs to update CWD.
     cwd: std::sync::Mutex<std::path::PathBuf>,
+    /// Track consecutive edit failures per file path for fallback hints.
+    edit_failures: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -96,7 +98,8 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 ## Tools (use via "tool_name" field in actions array)
 - read_file: {tool_name, path, offset?, limit?} — read file contents
 - write_file: {tool_name, path, content} — create/overwrite file
-- edit_file: {tool_name, path, old_string, new_string} — edit existing file
+- edit_file: {tool_name, path, old_string, new_string} — edit existing file (simple single replacement)
+- apply_patch: {tool_name, patch} — apply a patch to one or more files (PREFERRED for edits)
 - bash: {tool_name, command, description?, timeout?} — run shell command
 - bash_bg: {tool_name, name, command} — run in tmux background
 - search_code: {tool_name, query} — ripgrep search
@@ -119,12 +122,28 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - **A (actions)**: Execute the first task step. Use multiple actions for independent ops.
 - **R (result)**: Use finish tool when ALL steps done. Put full answer in summary.
 
+## apply_patch Format
+Use apply_patch for file edits (PREFERRED over edit_file). Format:
+*** Begin Patch
+*** Update File: path/to/file.ts
+@@ context_line (class/function name to narrow scope)
+ context line (unchanged, prefix with space)
+-old line to remove
++new line to add
+ context line
+*** End Patch
+
+Operations: "*** Add File: path" (new file, +lines), "*** Delete File: path", "*** Update File: path".
+Use @@ markers when 3 lines of context aren't enough to uniquely locate the change.
+Show 3 lines of context before and after each change. File paths must be relative.
+
 ## Rules
 - NEVER respond with prose or markdown — ONLY JSON.
 - When answering questions or reporting findings, use finish tool with the answer in summary.
 - Act directly — don't waste steps on setup.
 - Use multiple actions for independent operations (e.g. read 3 files at once).
 - Read files before editing. Verify changes with git_status or tests.
+- PREFER apply_patch over edit_file for editing files — it handles multiple changes at once.
 "#;
 
 impl Agent {
@@ -155,6 +174,7 @@ impl Agent {
             cwd: std::sync::Mutex::new(
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             ),
+            edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -338,23 +358,81 @@ impl Agent {
                 })
             }
             SgrAction::EditFile { path, old_string, new_string } => {
-                crate::tools::edit_file(path, old_string, new_string).await?;
-                let old_lines: Vec<&str> = old_string.lines().collect();
-                let new_lines: Vec<&str> = new_string.lines().collect();
-                let mut diff = format!(
-                    "Edited {} ({}→{} lines)\n",
-                    path, old_lines.len(), new_lines.len()
-                );
-                for l in &old_lines {
-                    diff.push_str(&format!("- {}\n", l));
+                match crate::tools::edit_file(path, old_string, new_string).await {
+                    Ok(()) => {
+                        // Reset failure counter on success
+                        self.edit_failures.lock().unwrap().remove(path.as_str());
+                        let old_lines: Vec<&str> = old_string.lines().collect();
+                        let new_lines: Vec<&str> = new_string.lines().collect();
+                        let mut diff = format!(
+                            "Edited {} ({}→{} lines)\n",
+                            path, old_lines.len(), new_lines.len()
+                        );
+                        for l in &old_lines {
+                            diff.push_str(&format!("- {}\n", l));
+                        }
+                        for l in &new_lines {
+                            diff.push_str(&format!("+ {}\n", l));
+                        }
+                        Ok(ActionResult { output: diff, done: false })
+                    }
+                    Err(e) => {
+                        let count = {
+                            let mut failures = self.edit_failures.lock().unwrap();
+                            let c = failures.entry(path.to_string()).or_insert(0);
+                            *c += 1;
+                            *c
+                        };
+                        let mut err_msg = format!("{}", e);
+                        if count >= 2 {
+                            err_msg.push_str(&format!(
+                                "\n\n⚠ edit_file has failed {} times on this file. \
+                                 STOP trying edit_file. Instead: use read_file to get the EXACT current content, \
+                                 then use write_file with the complete modified content.",
+                                count
+                            ));
+                        }
+                        Err(anyhow::anyhow!("{}", err_msg))
+                    }
                 }
-                for l in &new_lines {
-                    diff.push_str(&format!("+ {}\n", l));
+            }
+            SgrAction::ApplyPatch { patch } => {
+                let current_cwd = self.cwd.lock().unwrap().clone();
+                match baml_agent::tools::apply_patch::apply_patch_to_files(patch, &current_cwd).await {
+                    Ok(result) => {
+                        let mut summary = String::new();
+                        for p in &result.added {
+                            summary.push_str(&format!("A {}\n", p.display()));
+                        }
+                        for p in &result.modified {
+                            summary.push_str(&format!("M {}\n", p.display()));
+                        }
+                        for p in &result.deleted {
+                            summary.push_str(&format!("D {}\n", p.display()));
+                        }
+                        if summary.is_empty() {
+                            summary = "Patch applied (no changes).".to_string();
+                        }
+                        Ok(ActionResult { output: summary, done: false })
+                    }
+                    Err(e) => Err(anyhow::anyhow!(
+                        "apply_patch error: {}\n\n\
+                         CORRECT FORMAT EXAMPLE:\n\
+                         *** Begin Patch\n\
+                         *** Add File: path/to/new.ts\n\
+                         +line1\n\
+                         +line2\n\
+                         *** Update File: path/to/existing.ts\n\
+                         @@ function_name\n\
+                          context line\n\
+                         -old line\n\
+                         +new line\n\
+                          context line\n\
+                         *** End Patch\n\n\
+                         Do NOT use unified diff format (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.",
+                        e
+                    )),
                 }
-                Ok(ActionResult {
-                    output: diff,
-                    done: false,
-                })
             }
             SgrAction::Bash { command, timeout, .. } => {
                 let timeout_ms = timeout.map(|t| (t as u64).min(600_000));
@@ -362,13 +440,20 @@ impl Agent {
                 let result =
                     crate::tools::run_command_in(command, &current_cwd, timeout_ms).await;
                 *self.cwd.lock().unwrap() = result.cwd;
-                let exit_info = if result.exit_code == 0 {
-                    String::new()
+                let output_text = if result.exit_code == 0 {
+                    if result.output.trim().is_empty() {
+                        "Command completed successfully (no output).".to_string()
+                    } else {
+                        format!("Command output:\n{}", result.output)
+                    }
                 } else {
-                    format!("\n[exit code: {}]", result.exit_code)
+                    format!(
+                        "Command output:\n{}\n[exit code: {}]",
+                        result.output, result.exit_code
+                    )
                 };
                 Ok(ActionResult {
-                    output: format!("Command output:\n{}{}", result.output, exit_info),
+                    output: output_text,
                     done: false,
                 })
             }
@@ -830,6 +915,13 @@ impl SgrAgent for Agent {
             Action::ProjectMap { path } => format!("project_map:{:?}", path),
             Action::Dependencies { path } => format!("deps:{:?}", path),
             Action::Task { operation, task_id, .. } => format!("task:{}:{:?}", operation, task_id),
+            Action::ApplyPatch { patch } => {
+                // Include hash of patch content so different patches aren't treated as loops
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                patch.hash(&mut hasher);
+                format!("apply_patch:{:x}", hasher.finish())
+            }
         }
     }
 }
@@ -839,7 +931,8 @@ pub fn action_kind(action: &Action) -> ActionKind {
     match action {
         Action::ReadFile { .. } | Action::SearchCode { .. } | Action::GitStatus { .. }
         | Action::GitDiff { .. } | Action::ProjectMap { .. } | Action::Dependencies { .. } => ActionKind::Read,
-        Action::WriteFile { .. } | Action::EditFile { .. } | Action::OpenEditor { .. } => ActionKind::Write,
+        Action::WriteFile { .. } | Action::EditFile { .. } | Action::OpenEditor { .. }
+        | Action::ApplyPatch { .. } => ActionKind::Write,
         Action::Bash { .. } | Action::BashBg { .. } => ActionKind::Execute,
         Action::GitAdd { .. } | Action::GitCommit { .. } => ActionKind::GitMutate,
         Action::AskUser { .. } | Action::Finish { .. } | Action::Memory { .. } | Action::Task { .. } => ActionKind::Plan,

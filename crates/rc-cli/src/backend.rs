@@ -17,11 +17,34 @@ const NATIVE_FC_SYSTEM_PROMPT: &str = r#"You are rust-code, an expert AI coding 
 2. Call one or more tools using the provided functions. Call multiple tools for independent operations.
 3. When the task is FULLY complete, call the `finish` function with a summary of what was done.
 
+## Editing files
+Use `apply_patch` for ALL file edits. Do NOT use `edit_file` — it is deprecated.
+
+The `apply_patch` tool uses a patch format:
+```
+*** Begin Patch
+*** Update File: path/to/file
+@@ optional_context_line
+ context line (space prefix = unchanged)
+-line to remove
++line to add
+ context line
+*** End Patch
+```
+- `*** Add File: path` — create new file (all lines start with +)
+- `*** Delete File: path` — delete file
+- `*** Update File: path` — edit existing file with hunks
+- Each hunk starts with `@@` optionally followed by a function/class name for disambiguation
+- Show 3 lines of context before and after changes
+- Use space prefix for unchanged context lines, `-` for removals, `+` for additions
+- File paths are relative to working directory
+
 ## Rules
 - Act directly — don't waste steps on unnecessary setup.
 - Read files before editing. Verify changes with git_status or tests.
 - When answering questions or reporting findings, call `finish` with the answer in `summary`.
 - For simple questions that need no tools, just call `finish` immediately.
+- Keep going until the task is completely done. Don't stop at the first error.
 "#;
 
 // ---------------------------------------------------------------------------
@@ -170,6 +193,8 @@ pub enum SgrAction {
         #[serde(default)]
         notes: Option<String>,
     },
+    #[serde(rename = "apply_patch")]
+    ApplyPatch { patch: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -361,12 +386,19 @@ struct TaskParams {
     notes: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct ApplyPatchParams {
+    /// Patch in the apply_patch format. Must start with "*** Begin Patch" and end with "*** End Patch".
+    patch: String,
+}
+
 /// Build Gemini functionDeclarations for all agent tools.
 pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
     vec![
         tool::<ReadFileParams>("read_file", "Read file contents. Use offset/limit for large files."),
         tool::<WriteFileParams>("write_file", "Create or overwrite a file with new content."),
-        tool::<EditFileParams>("edit_file", "Edit a file by replacing old_string with new_string. old_string must match exactly."),
+        tool::<EditFileParams>("edit_file", "DEPRECATED — use apply_patch instead. Simple single-string replacement (old_string → new_string)."),
+        tool::<ApplyPatchParams>("apply_patch", "Edit files. Use this for ALL file modifications. Format: '*** Begin Patch\\n*** Update File: path\\n@@ optional_context\\n context_line\\n-old_line\\n+new_line\\n*** End Patch'. Operations: Add/Delete/Update File. Lines prefixed with space (context), - (remove), + (add). Include 3 lines of context around changes."),
         tool::<BashParams>("bash", "Run a shell command and return stdout/stderr."),
         tool::<BashBgParams>("bash_bg", "Run a shell command in background (tmux)."),
         tool::<SearchCodeParams>("search_code", "Search codebase for a pattern using ripgrep."),
@@ -623,6 +655,7 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             priority: s_opt("priority"),
             notes: s_opt("notes"),
         }),
+        "apply_patch" => Some(SgrAction::ApplyPatch { patch: s("patch") }),
         _ => {
             tracing::warn!(tool = %tc.name, "unknown native function call, skipping");
             None

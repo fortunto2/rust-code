@@ -712,14 +712,29 @@ fn trim_messages(messages: &mut Vec<Message>, max: usize) {
     let mut trim_end = keep_start + remove_count;
 
     // Don't break functionCall → functionResponse pairs.
-    // If trim_end lands inside a Tool message sequence, extend to include all of them.
-    // Then if the message just before the kept portion is a Tool, also remove it
-    // (orphaned functionResponse without its functionCall).
+    // Gemini requires: model turn (functionCall) → user turn (functionResponse).
+    // If trim_end lands in the middle of such a pair, extend to skip the whole group.
+    //
+    // Case 1: trim_end points at Tool messages — extend past them (they'd be orphaned).
     while trim_end < messages.len() && messages[trim_end].role == Role::Tool {
         trim_end += 1;
     }
-    // If the first kept message (after summary) is a Tool, it's orphaned — remove it too
-    // (This shouldn't happen after the while above, but be safe)
+    // Case 2: the first kept message is a Tool — it lost its preceding Assistant.
+    // (Already handled by Case 1, but double-check.)
+    //
+    // Case 3: the last removed message is an Assistant with tool_calls —
+    // the following Tool messages (now first in kept region) would be orphaned.
+    // Extend trim_end to also remove those Tool messages.
+    if trim_end > keep_start && trim_end < messages.len() {
+        let last_removed = trim_end - 1;
+        if messages[last_removed].role == Role::Assistant && !messages[last_removed].tool_calls.is_empty() {
+            // The assistant had tool_calls but we're keeping it... actually we're removing it.
+            // So remove all following Tool messages too.
+            while trim_end < messages.len() && messages[trim_end].role == Role::Tool {
+                trim_end += 1;
+            }
+        }
+    }
 
     let removed_range = keep_start..trim_end;
 
@@ -978,6 +993,41 @@ mod tests {
         let mut msgs = vec![Message::user("a"), Message::user("b")];
         trim_messages(&mut msgs, 10);
         assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn trim_messages_preserves_assistant_tool_call_pair() {
+        use crate::types::Role;
+        // system, user, assistant(tool_calls), tool, tool, user, assistant
+        let mut msgs = vec![
+            Message::system("sys"),
+            Message::user("prompt"),
+            Message::assistant_with_tool_calls(
+                "calling",
+                vec![
+                    ToolCall { id: "c1".into(), name: "read".into(), arguments: serde_json::json!({}) },
+                    ToolCall { id: "c2".into(), name: "read".into(), arguments: serde_json::json!({}) },
+                ],
+            ),
+            Message::tool("c1", "result1"),
+            Message::tool("c2", "result2"),
+            Message::user("next"),
+            Message::assistant("done"),
+        ];
+        // Trim to 5 — should remove assistant+tools as a group, not split them
+        trim_messages(&mut msgs, 5);
+        // Verify no orphaned Tool messages remain
+        for (i, msg) in msgs.iter().enumerate() {
+            if msg.role == Role::Tool {
+                // The previous message should be an Assistant with tool_calls
+                assert!(i > 0, "Tool message at start");
+                assert!(
+                    msgs[i - 1].role == Role::Assistant && !msgs[i - 1].tool_calls.is_empty()
+                        || msgs[i - 1].role == Role::Tool,
+                    "Orphaned Tool at position {i}"
+                );
+            }
+        }
     }
 
     #[test]

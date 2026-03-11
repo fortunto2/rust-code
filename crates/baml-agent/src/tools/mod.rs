@@ -3,6 +3,7 @@
 //! These are the core tools any BAML agent needs: bash, filesystem, git.
 //! Agent-specific tools (MCP, skills, editor) stay in the agent crate.
 
+pub mod apply_patch;
 pub mod bash;
 pub mod fs;
 pub mod git;

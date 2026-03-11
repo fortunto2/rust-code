@@ -262,12 +262,13 @@ where
         LoopStatus::Warning(n) => {
             tracing::warn!(step = step_num, repeats = n, category = %category, "agent_loop_warning");
             on_event(LoopEvent::LoopWarning(n));
+            // Use tool role — models on FC mode see tool results better than system messages
             session.push(
-                <<A::Msg as AgentMessage>::Role>::system(),
+                <<A::Msg as AgentMessage>::Role>::tool(),
                 format!(
-                    "SYSTEM: You have repeated the same action {} times (category: {}). \
-                     The result is DEFINITIVE. Do NOT retry — either proceed to the next \
-                     step or use FinishTaskTool to report completion.",
+                    "⚠ LOOP WARNING: You repeated the same action {} times (category: {}). \
+                     The result is DEFINITIVE and will NOT change. Do NOT retry. \
+                     Proceed to the NEXT step in your plan or use finish to complete.",
                     n, category
                 ),
             );
@@ -275,10 +276,10 @@ where
         LoopStatus::Ok => {}
     }
 
-    // --- Inject hints as system messages ---
+    // --- Inject hints as tool messages (better visibility in FC mode) ---
     for hint in &decision.hints {
         session.push(
-            <<A::Msg as AgentMessage>::Role>::system(),
+            <<A::Msg as AgentMessage>::Role>::tool(),
             format!("HINT: {}", hint),
         );
     }
@@ -329,11 +330,10 @@ where
                     LoopStatus::Warning(n) => {
                         on_event(LoopEvent::LoopWarning(n));
                         session.push(
-                            <<A::Msg as AgentMessage>::Role>::system(),
+                            <<A::Msg as AgentMessage>::Role>::tool(),
                             format!(
-                                "SYSTEM: Same tool output {} times in a row. The result will \
-                                 not change — accept it and move forward. Do NOT retry the \
-                                 same operation.",
+                                "⚠ STAGNATION: Same tool output {} times. The result will NOT \
+                                 change. Do NOT retry — move to the NEXT step or use finish.",
                                 n
                             ),
                         );
