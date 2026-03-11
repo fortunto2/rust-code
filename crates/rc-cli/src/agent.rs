@@ -1,8 +1,7 @@
 use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
-    git_status, is_mutating_action, mcp::McpManager, read_file, truncate_output,
-    write_file,
+    git_status, is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
 };
 use anyhow::Result;
 use baml_agent::{
@@ -462,14 +461,21 @@ impl Agent {
                     let cache = self.read_cache.lock().unwrap();
                     cache.contains_key(&cache_key)
                 };
-                let content =
-                    read_file(&resolved, offset.map(|o| o as usize), limit.map(|l| l as usize)).await?;
+                let content = read_file(
+                    &resolved,
+                    offset.map(|o| o as usize),
+                    limit.map(|l| l as usize),
+                )
+                .await?;
                 let output = if is_reread {
                     // Return truncated content on re-read to save context window
                     let lines: Vec<&str> = content.lines().collect();
                     let preview = if lines.len() > 5 {
-                        format!("{}\n... ({} more lines — use content from conversation history)",
-                            lines[..5].join("\n"), lines.len() - 5)
+                        format!(
+                            "{}\n... ({} more lines — use content from conversation history)",
+                            lines[..5].join("\n"),
+                            lines.len() - 5
+                        )
                     } else {
                         content.clone()
                     };
@@ -574,6 +580,58 @@ impl Agent {
                         if summary.is_empty() {
                             summary = "Patch applied (no changes).".to_string();
                         }
+
+                        // Show updated content so agent has fresh state for subsequent patches.
+                        // Limit: first 3 files, max 200 lines each.
+                        let changed: Vec<&std::path::Path> = result
+                            .modified
+                            .iter()
+                            .chain(result.added.iter())
+                            .take(3)
+                            .map(|p| p.as_path())
+                            .collect();
+                        for p in &changed {
+                            let abs = if p.is_absolute() {
+                                p.to_path_buf()
+                            } else {
+                                current_cwd.join(p)
+                            };
+                            if let Ok(content) = tokio::fs::read_to_string(&abs).await {
+                                let lines: Vec<&str> = content.lines().collect();
+                                let display = if lines.len() > 200 {
+                                    format!(
+                                        "{}\n... ({} more lines)",
+                                        lines[..200].join("\n"),
+                                        lines.len() - 200
+                                    )
+                                } else {
+                                    content
+                                };
+                                summary.push_str(&format!(
+                                    "\n--- Updated {} ---\n{}\n",
+                                    p.display(),
+                                    display
+                                ));
+                            }
+                        }
+
+                        // Invalidate read cache for changed files
+                        {
+                            let mut cache = self.read_cache.lock().unwrap();
+                            for p in result
+                                .modified
+                                .iter()
+                                .chain(result.added.iter())
+                                .chain(result.deleted.iter())
+                            {
+                                let key = p.to_string_lossy().to_string();
+                                cache.remove(&key);
+                                // Also remove with cwd prefix
+                                let abs = current_cwd.join(p);
+                                cache.remove(&abs.to_string_lossy().to_string());
+                            }
+                        }
+
                         Ok(ActionResult {
                             output: summary,
                             done: false,
@@ -648,7 +706,8 @@ impl Agent {
                 let safe_query = query.replace("'", "'\\''");
                 let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
                 let current_cwd = self.cwd.lock().unwrap().clone();
-                let search_result = crate::tools::run_command_in(&search_cmd, &current_cwd, None).await;
+                let search_result =
+                    crate::tools::run_command_in(&search_cmd, &current_cwd, None).await;
                 let output = &search_result.output;
                 if search_result.exit_code == 0 && !output.trim().is_empty() {
                     let lines: Vec<&str> = output.lines().collect();
@@ -1210,6 +1269,33 @@ impl SgrAgent for Agent {
 
     async fn execute(&self, action: &Action) -> Result<ActionResult> {
         self.execute_action(action).await
+    }
+
+    fn action_category(action: &Action) -> String {
+        match action {
+            // For apply_patch: category = target files, not content hash.
+            // This way repeated patches on same file(s) trigger loop detection
+            // even when patch content differs slightly each time.
+            Action::ApplyPatch { patch } => {
+                let mut files: Vec<&str> = Vec::new();
+                for line in patch.lines() {
+                    if let Some(rest) = line
+                        .strip_prefix("*** Add File: ")
+                        .or_else(|| line.strip_prefix("*** Update File: "))
+                        .or_else(|| line.strip_prefix("*** Delete File: "))
+                    {
+                        files.push(rest.trim());
+                    }
+                }
+                if files.is_empty() {
+                    "apply_patch".into()
+                } else {
+                    files.sort();
+                    format!("apply_patch:{}", files.join(","))
+                }
+            }
+            other => baml_agent::loop_detect::normalize_signature(&Self::action_signature(other)),
+        }
     }
 
     fn action_signature(action: &Action) -> String {

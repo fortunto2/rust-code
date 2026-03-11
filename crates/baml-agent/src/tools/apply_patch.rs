@@ -676,7 +676,12 @@ fn parse_update_file_chunk(
                 chunk.old_lines.push(line[1..].to_string());
             }
             _ => {
-                if parsed == 0 {
+                if !line.starts_with("***") && !line.starts_with("@@") {
+                    // Model forgot the leading space on a context line (e.g. `}` instead of ` }`)
+                    // — treat as context
+                    chunk.old_lines.push(line.to_string());
+                    chunk.new_lines.push(line.to_string());
+                } else if parsed == 0 {
                     return Err(ParseError::InvalidHunk {
                         message: format!(
                             "Unexpected line in update hunk: '{line}'. \
@@ -684,9 +689,10 @@ fn parse_update_file_chunk(
                         ),
                         line_number: line_no + 1,
                     });
+                } else {
+                    // Start of next hunk or file op
+                    break;
                 }
-                // Start of next hunk
-                break;
             }
         }
         parsed += 1;
@@ -742,11 +748,12 @@ fn seek_sequence_range(lines: &[String], pattern: &[String], start: usize) -> Op
     // Tiers ordered from strictest to most lenient.
     // Each tier gets a full pass before falling through to the next.
     let tiers: &[fn(&str, &str) -> bool] = &[
-        |a, b| a == b,                                 // 1: exact
-        |a, b| a.trim_end() == b.trim_end(),           // 2: trailing ws
-        |a, b| a.trim() == b.trim(),                   // 3: both sides
-        |a, b| normalise_line(a) == normalise_line(b), // 4: unicode
-        |a, b| collapse_ws(a) == collapse_ws(b),       // 5: ws collapse
+        |a, b| a == b,                                     // 1: exact
+        |a, b| a.trim_end() == b.trim_end(),               // 2: trailing ws
+        |a, b| a.trim() == b.trim(),                       // 3: both sides
+        |a, b| normalise_line(a) == normalise_line(b),     // 4: unicode
+        |a, b| collapse_ws(a) == collapse_ws(b),           // 5: ws collapse
+        |a, b| normalise_quotes(a) == normalise_quotes(b), // 6: ' vs "
     ];
 
     for cmp in tiers {
@@ -779,6 +786,12 @@ fn normalise_line(s: &str) -> String {
             other => other,
         })
         .collect()
+}
+
+/// Normalize quotes: treat `'` and `"` as interchangeable, plus trim.
+/// Handles model sending `"next/server"` when file has `'next/server'`.
+fn normalise_quotes(s: &str) -> String {
+    s.trim().replace('"', "'")
 }
 
 /// Collapse all runs of whitespace to a single space, then trim.
@@ -823,28 +836,6 @@ fn seek_context_substring(lines: &[String], ctx: &str, start: usize) -> Option<u
         }
     }
     None
-}
-
-/// Find the closest matching single line for error reporting.
-fn find_closest_line(lines: &[String], target: &str, start: usize) -> String {
-    let target_lower = target.trim().to_lowercase();
-    let mut best = ("(no lines in file)", usize::MAX);
-    for (i, line) in lines.iter().enumerate() {
-        let line_lower = line.trim().to_lowercase();
-        let dist = if line_lower.contains(&target_lower) || target_lower.contains(&line_lower) {
-            0
-        } else {
-            levenshtein_bounded(&target_lower, &line_lower, 50)
-        };
-        if dist < best.1 {
-            best = (line, dist);
-        }
-        // Prefer lines near start
-        if dist == best.1 && i >= start && i < start + 20 {
-            best = (line, dist);
-        }
-    }
-    format!("line: '{}'", best.0.trim())
 }
 
 /// Find the closest matching block for error reporting.
@@ -933,14 +924,9 @@ fn compute_replacements(
                 // but file has "  normalize(data: any) {"
                 line_index = idx + 1;
             } else {
-                let closest = find_closest_line(original_lines, ctx, line_index);
-                return Err(ApplyPatchError::MatchFailed(format!(
-                    "Failed to find context '{}' in {}\n\
-                     Closest match: {}",
-                    ctx,
-                    path.display(),
-                    closest,
-                )));
+                // Context is a hint, not a requirement — continue from current
+                // position and rely on old_lines matching below.
+                // Model often sends imprecise context like "@@ imports" for "import".
             }
         }
 
@@ -1809,5 +1795,74 @@ mod tests {
         let contents = fs::read_to_string(dir.path().join("bare.ts")).unwrap();
         assert!(contents.contains("hello"));
         assert!(contents.contains("world"));
+    }
+
+    #[test]
+    fn test_context_soft_fail_imports() {
+        // Model sends "@@ imports" but file has "import { ... }" — context is a hint,
+        // should not fail; old_lines matching handles positioning.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("comfort.ts"),
+            "import { SubScore } from '../types';\n\nexport function calc() {\n  return 42;\n}\n",
+        )
+        .unwrap();
+        let patch = wrap("*** Update File: comfort.ts\n@@ imports\n-  return 42;\n+  return 100;");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("comfort.ts")).unwrap();
+        assert!(contents.contains("return 100"));
+        assert!(!contents.contains("return 42"));
+    }
+
+    #[test]
+    fn test_context_soft_fail_wrong_name() {
+        // Completely wrong context — still works via old_lines matching.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("app.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+        let patch = wrap(
+            "*** Update File: app.rs\n@@ nonexistent_function\n-    println!(\"hello\");\n+    println!(\"world\");",
+        );
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("app.rs")).unwrap();
+        assert!(contents.contains("world"));
+        assert!(!contents.contains("hello"));
+    }
+
+    #[test]
+    fn test_missing_space_prefix_on_context_line() {
+        // Model writes `}` instead of ` }` for context lines
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("test.ts"),
+            "function foo() {\n  return 1;\n}\n",
+        )
+        .unwrap();
+        // `}` has no leading space — should be treated as context
+        let patch = wrap("*** Update File: test.ts\n@@\n-  return 1;\n+  return 2;\n}");
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("test.ts")).unwrap();
+        assert!(contents.contains("return 2"));
+        assert!(contents.contains("}"));
+    }
+
+    #[test]
+    fn test_quote_mismatch_single_vs_double() {
+        // File uses single quotes, model sends double quotes
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("route.ts"),
+            "import { NextResponse } from 'next/server';\nimport { SubScore } from '@/types';\n\nexport function handler() {\n  return 42;\n}\n",
+        )
+        .unwrap();
+        let patch = wrap(
+            "*** Update File: route.ts\n@@\n-import { NextResponse } from \"next/server\";\n-import { SubScore } from \"@/types\";\n+import { NextResponse } from \"next/server\";\n+import { SubScore } from \"@/types\";\n+import { newThing } from \"@/lib/new\";",
+        );
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("route.ts")).unwrap();
+        assert!(contents.contains("newThing"));
     }
 }
