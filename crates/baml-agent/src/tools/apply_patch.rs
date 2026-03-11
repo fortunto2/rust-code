@@ -298,6 +298,11 @@ fn parse_one_hunk(lines: &[&str], line_no: usize) -> Result<(Hunk, usize), Parse
         let mut contents = String::new();
         let mut consumed = 1;
         for line in &lines[1..] {
+            if line.starts_with("@@") {
+                // Skip unified diff hunk headers (@@ -0,0 +1,N @@) — tolerate hybrid format
+                consumed += 1;
+                continue;
+            }
             if let Some(rest) = line.strip_prefix('+') {
                 contents.push_str(rest);
                 contents.push('\n');
@@ -1782,5 +1787,27 @@ mod tests {
             "Error should show actual line: {}",
             msg
         );
+    }
+
+    #[test]
+    fn test_add_file_with_unified_diff_header() {
+        // Model sends hybrid: *** Add File + @@ -0,0 +1,N @@ header
+        let patch = wrap("*** Add File: new.ts\n@@ -0,0 +1,3 @@\n+line 1\n+line 2\n+line 3");
+        let dir = tempdir().unwrap();
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("new.ts")).unwrap();
+        assert!(contents.contains("line 1"));
+        assert!(contents.contains("line 3"));
+    }
+
+    #[test]
+    fn test_add_file_with_bare_at_header() {
+        // Model sends *** Add File + bare @@
+        let patch = wrap("*** Add File: bare.ts\n@@\n+hello\n+world");
+        let dir = tempdir().unwrap();
+        apply_patch_to_files_sync(&patch, dir.path()).unwrap();
+        let contents = fs::read_to_string(dir.path().join("bare.ts")).unwrap();
+        assert!(contents.contains("hello"));
+        assert!(contents.contains("world"));
     }
 }
