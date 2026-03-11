@@ -23,7 +23,11 @@ enum Action {
     #[serde(rename = "write_file")]
     WriteFile { path: String, content: String },
     #[serde(rename = "edit_file")]
-    EditFile { path: String, old_string: String, new_string: String },
+    EditFile {
+        path: String,
+        old_string: String,
+        new_string: String,
+    },
     #[serde(rename = "bash")]
     Bash { command: String },
     #[serde(rename = "finish")]
@@ -51,11 +55,31 @@ fn main() {
         let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY required");
 
         let prompts: Vec<(&str, &str, &str)> = vec![
-            ("Read a file", "Read the file src/main.rs and tell me what it does.", "read_file"),
-            ("Run a command", "Run `ls -la` and show me the output.", "bash"),
-            ("Edit a file", "Fix the typo in src/lib.rs: change 'teh' to 'the'.", "edit_file"),
-            ("Multi-action", "Read Cargo.toml and then run cargo test.", "read_file"),
-            ("Finish task", "Everything looks good. Summarize what was done and finish.", "finish"),
+            (
+                "Read a file",
+                "Read the file src/main.rs and tell me what it does.",
+                "read_file",
+            ),
+            (
+                "Run a command",
+                "Run `ls -la` and show me the output.",
+                "bash",
+            ),
+            (
+                "Edit a file",
+                "Fix the typo in src/lib.rs: change 'teh' to 'the'.",
+                "edit_file",
+            ),
+            (
+                "Multi-action",
+                "Read Cargo.toml and then run cargo test.",
+                "read_file",
+            ),
+            (
+                "Finish task",
+                "Everything looks good. Summarize what was done and finish.",
+                "finish",
+            ),
         ];
 
         let config = sgr_agent::ProviderConfig::gemini(&api_key, "gemini-2.5-flash");
@@ -77,16 +101,22 @@ fn main() {
                     if let Some(step) = resp.output {
                         let first = step.actions.first().map(tool_name).unwrap_or("(none)");
                         let ok = first == *expected_tool;
-                        if ok { passed += 1; }
+                        if ok {
+                            passed += 1;
+                        }
 
-                        println!("{} tool={:<12} sit={:<30} acts={}",
+                        println!(
+                            "{} tool={:<12} sit={:<30} acts={}",
                             if ok { "OK " } else { "WRONG" },
                             first,
                             step.situation.chars().take(30).collect::<String>(),
                             step.actions.len(),
                         );
                     } else {
-                        println!("FAIL: empty output (raw: {})", &resp.raw_text[..resp.raw_text.len().min(60)]);
+                        println!(
+                            "FAIL: empty output (raw: {})",
+                            &resp.raw_text[..resp.raw_text.len().min(60)]
+                        );
                     }
                 }
                 Err(e) => {
@@ -96,6 +126,9 @@ fn main() {
             }
         }
 
-        println!("\n=== Results: {}/{} correct tool selection ===", passed, total);
+        println!(
+            "\n=== Results: {}/{} correct tool selection ===",
+            passed, total
+        );
     });
 }

@@ -488,6 +488,64 @@ impl SwarmManager {
             .count()
     }
 
+    /// Get all agent IDs.
+    pub fn all_agent_ids(&self) -> Vec<AgentId> {
+        self.agents.keys().cloned().collect()
+    }
+
+    /// Format all agent statuses as a human-readable string.
+    pub async fn status_all_formatted(&self) -> String {
+        let statuses = self.status_all().await;
+        if statuses.is_empty() {
+            return "No agents.".to_string();
+        }
+        statuses
+            .iter()
+            .map(|(id, role, status)| format!("[{}] {} — {}", id, role, status))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Wait for multiple agents with timeout. Returns (id, formatted_result) pairs.
+    pub async fn wait_with_timeout(
+        &mut self,
+        ids: &[AgentId],
+        timeout: std::time::Duration,
+    ) -> Vec<(AgentId, String)> {
+        let mut results = Vec::new();
+        for id in ids {
+            let rx = match self.take_receiver(id) {
+                Ok(rx) => rx,
+                Err(e) => {
+                    results.push((id.clone(), format!("Error: {}", e)));
+                    continue;
+                }
+            };
+            match tokio::time::timeout(timeout, rx).await {
+                Ok(Ok(result)) => {
+                    let summary = format!(
+                        "{} ({}, {} steps): {}",
+                        result.status, result.role, result.steps,
+                        if result.summary.len() > 500 {
+                            format!("{}...", &result.summary[..500])
+                        } else {
+                            result.summary.clone()
+                        }
+                    );
+                    self.agents.remove(id);
+                    results.push((id.clone(), summary));
+                }
+                Ok(Err(_)) => {
+                    results.push((id.clone(), "Channel closed".into()));
+                }
+                Err(_) => {
+                    results.push((id.clone(), format!("Timeout after {}s", timeout.as_secs())));
+                }
+            }
+        }
+        results
+    }
+
     /// Format active agents as a status summary (for environment context).
     pub async fn status_summary(&self) -> String {
         let mut lines = Vec::new();

@@ -4726,16 +4726,12 @@ impl<'a> App<'a> {
                                                 }
                                                 if let Action::EditFile { path, .. } = action {
                                                     let _ = agent_tx
-                                                        .send(AppEvent::FileModified(
-                                                            path.clone(),
-                                                        ))
+                                                        .send(AppEvent::FileModified(path.clone()))
                                                         .await;
                                                 }
                                                 if let Action::WriteFile { path, .. } = action {
                                                     let _ = agent_tx
-                                                        .send(AppEvent::FileModified(
-                                                            path.clone(),
-                                                        ))
+                                                        .send(AppEvent::FileModified(path.clone()))
                                                         .await;
                                                 }
 

@@ -297,9 +297,7 @@ fn parse_one_hunk(lines: &[&str], line_no: usize) -> Result<(Hunk, usize), Parse
         let mut consumed = 1;
 
         // Optional move
-        let move_path = remaining
-            .first()
-            .and_then(|l| l.strip_prefix(MOVE_TO));
+        let move_path = remaining.first().and_then(|l| l.strip_prefix(MOVE_TO));
         if move_path.is_some() {
             remaining = &remaining[1..];
             consumed += 1;
@@ -673,12 +671,7 @@ fn parse_update_file_chunk(
 /// 4. Match after Unicode normalization (typographic → ASCII)
 ///
 /// When `eof` is true, prefer matching at the end of the file first.
-fn seek_sequence(
-    lines: &[String],
-    pattern: &[String],
-    start: usize,
-    eof: bool,
-) -> Option<usize> {
+fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
     if pattern.is_empty() {
         return Some(start);
     }
@@ -788,8 +781,7 @@ fn compute_replacements(
 
         // Try to locate old_lines in the file
         let mut pattern: &[String] = &chunk.old_lines;
-        let mut found =
-            seek_sequence(original_lines, pattern, line_index, chunk.is_end_of_file);
+        let mut found = seek_sequence(original_lines, pattern, line_index, chunk.is_end_of_file);
         let mut new_slice: &[String] = &chunk.new_lines;
 
         // Retry without trailing empty line (represents final newline)
@@ -845,8 +837,7 @@ fn derive_new_contents(
     path: &Path,
     chunks: &[UpdateFileChunk],
 ) -> Result<String, ApplyPatchError> {
-    let mut original_lines: Vec<String> =
-        original_contents.split('\n').map(String::from).collect();
+    let mut original_lines: Vec<String> = original_contents.split('\n').map(String::from).collect();
 
     // Drop trailing empty element from final newline
     if original_lines.last().is_some_and(String::is_empty) {
@@ -872,10 +863,7 @@ fn derive_new_contents(
 ///
 /// `cwd` is the working directory for resolving relative paths in the patch.
 /// Returns a `PatchResult` listing affected files.
-pub async fn apply_patch_to_files(
-    patch: &str,
-    cwd: &Path,
-) -> Result<PatchResult, ApplyPatchError> {
+pub async fn apply_patch_to_files(patch: &str, cwd: &Path) -> Result<PatchResult, ApplyPatchError> {
     let hunks = parse_patch(patch)?;
 
     if hunks.is_empty() {
@@ -908,11 +896,7 @@ pub async fn apply_patch_to_files(
             } => {
                 let full = cwd.join(path);
                 let original = tokio::fs::read_to_string(&full).await.map_err(|e| {
-                    ApplyPatchError::Other(format!(
-                        "Failed to read {}: {}",
-                        full.display(),
-                        e
-                    ))
+                    ApplyPatchError::Other(format!("Failed to read {}: {}", full.display(), e))
                 })?;
 
                 let new_contents = derive_new_contents(&original, &full, chunks)?;
@@ -939,10 +923,7 @@ pub async fn apply_patch_to_files(
 }
 
 /// Synchronous version of `apply_patch_to_files` for use in tests and non-async contexts.
-pub fn apply_patch_to_files_sync(
-    patch: &str,
-    cwd: &Path,
-) -> Result<PatchResult, ApplyPatchError> {
+pub fn apply_patch_to_files_sync(patch: &str, cwd: &Path) -> Result<PatchResult, ApplyPatchError> {
     let hunks = parse_patch(patch)?;
 
     if hunks.is_empty() {
@@ -975,11 +956,7 @@ pub fn apply_patch_to_files_sync(
             } => {
                 let full = cwd.join(path);
                 let original = std::fs::read_to_string(&full).map_err(|e| {
-                    ApplyPatchError::Other(format!(
-                        "Failed to read {}: {}",
-                        full.display(),
-                        e
-                    ))
+                    ApplyPatchError::Other(format!("Failed to read {}: {}", full.display(), e))
                 })?;
 
                 let new_contents = derive_new_contents(&original, &full, chunks)?;
@@ -1446,7 +1423,11 @@ mod tests {
     #[test]
     fn test_unified_diff_update_file() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("app.py"), "import os\n\ndef main():\n    print(\"hello\")\n    return 0\n").unwrap();
+        fs::write(
+            dir.path().join("app.py"),
+            "import os\n\ndef main():\n    print(\"hello\")\n    return 0\n",
+        )
+        .unwrap();
 
         let patch = wrap("--- a/app.py\n+++ b/app.py\n@@ -3,3 +3,3 @@\n def main():\n-    print(\"hello\")\n+    print(\"world\")\n     return 0");
         apply_patch_to_files_sync(&patch, dir.path()).unwrap();
@@ -1489,9 +1470,15 @@ mod tests {
     #[test]
     fn test_unified_diff_with_context_function() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("ctx.py"), "import os\n\ndef greet():\n    pass\n\ndef other():\n    pass\n").unwrap();
+        fs::write(
+            dir.path().join("ctx.py"),
+            "import os\n\ndef greet():\n    pass\n\ndef other():\n    pass\n",
+        )
+        .unwrap();
 
-        let patch = wrap("--- a/ctx.py\n+++ b/ctx.py\n@@ -3,2 +3,2 @@ def greet():\n-    pass\n+    return 42");
+        let patch = wrap(
+            "--- a/ctx.py\n+++ b/ctx.py\n@@ -3,2 +3,2 @@ def greet():\n-    pass\n+    return 42",
+        );
         apply_patch_to_files_sync(&patch, dir.path()).unwrap();
         let contents = fs::read_to_string(dir.path().join("ctx.py")).unwrap();
         assert!(contents.contains("return 42"));
@@ -1503,12 +1490,19 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("a.txt"), "old\n").unwrap();
 
-        let patch = wrap("--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n*** Add File: b.txt\n+fresh");
+        let patch =
+            wrap("--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n*** Add File: b.txt\n+fresh");
         let result = apply_patch_to_files_sync(&patch, dir.path()).unwrap();
         assert_eq!(result.modified.len(), 1);
         assert_eq!(result.added.len(), 1);
-        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "new\n");
-        assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "fresh\n");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "new\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+            "fresh\n"
+        );
     }
 
     // -- Async test --

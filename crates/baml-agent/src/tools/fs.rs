@@ -105,7 +105,13 @@ pub async fn edit_file(path: impl AsRef<Path>, old_string: &str, new_string: &st
     );
 }
 
-async fn apply_edit(path: &Path, content: &str, pos: usize, old_len: usize, new_string: &str) -> Result<()> {
+async fn apply_edit(
+    path: &Path,
+    content: &str,
+    pos: usize,
+    old_len: usize,
+    new_string: &str,
+) -> Result<()> {
     let mut updated = String::with_capacity(content.len() - old_len + new_string.len());
     updated.push_str(&content[..pos]);
     updated.push_str(new_string);
@@ -171,9 +177,7 @@ fn find_ws_normalized(content: &str, old_string: &str) -> Option<(usize, usize)>
                 + content_lines[start..start + old_lines.len()]
                     .iter()
                     .enumerate()
-                    .map(|(i, l)| {
-                        l.len() + if i < old_lines.len() - 1 { 1 } else { 0 }
-                    })
+                    .map(|(i, l)| l.len() + if i < old_lines.len() - 1 { 1 } else { 0 })
                     .sum::<usize>();
             // Verify byte_end doesn't exceed content
             if byte_end <= content.len() {
@@ -306,9 +310,7 @@ mod tests {
     async fn edit_ws_normalized_trailing_spaces() {
         let path = "/tmp/baml-agent-test-ws2.txt";
         // File has trailing spaces
-        write_file(path, "hello world  \nfoo bar\n")
-            .await
-            .unwrap();
+        write_file(path, "hello world  \nfoo bar\n").await.unwrap();
         // Agent sends without trailing spaces
         edit_file(path, "hello world\nfoo bar", "goodbye world\nfoo baz")
             .await
@@ -358,7 +360,7 @@ mod tests {
         // Try to apply an edit that's already done (old_string absent, new_string present)
         let result = edit_file(path, "let x = 1;", "let x = 2;").await;
         assert!(result.is_ok()); // Should succeed silently
-        // File should be unchanged
+                                 // File should be unchanged
         let content = read_file(path, None, None).await.unwrap();
         assert!(content.contains("let x = 2"));
         assert!(!content.contains("let x = 1"));

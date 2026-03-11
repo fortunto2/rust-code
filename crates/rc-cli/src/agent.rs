@@ -1,14 +1,18 @@
 use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
-    git_status, is_mutating_action, mcp::McpManager, read_file, run_command, write_file,
+    git_status, is_mutating_action, mcp::McpManager, read_file, run_command, truncate_output,
+    write_file,
 };
 use anyhow::Result;
 use baml_agent::{
     ActionKind, ActionResult, AgentMessage, HintContext, Intent, LoopDetector, MessageRole,
     Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints,
 };
+use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Action type — the 18-variant tool enum.
 pub type Action = SgrAction;
@@ -82,10 +86,12 @@ pub struct Agent {
     cwd: std::sync::Mutex<std::path::PathBuf>,
     /// Track consecutive edit failures per file path for fallback hints.
     edit_failures: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    /// Multi-agent swarm manager for sub-agents.
+    swarm: Arc<TokioMutex<SwarmManager>>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
-const MAX_HISTORY: usize = 60;
+const MAX_HISTORY: usize = 200;
 
 /// System prompt for SGR backend (replaces BAML's built-in prompt template).
 /// Covers: tools, STAR methodology, JSON-only output rule, finish discipline.
@@ -115,6 +121,10 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - project_map: {tool_name, path?} — scan project structure
 - dependencies: {tool_name, path?} — parse dependency files
 - task: {tool_name, action, id?, title?, status?, body?} — manage tasks
+- spawn_agent: {tool_name, role, task, max_steps?} — spawn sub-agent (explorer/worker/reviewer)
+- wait_agents: {tool_name, agent_ids?, timeout_secs?} — wait for sub-agents to complete
+- agent_status: {tool_name, agent_id?} — check sub-agent status
+- cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
 
 ## STAR Methodology
 - **S (situation)**: Assess current state. What phase? What's done? What's blocking?
@@ -175,12 +185,13 @@ impl Agent {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             ),
             edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
+            swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
         }
     }
 
     /// Create a new LoopDetector (used by callers in app.rs/main.rs).
     pub fn new_loop_detector() -> LoopDetector {
-        LoopDetector::new(6)
+        LoopDetector::new(10)
     }
 
     /// Initialize MCP servers from .mcp.json configs.
@@ -287,21 +298,97 @@ impl Agent {
 
     /// Call LLM and get next step (non-streaming).
     pub async fn step(&mut self) -> Result<SgrNextStep> {
+        // Try LLM compaction before falling back to simple trim
+        self.try_compact().await;
         self.session.trim();
         let history = self.build_history();
 
         let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
         self.last_input_chars = input_chars;
 
-        let provider = self
-            .provider
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No LLM provider configured. Use --sgr or set GEMINI_API_KEY."))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("No LLM provider configured. Use --sgr or set GEMINI_API_KEY.")
+        })?;
 
         let mut sgr_msgs = backend::to_sgr_messages(&history);
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
 
         provider.call_flexible(&sgr_msgs).await
+    }
+
+    /// Try LLM-based context compaction if history is getting large.
+    /// Falls through silently on error — trim_messages will handle it as fallback.
+    async fn try_compact(&mut self) {
+        let provider = match &self.provider {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Convert session messages to sgr-agent Messages for compaction
+        let msgs: Vec<sgr_agent::Message> = self
+            .session
+            .messages()
+            .iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "system" => sgr_agent::types::Role::System,
+                    "assistant" => sgr_agent::types::Role::Assistant,
+                    "tool" => sgr_agent::types::Role::Tool,
+                    _ => sgr_agent::types::Role::User,
+                };
+                match role {
+                    sgr_agent::types::Role::System => sgr_agent::Message::system(&m.content),
+                    sgr_agent::types::Role::User => sgr_agent::Message::user(&m.content),
+                    sgr_agent::types::Role::Assistant => sgr_agent::Message::assistant(&m.content),
+                    sgr_agent::types::Role::Tool => sgr_agent::Message::tool("", &m.content),
+                }
+            })
+            .collect();
+
+        let compactor = sgr_agent::compaction::Compactor::new(80_000).with_keep(2, 10);
+        if !compactor.needs_compaction(&msgs) {
+            return;
+        }
+
+        tracing::info!("Context compaction triggered ({} messages)", msgs.len());
+
+        let client = match provider.make_compaction_client().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Compaction client error: {}, falling back to trim", e);
+                return;
+            }
+        };
+
+        let mut sgr_msgs = msgs;
+        match compactor.compact(client.as_ref(), &mut sgr_msgs).await {
+            Ok(true) => {
+                // Replace session messages with compacted version
+                let compacted: Vec<Msg> = sgr_msgs
+                    .iter()
+                    .map(|m| Msg {
+                        role: match m.role {
+                            sgr_agent::types::Role::System => "system".into(),
+                            sgr_agent::types::Role::Assistant => "assistant".into(),
+                            sgr_agent::types::Role::Tool => "tool".into(),
+                            sgr_agent::types::Role::User => "user".into(),
+                        },
+                        content: m.content.clone(),
+                    })
+                    .collect();
+                let session_msgs = self.session.messages_mut();
+                session_msgs.clear();
+                session_msgs.extend(compacted);
+                tracing::info!(
+                    "Context compacted to {} messages",
+                    self.session.messages().len()
+                );
+            }
+            Ok(false) => {} // not needed after all
+            Err(e) => {
+                tracing::warn!("Compaction failed: {}, falling back to trim", e);
+            }
+        }
     }
 
     /// Record output size after LLM response (call from TUI/headless after getting response).
@@ -335,15 +422,15 @@ impl Agent {
             }
         }
         match action {
-            SgrAction::ReadFile { path, offset, limit } => {
-                let content = read_file(
-                    path,
-                    offset.map(|o| o as usize),
-                    limit.map(|l| l as usize),
-                )
-                .await?;
+            SgrAction::ReadFile {
+                path,
+                offset,
+                limit,
+            } => {
+                let content =
+                    read_file(path, offset.map(|o| o as usize), limit.map(|l| l as usize)).await?;
                 Ok(ActionResult {
-                    output: format!("File contents of {}:\n{}", path, content),
+                    output: truncate_output(&format!("File contents of {}:\n{}", path, content)),
                     done: false,
                 })
             }
@@ -357,7 +444,11 @@ impl Agent {
                     done: false,
                 })
             }
-            SgrAction::EditFile { path, old_string, new_string } => {
+            SgrAction::EditFile {
+                path,
+                old_string,
+                new_string,
+            } => {
                 match crate::tools::edit_file(path, old_string, new_string).await {
                     Ok(()) => {
                         // Reset failure counter on success
@@ -366,7 +457,9 @@ impl Agent {
                         let new_lines: Vec<&str> = new_string.lines().collect();
                         let mut diff = format!(
                             "Edited {} ({}→{} lines)\n",
-                            path, old_lines.len(), new_lines.len()
+                            path,
+                            old_lines.len(),
+                            new_lines.len()
                         );
                         for l in &old_lines {
                             diff.push_str(&format!("- {}\n", l));
@@ -374,7 +467,10 @@ impl Agent {
                         for l in &new_lines {
                             diff.push_str(&format!("+ {}\n", l));
                         }
-                        Ok(ActionResult { output: diff, done: false })
+                        Ok(ActionResult {
+                            output: diff,
+                            done: false,
+                        })
                     }
                     Err(e) => {
                         let count = {
@@ -398,7 +494,9 @@ impl Agent {
             }
             SgrAction::ApplyPatch { patch } => {
                 let current_cwd = self.cwd.lock().unwrap().clone();
-                match baml_agent::tools::apply_patch::apply_patch_to_files(patch, &current_cwd).await {
+                match baml_agent::tools::apply_patch::apply_patch_to_files(patch, &current_cwd)
+                    .await
+                {
                     Ok(result) => {
                         let mut summary = String::new();
                         for p in &result.added {
@@ -413,44 +511,46 @@ impl Agent {
                         if summary.is_empty() {
                             summary = "Patch applied (no changes).".to_string();
                         }
-                        Ok(ActionResult { output: summary, done: false })
+                        Ok(ActionResult {
+                            output: summary,
+                            done: false,
+                        })
                     }
                     Err(e) => Err(anyhow::anyhow!(
                         "apply_patch error: {}\n\n\
-                         CORRECT FORMAT EXAMPLE:\n\
+                         IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.\n\n\
+                         CORRECT FORMAT:\n\
                          *** Begin Patch\n\
-                         *** Add File: path/to/new.ts\n\
-                         +line1\n\
-                         +line2\n\
-                         *** Update File: path/to/existing.ts\n\
+                         *** Update File: path/to/file.ts\n\
                          @@ function_name\n\
-                          context line\n\
+                          context line (must match file exactly)\n\
                          -old line\n\
                          +new line\n\
                           context line\n\
                          *** End Patch\n\n\
-                         Do NOT use unified diff format (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.",
+                         Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.",
                         e
                     )),
                 }
             }
-            SgrAction::Bash { command, timeout, .. } => {
+            SgrAction::Bash {
+                command, timeout, ..
+            } => {
                 let timeout_ms = timeout.map(|t| (t as u64).min(600_000));
                 let current_cwd = self.cwd.lock().unwrap().clone();
-                let result =
-                    crate::tools::run_command_in(command, &current_cwd, timeout_ms).await;
+                let result = crate::tools::run_command_in(command, &current_cwd, timeout_ms).await;
                 *self.cwd.lock().unwrap() = result.cwd;
                 let output_text = if result.exit_code == 0 {
                     if result.output.trim().is_empty() {
                         "Command completed successfully (no output).".to_string()
                     } else {
-                        format!("Command output:\n{}", result.output)
+                        truncate_output(&format!("Command output:\n{}", result.output))
                     }
                 } else {
-                    format!(
+                    truncate_output(&format!(
                         "Command output:\n{}\n[exit code: {}]",
                         result.output, result.exit_code
-                    )
+                    ))
                 };
                 Ok(ActionResult {
                     output: output_text,
@@ -507,7 +607,7 @@ impl Agent {
                 }
 
                 Ok(ActionResult {
-                    output: result,
+                    output: truncate_output(&result),
                     done: false,
                 })
             }
@@ -583,7 +683,14 @@ impl Agent {
                 output: format!("Question for user: {}", question),
                 done: true,
             }),
-            SgrAction::Memory { operation, category, section, content, context, confidence } => {
+            SgrAction::Memory {
+                operation,
+                category,
+                section,
+                content,
+                context,
+                confidence,
+            } => {
                 let memory_path = Path::new(AGENT_HOME).join("MEMORY.jsonl");
                 let op = operation.to_lowercase();
                 let cat = category.as_deref().unwrap_or("insight").to_lowercase();
@@ -611,17 +718,15 @@ impl Agent {
                         writeln!(file, "{}", entry)
                             .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
                         Ok(ActionResult {
-                            output: format!(
-                                "Memory saved: [{}] {} ({})",
-                                cat, sec, conf
-                            ),
+                            output: format!("Memory saved: [{}] {} ({})", cat, sec, conf),
                             done: false,
                         })
                     }
                     "forget" => {
                         let sec = section.as_deref().unwrap_or("general");
                         if memory_path.exists() {
-                            let file_content = std::fs::read_to_string(&memory_path).unwrap_or_default();
+                            let file_content =
+                                std::fs::read_to_string(&memory_path).unwrap_or_default();
                             let filtered: Vec<&str> = file_content
                                 .lines()
                                 .filter(|line| {
@@ -653,7 +758,11 @@ impl Agent {
                     }),
                 }
             }
-            SgrAction::McpCall { server, tool, arguments } => {
+            SgrAction::McpCall {
+                server,
+                tool,
+                arguments,
+            } => {
                 let Some(mcp) = &self.mcp else {
                     return Ok(ActionResult {
                         output: "MCP not initialized. No .mcp.json found.".into(),
@@ -686,7 +795,14 @@ impl Agent {
                     done: false,
                 })
             }
-            SgrAction::Task { operation, title, task_id, status, priority, notes } => {
+            SgrAction::Task {
+                operation,
+                title,
+                task_id,
+                status,
+                priority,
+                notes,
+            } => {
                 let project_root = Path::new(".");
                 let op = operation.to_lowercase();
                 match op.as_str() {
@@ -713,7 +829,9 @@ impl Agent {
                         let tasks = baml_agent::load_tasks(project_root);
                         if tasks.is_empty() {
                             Ok(ActionResult {
-                                output: "No tasks found. Use task(operation='create') to create one.".into(),
+                                output:
+                                    "No tasks found. Use task(operation='create') to create one."
+                                        .into(),
                                 done: false,
                             })
                         } else {
@@ -826,6 +944,146 @@ impl Agent {
                     })
                 }
             }
+            SgrAction::SpawnAgent {
+                role,
+                task,
+                max_steps,
+            } => {
+                use sgr_agent::swarm::SpawnConfig;
+
+                let agent_role = match role.as_str() {
+                    "explorer" => AgentRole::Explorer,
+                    "worker" => AgentRole::Worker,
+                    "reviewer" => AgentRole::Reviewer,
+                    other => AgentRole::Custom(other.to_string()),
+                };
+
+                let provider = match &self.provider {
+                    Some(p) => p,
+                    None => {
+                        return Ok(ActionResult {
+                            output: "Cannot spawn agent: no LLM provider configured.".into(),
+                            done: false,
+                        });
+                    }
+                };
+
+                // Create sub-agent's LLM client + agent + tools
+                let client = match provider.make_gemini_client().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return Ok(ActionResult {
+                            output: format!("Failed to create LLM client for sub-agent: {}", e),
+                            done: false,
+                        });
+                    }
+                };
+
+                let sub_prompt = format!(
+                    "You are a {} sub-agent. Complete the task efficiently. Respond with JSON only.",
+                    agent_role.name()
+                );
+                let sub_agent =
+                    sgr_agent::agents::flexible::FlexibleAgent::new(client, sub_prompt, 3);
+                let sub_tools = sgr_agent::registry::ToolRegistry::new();
+
+                let mut config = match agent_role {
+                    AgentRole::Explorer => SpawnConfig::explorer(task.clone()),
+                    AgentRole::Worker => SpawnConfig::worker(task.clone()),
+                    AgentRole::Reviewer => SpawnConfig::reviewer(task.clone()),
+                    AgentRole::Custom(_) => SpawnConfig::worker(task.clone()),
+                };
+                if let Some(n) = max_steps {
+                    config.max_steps = *n as usize;
+                }
+
+                let parent_ctx = sgr_agent::context::AgentContext::new();
+                let mut swarm = self.swarm.lock().await;
+                match swarm.spawn(config, Box::new(sub_agent), sub_tools, &parent_ctx) {
+                    Ok(id) => Ok(ActionResult {
+                        output: format!("Spawned {} agent: {}\nTask: {}", agent_role, id, task),
+                        done: false,
+                    }),
+                    Err(e) => Ok(ActionResult {
+                        output: format!("Failed to spawn agent: {}", e),
+                        done: false,
+                    }),
+                }
+            }
+            SgrAction::WaitAgents {
+                agent_ids,
+                timeout_secs,
+            } => {
+                let timeout =
+                    std::time::Duration::from_secs(timeout_secs.map(|s| s as u64).unwrap_or(300));
+
+                let ids: Vec<AgentId>;
+                {
+                    let swarm = self.swarm.lock().await;
+                    ids = if agent_ids.is_empty() {
+                        swarm.all_agent_ids()
+                    } else {
+                        agent_ids.iter().map(|s| AgentId(s.clone())).collect()
+                    };
+                }
+
+                if ids.is_empty() {
+                    return Ok(ActionResult {
+                        output: "No agents to wait for.".into(),
+                        done: false,
+                    });
+                }
+
+                let mut swarm = self.swarm.lock().await;
+                let results = swarm.wait_with_timeout(&ids, timeout).await;
+                let output = results
+                    .iter()
+                    .map(|(id, result)| format!("[{}] {}", id, result))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Ok(ActionResult {
+                    output,
+                    done: false,
+                })
+            }
+            SgrAction::AgentStatus { agent_id } => {
+                let swarm = self.swarm.lock().await;
+                let output = if let Some(id) = agent_id {
+                    let aid = AgentId(id.clone());
+                    match swarm.status(&aid).await {
+                        Some(s) => format!("[{}] {}", id, s),
+                        None => format!("Agent '{}' not found", id),
+                    }
+                } else {
+                    swarm.status_all_formatted().await
+                };
+                Ok(ActionResult {
+                    output,
+                    done: false,
+                })
+            }
+            SgrAction::CancelAgent { agent_id } => {
+                let swarm = self.swarm.lock().await;
+                if agent_id == "all" {
+                    swarm.cancel_all();
+                    Ok(ActionResult {
+                        output: "Cancelled all agents.".into(),
+                        done: false,
+                    })
+                } else {
+                    let aid = AgentId(agent_id.clone());
+                    match swarm.cancel(&aid) {
+                        Ok(()) => Ok(ActionResult {
+                            output: format!("Cancelled agent: {}", agent_id),
+                            done: false,
+                        }),
+                        Err(e) => Ok(ActionResult {
+                            output: format!("Failed to cancel: {}", e),
+                            done: false,
+                        }),
+                    }
+                }
+            }
         }
     }
 }
@@ -898,8 +1156,23 @@ impl SgrAgent for Agent {
     fn action_signature(action: &Action) -> String {
         match action {
             Action::ReadFile { path, .. } => format!("read:{}", path),
-            Action::WriteFile { path, .. } => format!("write:{}", path),
-            Action::EditFile { path, .. } => format!("edit:{}", path),
+            Action::WriteFile { path, content } => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                content.hash(&mut hasher);
+                format!("write:{}:{:x}", path, hasher.finish())
+            }
+            Action::EditFile {
+                path,
+                old_string,
+                new_string,
+            } => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                old_string.hash(&mut hasher);
+                new_string.hash(&mut hasher);
+                format!("edit:{}:{:x}", path, hasher.finish())
+            }
             Action::Bash { command, .. } => format!("bash:{}", command),
             Action::BashBg { name, .. } => format!("bg:{}", name),
             Action::SearchCode { query } => format!("search:{}", query),
@@ -910,11 +1183,15 @@ impl SgrAgent for Agent {
             Action::OpenEditor { path, .. } => format!("open:{}", path),
             Action::AskUser { question } => format!("ask:{}", question),
             Action::Finish { summary } => format!("finish:{}", summary),
-            Action::Memory { operation, section, .. } => format!("memory:{}:{:?}", operation, section),
+            Action::Memory {
+                operation, section, ..
+            } => format!("memory:{}:{:?}", operation, section),
             Action::McpCall { server, tool, .. } => format!("mcp:{}:{}", server, tool),
             Action::ProjectMap { path } => format!("project_map:{:?}", path),
             Action::Dependencies { path } => format!("deps:{:?}", path),
-            Action::Task { operation, task_id, .. } => format!("task:{}:{:?}", operation, task_id),
+            Action::Task {
+                operation, task_id, ..
+            } => format!("task:{}:{:?}", operation, task_id),
             Action::ApplyPatch { patch } => {
                 // Include hash of patch content so different patches aren't treated as loops
                 use std::hash::{Hash, Hasher};
@@ -922,6 +1199,12 @@ impl SgrAgent for Agent {
                 patch.hash(&mut hasher);
                 format!("apply_patch:{:x}", hasher.finish())
             }
+            Action::SpawnAgent { role, task, .. } => {
+                format!("spawn:{}:{}", role, &task[..task.len().min(40)])
+            }
+            Action::WaitAgents { agent_ids, .. } => format!("wait:{:?}", agent_ids),
+            Action::AgentStatus { agent_id } => format!("status:{:?}", agent_id),
+            Action::CancelAgent { agent_id } => format!("cancel:{}", agent_id),
         }
     }
 }
@@ -929,14 +1212,27 @@ impl SgrAgent for Agent {
 /// Classify action into coarse ActionKind for intent guard.
 pub fn action_kind(action: &Action) -> ActionKind {
     match action {
-        Action::ReadFile { .. } | Action::SearchCode { .. } | Action::GitStatus { .. }
-        | Action::GitDiff { .. } | Action::ProjectMap { .. } | Action::Dependencies { .. } => ActionKind::Read,
-        Action::WriteFile { .. } | Action::EditFile { .. } | Action::OpenEditor { .. }
+        Action::ReadFile { .. }
+        | Action::SearchCode { .. }
+        | Action::GitStatus { .. }
+        | Action::GitDiff { .. }
+        | Action::ProjectMap { .. }
+        | Action::Dependencies { .. } => ActionKind::Read,
+        Action::WriteFile { .. }
+        | Action::EditFile { .. }
+        | Action::OpenEditor { .. }
         | Action::ApplyPatch { .. } => ActionKind::Write,
         Action::Bash { .. } | Action::BashBg { .. } => ActionKind::Execute,
         Action::GitAdd { .. } | Action::GitCommit { .. } => ActionKind::GitMutate,
-        Action::AskUser { .. } | Action::Finish { .. } | Action::Memory { .. } | Action::Task { .. } => ActionKind::Plan,
+        Action::AskUser { .. }
+        | Action::Finish { .. }
+        | Action::Memory { .. }
+        | Action::Task { .. } => ActionKind::Plan,
         Action::McpCall { .. } => ActionKind::External,
+        Action::SpawnAgent { .. }
+        | Action::WaitAgents { .. }
+        | Action::AgentStatus { .. }
+        | Action::CancelAgent { .. } => ActionKind::Execute,
     }
 }
 
@@ -956,8 +1252,7 @@ impl SgrAgentStream for Agent {
         let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
         let provider = self.provider.clone();
         async move {
-            let provider = provider
-                .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
+            let provider = provider.ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
             let mut sgr_msgs = backend::to_sgr_messages(&history);
             sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
@@ -1065,7 +1360,9 @@ mod tests {
         use baml_agent::LoopStatus;
         assert_eq!(ld.check("a"), LoopStatus::Ok);
         assert_eq!(ld.check("a"), LoopStatus::Ok);
-        assert_eq!(ld.check("a"), LoopStatus::Warning(3));
+        assert_eq!(ld.check("a"), LoopStatus::Ok);
+        assert_eq!(ld.check("a"), LoopStatus::Ok);
+        assert_eq!(ld.check("a"), LoopStatus::Warning(5));
     }
 
     #[test]

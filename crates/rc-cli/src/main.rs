@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod app;
 pub mod backend;
+pub mod config;
 pub mod preview;
 pub mod tools;
 pub mod tui;
@@ -256,7 +257,11 @@ async fn start_cli_provider(cli_name: &str, model_override: Option<String>) -> P
             }
         }
         Err(e) => {
-            eprintln!("Failed to start {} proxy: {}", cli_provider.display_name(), e);
+            eprintln!(
+                "Failed to start {} proxy: {}",
+                cli_provider.display_name(),
+                e
+            );
             std::process::exit(1);
         }
     }
@@ -335,10 +340,7 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                         let m = model.unwrap_or_else(|| "gemini-2.5-flash".into());
                         return ProviderSetup {
                             label: Some(format!("Gemini ({})", m)),
-                            provider: Some(backend::SgrProvider::Gemini {
-                                api_key,
-                                model: m,
-                            }),
+                            provider: Some(backend::SgrProvider::Gemini { api_key, model: m }),
                             _proxy_handle: None,
                         };
                     }
@@ -357,25 +359,23 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
                         };
                     }
                 }
-                ProviderAuth::ClaudeKeychain => {
-                    match providers::load_claude_keychain_token() {
-                        Ok(token) => {
-                            let m = model.unwrap_or_else(|| "claude-sonnet-4-20250514".into());
-                            return ProviderSetup {
-                                label: Some(format!("Anthropic ({})", m)),
-                                provider: Some(backend::SgrProvider::OpenAI {
-                                    api_key: token,
-                                    model: m,
-                                    base_url: Some("https://api.anthropic.com/v1".into()),
-                                }),
-                                _proxy_handle: None,
-                            };
-                        }
-                        Err(e) => {
-                            eprintln!("Claude auth failed: {}", e);
-                        }
+                ProviderAuth::ClaudeKeychain => match providers::load_claude_keychain_token() {
+                    Ok(token) => {
+                        let m = model.unwrap_or_else(|| "claude-sonnet-4-20250514".into());
+                        return ProviderSetup {
+                            label: Some(format!("Anthropic ({})", m)),
+                            provider: Some(backend::SgrProvider::OpenAI {
+                                api_key: token,
+                                model: m,
+                                base_url: Some("https://api.anthropic.com/v1".into()),
+                            }),
+                            _proxy_handle: None,
+                        };
                     }
-                }
+                    Err(e) => {
+                        eprintln!("Claude auth failed: {}", e);
+                    }
+                },
                 _ => {}
             }
         }
@@ -383,13 +383,13 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
 
     // Auto-detect: try GEMINI_API_KEY
     if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
-        let model = args.model.clone().unwrap_or_else(|| "gemini-2.5-flash".into());
+        let model = args
+            .model
+            .clone()
+            .unwrap_or_else(|| "gemini-2.5-flash".into());
         return ProviderSetup {
             label: Some(format!("Gemini ({})", model)),
-            provider: Some(backend::SgrProvider::Gemini {
-                api_key,
-                model,
-            }),
+            provider: Some(backend::SgrProvider::Gemini { api_key, model }),
             _proxy_handle: None,
         };
     }
@@ -405,14 +405,18 @@ async fn resolve_provider_setup(args: &Args) -> ProviderSetup {
 fn provider_label(provider: &backend::SgrProvider) -> String {
     match provider {
         backend::SgrProvider::Gemini { model, .. } => format!("Gemini ({})", model),
-        backend::SgrProvider::OpenAI { model, base_url, .. } => {
+        backend::SgrProvider::OpenAI {
+            model, base_url, ..
+        } => {
             if base_url.is_some() {
                 format!("OpenAI-compat ({})", model)
             } else {
                 format!("OpenAI ({})", model)
             }
         }
-        backend::SgrProvider::Vertex { model, project_id, .. } => {
+        backend::SgrProvider::Vertex {
+            model, project_id, ..
+        } => {
             format!("Vertex ({}, {})", model, project_id)
         }
         backend::SgrProvider::GeminiCli { model, sandbox } => {
@@ -448,10 +452,7 @@ async fn resolve_sgr_provider(
 
     // OpenAI / OpenRouter
     if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-        let model = args
-            .model
-            .clone()
-            .unwrap_or_else(|| "gpt-4o".into());
+        let model = args.model.clone().unwrap_or_else(|| "gpt-4o".into());
         return (
             backend::SgrProvider::OpenAI {
                 api_key,
@@ -511,8 +512,8 @@ fn detect_gcloud_project() -> Option<String> {
     }
     // Check if ADC credentials file exists
     let home = std::env::var("HOME").ok()?;
-    let adc_path = std::path::PathBuf::from(&home)
-        .join(".config/gcloud/application_default_credentials.json");
+    let adc_path =
+        std::path::PathBuf::from(&home).join(".config/gcloud/application_default_credentials.json");
     if !adc_path.exists() {
         return None;
     }
@@ -1366,7 +1367,6 @@ async fn main() -> Result<()> {
         Box::new(init_telemetry_tui())
     };
 
-
     if let Some(prompt) = args.prompt {
         // Single prompt headless mode — fresh session by default
         println!("Running single prompt mode...");
@@ -1407,7 +1407,7 @@ async fn main() -> Result<()> {
 
         let config = LoopConfig {
             max_steps: 50,
-            loop_abort_threshold: 6,
+            loop_abort_threshold: 12,
         };
 
         // Extract session for run_loop_stream (needs &Agent + &mut Session separately)

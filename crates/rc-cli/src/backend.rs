@@ -195,6 +195,27 @@ pub enum SgrAction {
     },
     #[serde(rename = "apply_patch")]
     ApplyPatch { patch: String },
+    #[serde(rename = "spawn_agent")]
+    SpawnAgent {
+        role: String,
+        task: String,
+        #[serde(default)]
+        max_steps: Option<i64>,
+    },
+    #[serde(rename = "wait_agents")]
+    WaitAgents {
+        #[serde(default)]
+        agent_ids: Vec<String>,
+        #[serde(default)]
+        timeout_secs: Option<i64>,
+    },
+    #[serde(rename = "agent_status")]
+    AgentStatus {
+        #[serde(default)]
+        agent_id: Option<String>,
+    },
+    #[serde(rename = "cancel_agent")]
+    CancelAgent { agent_id: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -392,36 +413,105 @@ struct ApplyPatchParams {
     patch: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct SpawnAgentParams {
+    /// Role: "explorer" (fast, read-only), "worker" (smart, read-write), "reviewer" (read-only, thorough).
+    role: String,
+    /// Task description for the sub-agent.
+    task: String,
+    /// Optional max steps before auto-stop.
+    #[serde(default)]
+    max_steps: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct WaitAgentsParams {
+    /// Agent IDs to wait for. Empty = wait for all.
+    #[serde(default)]
+    agent_ids: Vec<String>,
+    /// Timeout in seconds (default: 300).
+    #[serde(default)]
+    timeout_secs: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct AgentStatusParams {
+    /// Agent ID to check. If omitted, shows all agents.
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct CancelAgentParams {
+    /// Agent ID to cancel. Use "all" to cancel all agents.
+    agent_id: String,
+}
+
 /// Build Gemini functionDeclarations for all agent tools.
 pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
     vec![
-        tool::<ReadFileParams>("read_file", "Read file contents. Use offset/limit for large files."),
+        tool::<ReadFileParams>(
+            "read_file",
+            "Read file contents. Use offset/limit for large files.",
+        ),
         tool::<WriteFileParams>("write_file", "Create or overwrite a file with new content."),
-        tool::<EditFileParams>("edit_file", "DEPRECATED — use apply_patch instead. Simple single-string replacement (old_string → new_string)."),
-        tool::<ApplyPatchParams>("apply_patch", "Edit files. Use this for ALL file modifications. Format: '*** Begin Patch\\n*** Update File: path\\n@@ optional_context\\n context_line\\n-old_line\\n+new_line\\n*** End Patch'. Operations: Add/Delete/Update File. Lines prefixed with space (context), - (remove), + (add). Include 3 lines of context around changes."),
+        tool::<EditFileParams>(
+            "edit_file",
+            "DEPRECATED — use apply_patch instead. Simple single-string replacement (old_string → new_string).",
+        ),
+        tool::<ApplyPatchParams>(
+            "apply_patch",
+            "Edit files. Use this for ALL file modifications. Format: '*** Begin Patch\\n*** Update File: path\\n@@ optional_context\\n context_line\\n-old_line\\n+new_line\\n*** End Patch'. Operations: Add/Delete/Update File. Lines prefixed with space (context), - (remove), + (add). Include 3 lines of context around changes.",
+        ),
         tool::<BashParams>("bash", "Run a shell command and return stdout/stderr."),
         tool::<BashBgParams>("bash_bg", "Run a shell command in background (tmux)."),
-        tool::<SearchCodeParams>("search_code", "Search codebase for a pattern using ripgrep."),
+        tool::<SearchCodeParams>(
+            "search_code",
+            "Search codebase for a pattern using ripgrep.",
+        ),
         tool::<GitStatusParams>("git_status", "Show git status of the working directory."),
-        tool::<GitDiffParams>("git_diff", "Show git diff. Use cached=true for staged changes."),
+        tool::<GitDiffParams>(
+            "git_diff",
+            "Show git diff. Use cached=true for staged changes.",
+        ),
         tool::<GitAddParams>("git_add", "Stage files for commit."),
         tool::<GitCommitParams>("git_commit", "Create a git commit with a message."),
         tool::<OpenEditorParams>("open_editor", "Open a file in the user's editor."),
-        tool::<AskUserParams>("ask_user", "Ask the user a question and wait for their response."),
-        tool::<FinishParams>("finish", "Signal task completion with a summary of what was done."),
+        tool::<AskUserParams>(
+            "ask_user",
+            "Ask the user a question and wait for their response.",
+        ),
+        tool::<FinishParams>(
+            "finish",
+            "Signal task completion with a summary of what was done.",
+        ),
         tool::<McpCallParams>("mcp_call", "Call a tool on an MCP server."),
         tool::<MemoryParams>("memory", "Save or forget an agent memory entry."),
         tool::<ProjectMapParams>("project_map", "Generate a project structure map."),
         tool::<DependenciesParams>("dependencies", "Analyze project dependencies."),
         tool::<TaskParams>("task", "Manage tasks: create, list, update, done."),
+        tool::<SpawnAgentParams>(
+            "spawn_agent",
+            "Spawn a sub-agent with a role and task. Roles: explorer (fast, read-only), worker (smart, read-write), reviewer (thorough, read-only). Returns agent ID.",
+        ),
+        tool::<WaitAgentsParams>(
+            "wait_agents",
+            "Wait for sub-agents to complete. Returns their results.",
+        ),
+        tool::<AgentStatusParams>(
+            "agent_status",
+            "Check status of sub-agents (running/completed/failed).",
+        ),
+        tool::<CancelAgentParams>(
+            "cancel_agent",
+            "Cancel a running sub-agent by ID, or 'all' to cancel all.",
+        ),
     ]
 }
 
 // ---------------------------------------------------------------------------
 // Conversion: SgrNextStep → BAML types
 // ---------------------------------------------------------------------------
-
-
 
 // ---------------------------------------------------------------------------
 // SGR backend: call LLM and parse response
@@ -431,10 +521,7 @@ impl SgrProvider {
     /// Call LLM and parse into SgrNextStep.
     /// Gemini/Vertex use native function calling (structured plan + tool calls).
     /// OpenAI/GeminiCli use flexible text parsing (legacy).
-    pub async fn call_flexible(
-        &self,
-        messages: &[sgr_agent::Message],
-    ) -> Result<SgrNextStep> {
+    pub async fn call_flexible(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
         match self {
             SgrProvider::Gemini { .. } | SgrProvider::Vertex { .. } => {
                 self.call_native(messages).await
@@ -447,10 +534,7 @@ impl SgrProvider {
 
     /// Native function calling with functionDeclarations.
     /// Model returns text (situation analysis) + functionCall parts (tool invocations).
-    async fn call_native(
-        &self,
-        messages: &[sgr_agent::Message],
-    ) -> Result<SgrNextStep> {
+    async fn call_native(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
         let tools = sgr_tool_defs();
 
         // Replace JSON-only system prompt with function calling prompt.
@@ -459,7 +543,9 @@ impl SgrProvider {
         let messages: Vec<sgr_agent::Message> = messages
             .iter()
             .map(|m| {
-                if m.role == sgr_agent::Role::System && m.content.contains("MUST respond with ONLY valid JSON") {
+                if m.role == sgr_agent::Role::System
+                    && m.content.contains("MUST respond with ONLY valid JSON")
+                {
                     sgr_agent::Message::system(NATIVE_FC_SYSTEM_PROMPT)
                 } else {
                     m.clone()
@@ -483,9 +569,16 @@ impl SgrProvider {
         }
 
         // Extract situation from a finish tool if present, otherwise generic
-        let situation = actions.iter().find_map(|a| {
-            if let SgrAction::Finish { summary } = a { Some(summary.clone()) } else { None }
-        }).unwrap_or_else(|| format!("Executing {} tool(s).", actions.len()));
+        let situation = actions
+            .iter()
+            .find_map(|a| {
+                if let SgrAction::Finish { summary } = a {
+                    Some(summary.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| format!("Executing {} tool(s).", actions.len()));
 
         tracing::info!(
             n = actions.len(),
@@ -501,29 +594,74 @@ impl SgrProvider {
     }
 
     /// Create a GeminiClient for this provider.
-    async fn make_gemini_client(&self) -> Result<sgr_agent::gemini::GeminiClient> {
+    pub async fn make_gemini_client(&self) -> Result<sgr_agent::gemini::GeminiClient> {
         match self {
             SgrProvider::Gemini { api_key, model } => {
                 let mut config = sgr_agent::ProviderConfig::gemini(api_key, model);
                 config.max_tokens = Some(4096);
                 Ok(sgr_agent::gemini::GeminiClient::new(config))
             }
-            SgrProvider::Vertex { project_id, model, location } => {
+            SgrProvider::Vertex {
+                project_id,
+                model,
+                location,
+            } => {
                 let access_token = get_gcloud_access_token().await?;
-                let mut config = sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
+                let mut config =
+                    sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
                 config.location = Some(location.clone());
                 config.max_tokens = Some(4096);
                 Ok(sgr_agent::gemini::GeminiClient::new(config))
             }
-            _ => Err(anyhow::anyhow!("make_gemini_client: not a Gemini/Vertex provider")),
+            _ => Err(anyhow::anyhow!(
+                "make_gemini_client: not a Gemini/Vertex provider"
+            )),
+        }
+    }
+
+    /// Create a fast/cheap LlmClient for context compaction (summarization).
+    /// Uses Flash Lite model to keep costs low.
+    pub async fn make_compaction_client(&self) -> Result<Box<dyn sgr_agent::client::LlmClient>> {
+        match self {
+            SgrProvider::Gemini { api_key, .. } => {
+                let mut config =
+                    sgr_agent::ProviderConfig::gemini(api_key, "gemini-2.0-flash-lite");
+                config.max_tokens = Some(2048);
+                Ok(Box::new(sgr_agent::gemini::GeminiClient::new(config)))
+            }
+            SgrProvider::Vertex {
+                project_id,
+                location,
+                ..
+            } => {
+                let access_token = get_gcloud_access_token().await?;
+                let mut config = sgr_agent::ProviderConfig::vertex(
+                    &access_token,
+                    project_id,
+                    "gemini-2.0-flash-lite",
+                );
+                config.location = Some(location.clone());
+                config.max_tokens = Some(2048);
+                Ok(Box::new(sgr_agent::gemini::GeminiClient::new(config)))
+            }
+            SgrProvider::OpenAI {
+                api_key, base_url, ..
+            } => {
+                let mut config = sgr_agent::ProviderConfig::openai(api_key, "gpt-4o-mini");
+                if let Some(url) = base_url {
+                    config.base_url = Some(url.clone());
+                }
+                config.max_tokens = Some(2048);
+                Ok(Box::new(sgr_agent::openai::OpenAIClient::new(config)))
+            }
+            SgrProvider::GeminiCli { .. } => Err(anyhow::anyhow!(
+                "Compaction not supported with GeminiCli provider"
+            )),
         }
     }
 
     /// Legacy flexible text parsing for OpenAI/GeminiCli.
-    async fn call_flexible_legacy(
-        &self,
-        messages: &[sgr_agent::Message],
-    ) -> Result<SgrNextStep> {
+    async fn call_flexible_legacy(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
         let resp = match self {
             SgrProvider::OpenAI {
                 api_key,
@@ -534,15 +672,18 @@ impl SgrProvider {
                 config.base_url = base_url.clone();
                 config.max_tokens = Some(4096);
                 let client = sgr_agent::openai::OpenAIClient::new(config);
-                client.flexible::<SgrNextStep>(messages).await
+                client
+                    .flexible::<SgrNextStep>(messages)
+                    .await
                     .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?
             }
             SgrProvider::GeminiCli { model, sandbox } => {
                 let raw_text = run_gemini_cli(messages, model.as_deref(), *sandbox).await?;
                 let normalized = normalize_cli_json(&raw_text);
-                let output = sgr_agent::flexible_parser::parse_flexible_coerced::<SgrNextStep>(&normalized)
-                    .map(|r| r.value)
-                    .ok();
+                let output =
+                    sgr_agent::flexible_parser::parse_flexible_coerced::<SgrNextStep>(&normalized)
+                        .map(|r| r.value)
+                        .ok();
                 sgr_agent::SgrResponse {
                     output,
                     tool_calls: vec![],
@@ -580,7 +721,12 @@ impl SgrProvider {
 /// Maps tool_name → SgrAction variant, extracting args from JSON.
 fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
     let args = &tc.arguments;
-    let s = |key: &str| args.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let s = |key: &str| {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let s_opt = |key: &str| args.get(key).and_then(|v| v.as_str()).map(String::from);
     let i_opt = |key: &str| args.get(key).and_then(|v| v.as_i64());
 
@@ -614,12 +760,22 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             paths: args
                 .get("paths")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }),
-        "git_commit" => Some(SgrAction::GitCommit { message: s("message") }),
-        "finish" => Some(SgrAction::Finish { summary: s("summary") }),
-        "ask_user" => Some(SgrAction::AskUser { question: s("question") }),
+        "git_commit" => Some(SgrAction::GitCommit {
+            message: s("message"),
+        }),
+        "finish" => Some(SgrAction::Finish {
+            summary: s("summary"),
+        }),
+        "ask_user" => Some(SgrAction::AskUser {
+            question: s("question"),
+        }),
         "memory" => Some(SgrAction::Memory {
             operation: s("operation"),
             category: s_opt("category"),
@@ -703,7 +859,9 @@ async fn get_gcloud_access_token() -> Result<String> {
 
     let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if token.is_empty() {
-        return Err(anyhow::anyhow!("Empty gcloud token. Run: gcloud auth login"));
+        return Err(anyhow::anyhow!(
+            "Empty gcloud token. Run: gcloud auth login"
+        ));
     }
     Ok(token)
 }
@@ -853,7 +1011,10 @@ async fn run_gemini_cli(
                 if let Some(tokens) = stats.pointer("/models/gemini-2.5-flash/tokens") {
                     tracing::info!(
                         input = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
-                        output = tokens.get("candidates").and_then(|v| v.as_u64()).unwrap_or(0),
+                        output = tokens
+                            .get("candidates")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
                         "gemini_cli_tokens"
                     );
                 }
@@ -954,5 +1115,4 @@ mod tests {
             _ => panic!("wrong variant"),
         }
     }
-
 }

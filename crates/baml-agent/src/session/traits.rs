@@ -11,6 +11,9 @@ pub trait MessageRole: Clone + PartialEq {
     fn is_system(&self) -> bool {
         self.as_str() == "system"
     }
+    fn is_tool(&self) -> bool {
+        self.as_str() == "tool"
+    }
 }
 
 /// A message in the agent conversation.

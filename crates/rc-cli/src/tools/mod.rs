@@ -5,6 +5,7 @@ pub mod editor;
 pub mod mcp;
 pub mod search;
 pub mod skills;
+pub mod truncate;
 
 pub use bash::*;
 pub use checkpoint::*;
@@ -12,6 +13,7 @@ pub use cost::*;
 pub use editor::*;
 pub use search::*;
 pub use skills::*;
+pub use truncate::truncate_output;
 
 // Re-export shared tools from baml-agent
 pub use baml_agent::tools::fs::{edit_file, read_file, write_file};

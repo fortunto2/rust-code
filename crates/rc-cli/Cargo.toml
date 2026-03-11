@@ -34,5 +34,7 @@ rmcp.workspace = true
 baml-agent = { version = "0.4.0", path = "../baml-agent", features = ["telemetry", "search", "providers", "tools"] }
 baml-agent-tui = { version = "0.4.0", path = "../baml-agent-tui" }
 solograph = { version = "0.1.0", path = "../solograph" }
-sgr-agent = { version = "0.1.0", path = "../sgr-agent" }
+sgr-agent = { version = "0.1.0", path = "../sgr-agent", features = ["agent"] }
 schemars = "0.8"
+dirs = "5"
+toml = "0.8"

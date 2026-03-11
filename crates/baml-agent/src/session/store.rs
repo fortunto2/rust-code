@@ -181,9 +181,22 @@ impl<M: AgentMessage> Session<M> {
             <M as AgentMessage>::Role::system(),
             format!("[{} earlier messages trimmed]", skip),
         ));
-        trimmed.extend(non_system.into_iter().skip(skip));
+        let kept: Vec<M> = non_system.into_iter().skip(skip).collect();
+
+        // Skip leading tool messages — they are orphaned FC responses without
+        // their corresponding assistant/function-call message (which was trimmed).
+        // Gemini API requires "function response turn comes immediately after a function call turn".
+        let mut extra_skip = 0;
+        for msg in &kept {
+            if msg.role().is_tool() {
+                extra_skip += 1;
+            } else {
+                break;
+            }
+        }
+        trimmed.extend(kept.into_iter().skip(extra_skip));
         self.messages = trimmed;
-        skip
+        skip + extra_skip
     }
 
     // --- Private ---
