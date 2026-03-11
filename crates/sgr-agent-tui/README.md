@@ -1,6 +1,9 @@
 # sgr-agent-tui
 
-Shared TUI shell for SGR agents — reusable widgets, event loop, and patterns for building terminal AI coding assistants with [ratatui](https://ratatui.rs).
+[![Crates.io](https://img.shields.io/crates/v/sgr-agent-tui)](https://crates.io/crates/sgr-agent-tui)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Shared TUI shell for [sgr-agent](https://crates.io/crates/sgr-agent) — reusable widgets, event loop, and patterns for building terminal AI coding assistants with [ratatui](https://ratatui.rs).
 
 ## Modules
 
@@ -64,7 +67,7 @@ For headless/CLI mode, use `sgr_agent::init_telemetry()` directly (no stderr red
 
 ```toml
 [dependencies]
-sgr-agent-tui = { version = "0.4", path = "../sgr-agent-tui" }
+sgr-agent-tui = "0.4"
 ```
 
 ```rust
