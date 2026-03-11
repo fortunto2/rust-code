@@ -86,6 +86,9 @@ pub struct Agent {
     cwd: std::sync::Mutex<std::path::PathBuf>,
     /// Track consecutive edit failures per file path for fallback hints.
     edit_failures: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    /// Cache of recently read files — prevents wasteful re-reads.
+    /// Key: resolved path, Value: (content, step_number).
+    read_cache: std::sync::Mutex<std::collections::HashMap<String, (String, usize)>>,
     /// Multi-agent swarm manager for sub-agents.
     swarm: Arc<TokioMutex<SwarmManager>>,
 }
@@ -154,6 +157,14 @@ Show 3 lines of context before and after each change. File paths must be relativ
 - Use multiple actions for independent operations (e.g. read 3 files at once).
 - Read files before editing. Verify changes with git_status or tests.
 - PREFER apply_patch over edit_file for editing files — it handles multiple changes at once.
+- Use read_file instead of bash:cat — read_file has caching and better error handling.
+
+## Anti-Loop Rules — CRITICAL
+- NEVER re-read a file you already read. The content is in your conversation history — use it.
+- NEVER re-read after apply_patch or write_file — if it succeeded, the file is correct.
+- NEVER run bash:cat on a file you already read with read_file (or vice versa).
+- If a command returns empty/error, that IS the answer. Do NOT retry with different flags.
+- Every step must make FORWARD PROGRESS. If you catch yourself reading the same file, STOP and act.
 "#;
 
 impl Agent {
@@ -185,6 +196,7 @@ impl Agent {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             ),
             edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
+            read_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
         }
     }
@@ -444,10 +456,39 @@ impl Agent {
                 limit,
             } => {
                 let resolved = self.resolve_path(path);
+                // Check read cache — return cached content with warning on re-read
+                let cache_key = resolved.clone();
+                let is_reread = {
+                    let cache = self.read_cache.lock().unwrap();
+                    cache.contains_key(&cache_key)
+                };
                 let content =
                     read_file(&resolved, offset.map(|o| o as usize), limit.map(|l| l as usize)).await?;
+                let output = if is_reread {
+                    // Return truncated content on re-read to save context window
+                    let lines: Vec<&str> = content.lines().collect();
+                    let preview = if lines.len() > 5 {
+                        format!("{}\n... ({} more lines — use content from conversation history)",
+                            lines[..5].join("\n"), lines.len() - 5)
+                    } else {
+                        content.clone()
+                    };
+                    format!(
+                        "⚠ RE-READ: You already read this file. Content unchanged. \
+                         STOP re-reading and ACT on what you already know.\n\
+                         Preview (first 5 lines):\n{}",
+                        preview
+                    )
+                } else {
+                    format!("File contents of {}:\n{}", path, content)
+                };
+                // Update cache
+                {
+                    let mut cache = self.read_cache.lock().unwrap();
+                    cache.insert(cache_key, (content, self.step_count));
+                }
                 Ok(ActionResult {
-                    output: truncate_output(&format!("File contents of {}:\n{}", path, content)),
+                    output: truncate_output(&output),
                     done: false,
                 })
             }
@@ -455,6 +496,8 @@ impl Agent {
                 let resolved = self.resolve_path(path);
                 let is_new = !std::path::Path::new(&resolved).exists();
                 write_file(&resolved, content).await?;
+                // Invalidate read cache for this file
+                self.read_cache.lock().unwrap().remove(&resolved);
                 let label = if is_new { "Created" } else { "Wrote" };
                 let lines = content.lines().count();
                 Ok(ActionResult {
@@ -470,8 +513,9 @@ impl Agent {
                 let resolved = self.resolve_path(path);
                 match crate::tools::edit_file(&resolved, old_string, new_string).await {
                     Ok(()) => {
-                        // Reset failure counter on success
+                        // Reset failure counter and invalidate read cache on success
                         self.edit_failures.lock().unwrap().remove(path.as_str());
+                        self.read_cache.lock().unwrap().remove(&resolved);
                         let old_lines: Vec<&str> = old_string.lines().collect();
                         let new_lines: Vec<&str> = new_string.lines().collect();
                         let mut diff = format!(
