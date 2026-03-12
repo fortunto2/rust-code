@@ -265,6 +265,7 @@ make install  # build + install to /usr/local/bin
 | What | Crate / Link |
 |------|-------------|
 | Agent architecture | [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) — typed tool dispatch via union types |
+| LLM client | [rust-genai](https://github.com/jeremychone/rust-genai) — multi-provider Rust client (Gemini, OpenAI, Anthropic, Ollama, etc.) |
 | TUI framework | [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm) |
 | Text input | [tui-textarea](https://github.com/rhysd/tui-textarea) |
 | Fuzzy search | [Nucleo](https://github.com/helix-editor/nucleo) (from Helix editor) |
