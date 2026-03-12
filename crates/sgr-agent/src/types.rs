@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Inline image data for multimodal messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImagePart {
+    /// Base64-encoded image data.
+    pub data: String,
+    /// MIME type (e.g. "image/jpeg", "image/png").
+    pub mime_type: String,
+}
+
 /// A chat message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -12,6 +21,9 @@ pub struct Message {
     /// Gemini API requires model turns to include functionCall parts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Inline images (for multimodal VLM input).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePart>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +42,7 @@ impl Message {
             content: content.into(),
             tool_call_id: None,
             tool_calls: vec![],
+            images: vec![],
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
@@ -38,6 +51,7 @@ impl Message {
             content: content.into(),
             tool_call_id: None,
             tool_calls: vec![],
+            images: vec![],
         }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
@@ -46,6 +60,7 @@ impl Message {
             content: content.into(),
             tool_call_id: None,
             tool_calls: vec![],
+            images: vec![],
         }
     }
     /// Create an assistant message that includes function calls (for Gemini FC protocol).
@@ -58,6 +73,7 @@ impl Message {
             content: content.into(),
             tool_call_id: None,
             tool_calls,
+            images: vec![],
         }
     }
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -66,7 +82,16 @@ impl Message {
             content: content.into(),
             tool_call_id: Some(call_id.into()),
             tool_calls: vec![],
+            images: vec![],
         }
+    }
+    /// Tool result with inline images (for VLM — Gemini sees the images).
+    pub fn tool_with_images(call_id: impl Into<String>, content: impl Into<String>, images: Vec<ImagePart>) -> Self {
+        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(call_id.into()), tool_calls: vec![], images }
+    }
+    /// User message with inline images.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImagePart>) -> Self {
+        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: vec![], images }
     }
 }
 

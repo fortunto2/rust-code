@@ -405,10 +405,16 @@ impl GeminiClient {
                     i += 1;
                 } // handled separately via systemInstruction
                 Role::User => {
-                    contents.push(json!({
-                        "role": "user",
-                        "parts": [{"text": msg.content}]
-                    }));
+                    let mut parts = vec![json!({"text": msg.content})];
+                    for img in &msg.images {
+                        parts.push(json!({
+                            "inlineData": {
+                                "mimeType": img.mime_type,
+                                "data": img.data,
+                            }
+                        }));
+                    }
+                    contents.push(json!({ "role": "user", "parts": parts }));
                     i += 1;
                 }
                 Role::Assistant => {
@@ -443,6 +449,7 @@ impl GeminiClient {
                         // Gemini requires ALL functionResponses for one turn in a SINGLE
                         // "function" content entry. Collect consecutive Tool messages.
                         let mut parts = Vec::new();
+                        let mut pending_images: Vec<(&str, &[crate::types::ImagePart])> = Vec::new();
                         while i < messages.len() && messages[i].role == Role::Tool {
                             let tool_msg = &messages[i];
                             let call_id = tool_msg.tool_call_id.as_deref().unwrap_or("unknown");
@@ -459,18 +466,44 @@ impl GeminiClient {
                                     }
                                 }
                             }));
+                            if !tool_msg.images.is_empty() {
+                                pending_images.push((call_id, &tool_msg.images));
+                            }
                             i += 1;
                         }
                         contents.push(json!({
                             "role": "function",
                             "parts": parts
                         }));
+                        // Gemini doesn't support inlineData inside functionResponse,
+                        // so attach images as a follow-up user message.
+                        for (call_id, images) in pending_images {
+                            let mut img_parts: Vec<Value> = vec![json!({"text": format!("[Images from {} tool result]", call_id)})];
+                            for img in images {
+                                img_parts.push(json!({
+                                    "inlineData": {
+                                        "mimeType": img.mime_type,
+                                        "data": img.data,
+                                    }
+                                }));
+                            }
+                            contents.push(json!({ "role": "user", "parts": img_parts }));
+                        }
                     } else {
                         // Text mode — convert tool results to user messages
                         let call_id = msg.tool_call_id.as_deref().unwrap_or("tool");
+                        let mut parts: Vec<Value> = vec![json!({"text": format!("[{}] {}", call_id, msg.content)})];
+                        for img in &msg.images {
+                            parts.push(json!({
+                                "inlineData": {
+                                    "mimeType": img.mime_type,
+                                    "data": img.data,
+                                }
+                            }));
+                        }
                         contents.push(json!({
                             "role": "user",
-                            "parts": [{"text": format!("[{}] {}", call_id, msg.content)}]
+                            "parts": parts
                         }));
                         i += 1;
                     }
