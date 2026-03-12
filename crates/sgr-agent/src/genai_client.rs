@@ -282,7 +282,7 @@ mod tests {
             }),
         };
         let tool = to_genai_tool(&def);
-        assert_eq!(tool.name, "read_file");
+        assert_eq!(tool.name, "read_file".into());
         assert_eq!(tool.description.as_deref(), Some("Read a file"));
         assert!(tool.schema.is_some());
     }

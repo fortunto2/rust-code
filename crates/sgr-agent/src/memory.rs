@@ -703,11 +703,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("SOUL.md"), "Be direct.").unwrap();
-        std::fs::write(dir.join("MEMORY.jsonl"), concat!(
-            r#"{"category":"decision","section":"Build System","content":"Use cargo, not make","context":"tested both","confidence":"confirmed","created":1772700000}"#, "\n",
-            r#"{"category":"pattern","section":"Build System","content":"Always run check before test","context":null,"confidence":"tentative","created":1772700100}"#, "\n",
-            r#"{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":1772700200}"#, "\n",
-        )).unwrap();
+        // Use fresh timestamp for tentative entry so GC (>7 days) doesn't remove it
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let jsonl = format!(
+            r#"{{"category":"decision","section":"Build System","content":"Use cargo, not make","context":"tested both","confidence":"confirmed","created":1772700000}}
+{{"category":"pattern","section":"Build System","content":"Always run check before test","context":null,"confidence":"tentative","created":{now}}}
+{{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":1772700200}}
+"#
+        );
+        std::fs::write(dir.join("MEMORY.jsonl"), jsonl).unwrap();
 
         let ctx = MemoryContext::load(dir.to_str().unwrap());
         // SOUL + Memory (learned)
