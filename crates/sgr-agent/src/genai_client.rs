@@ -1,29 +1,24 @@
-//! GenaiClient — LlmClient adapter for the `genai` crate.
+//! GenaiClient — internal LlmClient adapter for the `genai` crate.
 //!
-//! Wraps genai's unified multi-provider API as our LlmClient trait.
-//! Supports 14+ providers: OpenAI, Anthropic, Gemini, Cohere, xAI, Ollama, etc.
-//!
-//! ```no_run
-//! use sgr_agent::genai_client::GenaiClient;
-//!
-//! let client = GenaiClient::from_model("claude-3-haiku-20240307");
-//! // or: GenaiClient::new(custom_genai_client, "gpt-4o-mini");
-//! ```
+//! This is an implementation detail. Use `Llm` + `LlmConfig` as the public API.
 
 use crate::client::LlmClient;
 use crate::tool::ToolDef;
 use crate::types::{Message, Role, SgrError, ToolCall};
+use futures::StreamExt;
 use genai::chat::{
-    ChatMessage, ChatRequest, ChatResponse, ContentPart, MessageContent, Tool, ToolResponse,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponse, ChatStreamEvent, ContentPart,
+    MessageContent, Tool, ToolResponse,
 };
 use serde_json::Value;
 
 /// LlmClient adapter wrapping genai's multi-provider Client.
+/// Use `Llm` as the public facade — this type is an implementation detail.
 pub struct GenaiClient {
     client: genai::Client,
-    model: String,
-    temperature: Option<f64>,
-    max_tokens: Option<u32>,
+    pub(crate) model: String,
+    pub(crate) temperature: Option<f64>,
+    pub(crate) max_tokens: Option<u32>,
 }
 
 impl GenaiClient {
@@ -37,22 +32,84 @@ impl GenaiClient {
         }
     }
 
+    /// Create from LlmConfig — routes by api_key × base_url matrix.
+    pub(crate) fn from_config(config: &crate::types::LlmConfig) -> Self {
+        let mut client = match (&config.api_key, &config.base_url) {
+            (Some(key), Some(url)) => Self::custom_endpoint(key, url, &config.model),
+            (Some(key), None) => Self::with_api_key(key, &config.model),
+            (None, Some(url)) => {
+                tracing::warn!("No API key for custom endpoint {url} — auth may fail");
+                Self::custom_endpoint("", url, &config.model)
+            }
+            (None, None) => Self::from_model(&config.model),
+        };
+        client.temperature = Some(config.temp);
+        client.max_tokens = config.max_tokens;
+        client
+    }
+
     /// Create with default genai Client (uses env vars for auth).
     /// Model name auto-detects provider: "gpt-*" → OpenAI, "claude-*" → Anthropic, etc.
     pub fn from_model(model: impl Into<String>) -> Self {
         Self::new(genai::Client::default(), model)
     }
 
-    /// Set temperature for completions.
-    pub fn with_temperature(mut self, temp: f64) -> Self {
-        self.temperature = Some(temp);
-        self
+    /// Create with explicit API key + auto-detect provider from model name.
+    fn with_api_key(api_key: &str, model: impl Into<String>) -> Self {
+        use genai::resolver::{AuthData, ServiceTargetResolver};
+        use genai::ServiceTarget;
+
+        let api_key = api_key.to_string();
+        let target_resolver = ServiceTargetResolver::from_resolver_fn(
+            move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                let auth = AuthData::from_single(api_key.clone());
+                Ok(ServiceTarget {
+                    auth,
+                    ..service_target
+                })
+            },
+        );
+
+        let client = genai::Client::builder()
+            .with_service_target_resolver(target_resolver)
+            .build();
+        Self::new(client, model)
     }
 
-    /// Set max output tokens.
-    pub fn with_max_tokens(mut self, max: u32) -> Self {
-        self.max_tokens = Some(max);
-        self
+    /// Create for any OpenAI-compatible endpoint (OpenRouter, Ollama, LiteLLM, etc.).
+    /// `base_url` should be the API base (e.g. `https://openrouter.ai/api/v1`),
+    /// NOT including `/chat/completions` — genai appends that automatically.
+    pub fn custom_endpoint(api_key: &str, base_url: &str, model: impl Into<String>) -> Self {
+        use genai::adapter::AdapterKind;
+        use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+        use genai::{ModelIden, ServiceTarget};
+
+        let api_key = api_key.to_string();
+        // Strip /chat/completions if caller included it — genai adds it automatically
+        let mut url = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/chat/completions")
+            .to_string();
+        // Ensure trailing slash for URL join to work correctly
+        url.push('/');
+        let target_resolver = ServiceTargetResolver::from_resolver_fn(
+            move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                let ServiceTarget { model, .. } = service_target;
+                let endpoint = Endpoint::from_owned(url.clone());
+                let auth = AuthData::from_single(api_key.clone());
+                let model = ModelIden::new(AdapterKind::OpenAI, model.model_name);
+                Ok(ServiceTarget {
+                    endpoint,
+                    auth,
+                    model,
+                })
+            },
+        );
+
+        let client = genai::Client::builder()
+            .with_service_target_resolver(target_resolver)
+            .build();
+        Self::new(client, model)
     }
 
     /// Build a ChatRequest from our Message slice.
@@ -141,11 +198,11 @@ impl GenaiClient {
     }
 
     /// Build chat options from our config.
-    fn build_options(&self) -> Option<genai::chat::ChatOptions> {
+    fn build_options(&self) -> Option<ChatOptions> {
         if self.temperature.is_none() && self.max_tokens.is_none() {
             return None;
         }
-        let mut opts = genai::chat::ChatOptions::default();
+        let mut opts = ChatOptions::default();
         if let Some(temp) = self.temperature {
             opts = opts.with_temperature(temp);
         }
@@ -179,6 +236,44 @@ impl GenaiClient {
     /// Extract text from a ChatResponse.
     fn extract_text(response: &ChatResponse) -> String {
         response.first_text().unwrap_or("").to_string()
+    }
+
+    /// Stream text completion, calling `on_token` for each text chunk.
+    /// Returns the full concatenated text.
+    pub async fn stream_complete<F>(
+        &self,
+        messages: &[Message],
+        mut on_token: F,
+    ) -> Result<String, SgrError>
+    where
+        F: FnMut(&str),
+    {
+        let req = self.build_request(messages);
+        let opts = self.build_options();
+        let stream_resp = self
+            .client
+            .exec_chat_stream(&self.model, req, opts.as_ref())
+            .await
+            .map_err(map_genai_error)?;
+
+        let mut stream = stream_resp.stream;
+        let mut full_text = String::new();
+
+        while let Some(event) = stream.next().await {
+            match event.map_err(map_genai_error)? {
+                ChatStreamEvent::Chunk(chunk) => {
+                    full_text.push_str(&chunk.content);
+                    on_token(&chunk.content);
+                }
+                ChatStreamEvent::End(_) => break,
+                _ => {}
+            }
+        }
+
+        if full_text.is_empty() {
+            return Err(SgrError::EmptyResponse);
+        }
+        Ok(full_text)
     }
 }
 
@@ -371,10 +466,12 @@ mod tests {
     }
 
     #[test]
-    fn genai_client_with_options() {
-        let client = GenaiClient::from_model("test")
-            .with_temperature(0.7)
-            .with_max_tokens(1000);
+    fn genai_client_from_config_options() {
+        let config =
+            crate::types::LlmConfig::endpoint("sk-test", "https://api.example.com/v1", "my-model")
+                .temperature(0.7)
+                .max_tokens(1000);
+        let client = GenaiClient::from_config(&config);
         assert_eq!(client.temperature, Some(0.7));
         assert_eq!(client.max_tokens, Some(1000));
     }

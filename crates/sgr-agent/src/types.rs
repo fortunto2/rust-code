@@ -212,19 +212,97 @@ impl RateLimitInfo {
     }
 }
 
-/// Provider configuration.
+/// LLM provider configuration — single config for any provider.
+///
+/// Two optional fields control routing:
+/// - `api_key`: None → auto from env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+/// - `base_url`: None → auto-detect provider from model name; Some → custom endpoint
+///
+/// ```no_run
+/// use sgr_agent::LlmConfig;
+///
+/// let c = LlmConfig::auto("gpt-4o");                                          // env vars
+/// let c = LlmConfig::with_key("sk-...", "claude-3-haiku");                    // explicit key
+/// let c = LlmConfig::endpoint("sk-or-...", "https://openrouter.ai/api/v1", "gpt-4o"); // custom
+/// let c = LlmConfig::auto("gpt-4o").temperature(0.9).max_tokens(2048);        // builder
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default = "default_temperature")]
+    pub temp: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+fn default_temperature() -> f64 {
+    0.7
+}
+
+impl LlmConfig {
+    /// Auto-detect provider from model name, use env vars for auth.
+    pub fn auto(model: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            api_key: None,
+            base_url: None,
+            temp: default_temperature(),
+            max_tokens: None,
+        }
+    }
+
+    /// Explicit API key, auto-detect provider from model name.
+    pub fn with_key(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            api_key: Some(api_key.into()),
+            base_url: None,
+            temp: default_temperature(),
+            max_tokens: None,
+        }
+    }
+
+    /// Custom OpenAI-compatible endpoint (OpenRouter, Ollama, LiteLLM, etc.).
+    pub fn endpoint(
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            model: model.into(),
+            api_key: Some(api_key.into()),
+            base_url: Some(base_url.into()),
+            temp: default_temperature(),
+            max_tokens: None,
+        }
+    }
+
+    /// Set temperature.
+    pub fn temperature(mut self, t: f64) -> Self {
+        self.temp = t;
+        self
+    }
+
+    /// Set max output tokens.
+    pub fn max_tokens(mut self, m: u32) -> Self {
+        self.max_tokens = Some(m);
+        self
+    }
+}
+
+/// Legacy provider configuration (used by OpenAIClient/GeminiClient).
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
     pub api_key: String,
     pub model: String,
     pub base_url: Option<String>,
-    /// Vertex AI project ID (for Vertex auth).
     pub project_id: Option<String>,
-    /// Vertex AI location.
     pub location: Option<String>,
-    /// Temperature (0.0 - 2.0).
     pub temperature: f32,
-    /// Max output tokens.
     pub max_tokens: Option<u32>,
 }
 

@@ -32,7 +32,11 @@ pub mod gemini;
 pub mod openai;
 
 #[cfg(feature = "genai")]
-pub mod genai_client;
+pub(crate) mod genai_client;
+#[cfg(feature = "genai")]
+pub mod llm;
+#[cfg(feature = "genai")]
+pub use llm::Llm;
 
 // Agent framework (behind feature gate)
 #[cfg(feature = "agent")]
