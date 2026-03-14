@@ -1283,11 +1283,24 @@ impl Agent {
                     }
                     "load" => {
                         let name = api_name.as_deref().unwrap_or("github");
+                        // Skip if already loaded
+                        let existing = reg.endpoint_count(name);
+                        if existing > 0 {
+                            return Ok(ActionResult {
+                                output: format!(
+                                    "{} API ALREADY loaded ({} endpoints). Do NOT call load again.\n\
+                                     Next step: use api action=search api_name={} query=\"your search\"",
+                                    name, existing, name
+                                ),
+                                done: false,
+                            });
+                        }
                         match reg.load_popular(name).await {
                             Ok(count) => Ok(ActionResult {
                                 output: format!(
-                                    "Loaded {} API: {} endpoints. Use api search to find endpoints.",
-                                    name, count
+                                    "Loaded {} API: {} endpoints.\n\
+                                     Next step: use api action=search api_name={} query=\"your search\"",
+                                    name, count, name
                                 ),
                                 done: false,
                             }),
