@@ -216,6 +216,23 @@ pub enum SgrAction {
     },
     #[serde(rename = "cancel_agent")]
     CancelAgent { agent_id: String },
+    /// Call an API endpoint via OpenAPI spec.
+    #[serde(rename = "api")]
+    Api {
+        action: String,
+        #[serde(default)]
+        api_name: Option<String>,
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        endpoint: Option<String>,
+        /// Comma-separated key=value pairs: "owner=foo,repo=bar"
+        #[serde(default)]
+        params: Option<String>,
+        /// JSON string body for POST/PUT/PATCH
+        #[serde(default)]
+        body: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +464,27 @@ struct CancelAgentParams {
     agent_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct ApiParams {
+    /// Action: "load" (load an API spec), "search" (find endpoints), "call" (execute endpoint), "list" (show loaded APIs)
+    action: String,
+    /// API name (e.g. "github", "stripe", "cloudflare"). Required for load/search/call.
+    #[serde(default)]
+    api_name: Option<String>,
+    /// Search query for "search" action (e.g. "create issue")
+    #[serde(default)]
+    query: Option<String>,
+    /// Endpoint name for "call" action (e.g. "repos_owner_repo_issues_post")
+    #[serde(default)]
+    endpoint: Option<String>,
+    /// Parameters for "call" action as comma-separated key=value pairs (e.g. "owner=foo,repo=bar,state=open")
+    #[serde(default)]
+    params: Option<String>,
+    /// Request body JSON string for "call" action (POST/PUT/PATCH), e.g. "{\"title\": \"Bug\"}"
+    #[serde(default)]
+    body: Option<String>,
+}
+
 /// Build Gemini functionDeclarations for all agent tools.
 pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
     vec![
@@ -505,6 +543,10 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
         tool::<CancelAgentParams>(
             "cancel_agent",
             "Cancel a running sub-agent by ID, or 'all' to cancel all.",
+        ),
+        tool::<ApiParams>(
+            "api",
+            "Call any REST API via OpenAPI spec. Actions: 'load' (api_name: github/stripe/cloudflare/...), 'search' (api_name + query), 'call' (api_name + endpoint + params + body), 'list' (show loaded APIs). Load an API first, search for the endpoint, then call it.",
         ),
     ]
 }
@@ -820,6 +862,14 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             notes: s_opt("notes"),
         }),
         "apply_patch" => Some(SgrAction::ApplyPatch { patch: s("patch") }),
+        "api" => Some(SgrAction::Api {
+            action: s("action"),
+            api_name: s_opt("api_name"),
+            query: s_opt("query"),
+            endpoint: s_opt("endpoint"),
+            params: s_opt("params"),
+            body: s_opt("body"),
+        }),
         _ => {
             tracing::warn!(tool = %tc.name, "unknown native function call, skipping");
             None

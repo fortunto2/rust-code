@@ -90,6 +90,8 @@ pub struct Agent {
     read_cache: std::sync::Mutex<std::collections::HashMap<String, (String, usize)>>,
     /// Multi-agent swarm manager for sub-agents.
     swarm: Arc<TokioMutex<SwarmManager>>,
+    /// OpenAPI registry for the `api` tool.
+    api_registry: TokioMutex<sgr_agent::openapi::ApiRegistry>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -127,6 +129,7 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - wait_agents: {tool_name, agent_ids?, timeout_secs?} — wait for sub-agents to complete
 - agent_status: {tool_name, agent_id?} — check sub-agent status
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
+- api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name: github/stripe/cloudflare/etc), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2" + body?), "list". Load → search → call.
 
 ## STAR Methodology
 - **S (situation)**: Assess current state. What phase? What's done? What's blocking?
@@ -197,6 +200,7 @@ impl Agent {
             edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             read_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
+            api_registry: TokioMutex::new(sgr_agent::openapi::ApiRegistry::new()),
         }
     }
 
@@ -1202,6 +1206,135 @@ impl Agent {
                     }
                 }
             }
+            SgrAction::Api {
+                action,
+                api_name,
+                query,
+                endpoint,
+                params,
+                body,
+            } => {
+                use sgr_agent::openapi;
+                let mut reg = self.api_registry.lock().await;
+                match action.as_str() {
+                    "list" => {
+                        let apis = reg.list_apis();
+                        let popular = openapi::list_popular();
+                        let mut out = String::new();
+                        if apis.is_empty() {
+                            out.push_str("No APIs loaded yet.\n");
+                        } else {
+                            out.push_str("Loaded APIs:\n");
+                            for name in &apis {
+                                out.push_str(&format!(
+                                    "  {} ({} endpoints)\n",
+                                    name,
+                                    reg.endpoint_count(name)
+                                ));
+                            }
+                        }
+                        out.push_str(&format!("\nAvailable to load: {:?}", popular));
+                        Ok(ActionResult {
+                            output: out,
+                            done: false,
+                        })
+                    }
+                    "load" => {
+                        let name = api_name.as_deref().unwrap_or("github");
+                        match reg.load_popular(name).await {
+                            Ok(count) => Ok(ActionResult {
+                                output: format!(
+                                    "Loaded {} API: {} endpoints. Use api search to find endpoints.",
+                                    name, count
+                                ),
+                                done: false,
+                            }),
+                            Err(e) => Ok(ActionResult {
+                                output: format!("Failed to load {}: {}", name, e),
+                                done: false,
+                            }),
+                        }
+                    }
+                    "search" => {
+                        let name = api_name.as_deref().unwrap_or("github");
+                        let q = query.as_deref().unwrap_or("");
+                        if reg.endpoint_count(name) == 0 {
+                            // Auto-load if not loaded yet
+                            if let Err(e) = reg.load_popular(name).await {
+                                return Ok(ActionResult {
+                                    output: format!("Failed to auto-load {}: {}", name, e),
+                                    done: false,
+                                });
+                            }
+                        }
+                        let results = reg.search(name, q, 10);
+                        let out = openapi::format_results(&results);
+                        Ok(ActionResult {
+                            output: format!("Search '{}' in {}:\n{}", q, name, out),
+                            done: false,
+                        })
+                    }
+                    "call" => {
+                        let name = api_name.as_deref().unwrap_or("github");
+                        let ep = endpoint.as_deref().unwrap_or("");
+                        if ep.is_empty() {
+                            return Ok(ActionResult {
+                                output: "Missing 'endpoint' param. Use api search first to find endpoint name.".into(),
+                                done: false,
+                            });
+                        }
+                        // Parse params from "key=val,key2=val2" string
+                        let param_map: std::collections::HashMap<String, String> = params
+                            .as_deref()
+                            .unwrap_or("")
+                            .split(',')
+                            .filter(|s| !s.is_empty())
+                            .filter_map(|pair| {
+                                let mut parts = pair.splitn(2, '=');
+                                let key = parts.next()?.trim().to_string();
+                                let val = parts.next()?.trim().to_string();
+                                Some((key, val))
+                            })
+                            .collect();
+
+                        // Parse body from JSON string
+                        let body_val: Option<serde_json::Value> = body
+                            .as_deref()
+                            .filter(|s| !s.is_empty())
+                            .and_then(|s| serde_json::from_str(s).ok());
+
+                        match reg.call(name, ep, &param_map, body_val.as_ref()).await {
+                            Ok(response) => {
+                                // Truncate large responses
+                                let out = if response.len() > 8000 {
+                                    format!(
+                                        "{}...\n\n(truncated, {} bytes total)",
+                                        &response[..8000],
+                                        response.len()
+                                    )
+                                } else {
+                                    response
+                                };
+                                Ok(ActionResult {
+                                    output: out,
+                                    done: false,
+                                })
+                            }
+                            Err(e) => Ok(ActionResult {
+                                output: format!("API call failed: {}", e),
+                                done: false,
+                            }),
+                        }
+                    }
+                    other => Ok(ActionResult {
+                        output: format!(
+                            "Unknown api action: '{}'. Use: load, search, call, list",
+                            other
+                        ),
+                        done: false,
+                    }),
+                }
+            }
         }
     }
 }
@@ -1350,6 +1483,9 @@ impl SgrAgent for Agent {
             Action::WaitAgents { agent_ids, .. } => format!("wait:{:?}", agent_ids),
             Action::AgentStatus { agent_id } => format!("status:{:?}", agent_id),
             Action::CancelAgent { agent_id } => format!("cancel:{}", agent_id),
+            Action::Api {
+                action, api_name, ..
+            } => format!("api:{}:{}", action, api_name.as_deref().unwrap_or("?")),
         }
     }
 }
@@ -1378,6 +1514,7 @@ pub fn action_kind(action: &Action) -> ActionKind {
         | Action::WaitAgents { .. }
         | Action::AgentStatus { .. }
         | Action::CancelAgent { .. } => ActionKind::Execute,
+        Action::Api { .. } => ActionKind::External,
     }
 }
 
