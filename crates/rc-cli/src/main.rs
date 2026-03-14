@@ -460,7 +460,40 @@ async fn resolve_sgr_provider(
         return start_sgr_gemini_cli(args).await;
     }
 
-    // Check GEMINI_API_KEY first (default SGR provider)
+    // Check config.toml first — respect `provider = "vertex"` etc.
+    let cfg = sgr_agent::providers::load_config(".rust-code");
+    if cfg.provider.as_deref() == Some("vertex") {
+        let project = std::env::var("VERTEX_PROJECT").ok().or_else(|| {
+            std::process::Command::new("gcloud")
+                .args(["config", "get-value", "project"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+        if let Some(project) = project {
+            let model = args
+                .model
+                .clone()
+                .or(cfg.model.clone())
+                .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
+            let location = std::env::var("VERTEX_LOCATION")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "global".into());
+            return (
+                backend::SgrProvider::Vertex {
+                    project_id: project,
+                    model,
+                    location,
+                },
+                None,
+            );
+        }
+    }
+
+    // Auto-detect: GEMINI_API_KEY
     if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
         if !api_key.is_empty() {
             let model = args
