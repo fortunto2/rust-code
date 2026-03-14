@@ -1434,8 +1434,11 @@ async fn main() -> Result<()> {
         );
 
         use std::io::Write as _;
+        // Collect run stats for self-evolution eval
+        let mut run_stats = sgr_agent::evolution::RunStats::default();
         let result = run_loop_stream(&agent, &mut session, &config, |event| match event {
             LoopEvent::StepStart(n) => {
+                run_stats.steps = n;
                 print!("\n[Step {}] Thinking...", n);
                 std::io::stdout().flush().ok();
             }
@@ -1450,18 +1453,32 @@ async fn main() -> Result<()> {
                 }
             }
             LoopEvent::Completed => {
+                run_stats.completed = true;
                 println!("\n[DONE] Task completed.");
             }
             LoopEvent::ActionStart(action) => {
                 println!("\nAction: {}", Agent::action_signature(action));
             }
             LoopEvent::ActionDone(result) => {
+                if result.output.contains("FAILED")
+                    || result.output.contains("error")
+                    || result.output.starts_with("Error")
+                {
+                    run_stats.tool_errors += 1;
+                    if result.output.contains("apply_patch") || result.output.contains("patch") {
+                        run_stats.patch_failures += 1;
+                    }
+                } else {
+                    run_stats.successful_calls += 1;
+                }
                 println!("\nTool Result:\n{}", result.output);
             }
             LoopEvent::LoopWarning(n) => {
+                run_stats.loop_warnings += 1;
                 println!("[WARN] Loop detected — {} repeats", n);
             }
             LoopEvent::LoopAbort(n) => {
+                run_stats.loop_aborts += 1;
                 eprintln!(
                     "[ERR] Agent stuck in loop after {} identical actions — aborting",
                     n
@@ -1491,6 +1508,25 @@ async fn main() -> Result<()> {
 
         if let Err(e) = result {
             eprintln!("Agent error: {}", e);
+        }
+
+        // Self-evolution: evaluate run and show improvement proposals
+        let improvements = sgr_agent::evolution::evaluate(&run_stats);
+        if !improvements.is_empty() {
+            eprintln!(
+                "\n\x1b[33m[EVOLUTION] {} improvement(s) proposed after run ({} steps, {} errors, {} loops):\x1b[0m",
+                improvements.len(),
+                run_stats.steps,
+                run_stats.tool_errors,
+                run_stats.loop_warnings
+            );
+            for imp in &improvements {
+                eprintln!(
+                    "  \x1b[33mP{}\x1b[0m {} — {}",
+                    imp.priority, imp.title, imp.reason
+                );
+            }
+            eprintln!("\x1b[2mRun with --evolve to auto-apply the top improvement.\x1b[0m");
         }
 
         // Self-restart: if agent's last message requests restart, exec new binary.
