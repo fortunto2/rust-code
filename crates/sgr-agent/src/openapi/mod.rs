@@ -21,8 +21,8 @@ pub mod spec;
 
 pub use caller::ApiAuth;
 pub use registry::{
-    default_cache_dir, download_spec, find_popular, list_popular, load_or_download, popular_apis,
-    search_apis_guru, ApiSpec,
+    default_cache_dir, download_spec, find_popular, list_popular, load_api_registry,
+    load_or_download, popular_apis, search_apis_guru, ApiSpec,
 };
 pub use search::{format_results, search_endpoints, SearchResult};
 pub use spec::{filter_endpoints, parse_spec, Endpoint, Param, ParamLocation};

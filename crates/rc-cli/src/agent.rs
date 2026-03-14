@@ -1261,7 +1261,6 @@ impl Agent {
                 match action.as_str() {
                     "list" => {
                         let apis = reg.list_apis();
-                        let popular = openapi::list_popular();
                         let mut out = String::new();
                         if apis.is_empty() {
                             out.push_str("No APIs loaded yet.\n");
@@ -1275,7 +1274,10 @@ impl Agent {
                                 ));
                             }
                         }
-                        out.push_str(&format!("\nAvailable to load: {:?}", popular));
+                        out.push_str("\nAvailable to load:\n");
+                        for spec in openapi::load_api_registry() {
+                            out.push_str(&format!("  {} — {}\n", spec.name, spec.description));
+                        }
                         Ok(ActionResult {
                             output: out,
                             done: false,
@@ -1304,10 +1306,16 @@ impl Agent {
                                 ),
                                 done: false,
                             }),
-                            Err(e) => Ok(ActionResult {
-                                output: format!("Failed to load {}: {}", name, e),
-                                done: false,
-                            }),
+                            Err(e) => {
+                                // Show description from registry — may contain setup hints
+                                let hint = openapi::find_popular(name)
+                                    .map(|a| format!("\nHint: {}", a.description))
+                                    .unwrap_or_default();
+                                Ok(ActionResult {
+                                    output: format!("Failed to load {}: {}{}", name, e, hint),
+                                    done: false,
+                                })
+                            }
                         }
                     }
                     "search" => {
