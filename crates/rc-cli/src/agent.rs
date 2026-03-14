@@ -1360,11 +1360,41 @@ impl Agent {
                             })
                             .collect();
 
-                        // Parse body from JSON string
+                        // Parse body: explicit JSON string, or auto-build from params for POST
                         let body_val: Option<serde_json::Value> = body
                             .as_deref()
                             .filter(|s| !s.is_empty())
-                            .and_then(|s| serde_json::from_str(s).ok());
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .or_else(|| {
+                                // For POST/PUT/PATCH: if no body but has params, send params as JSON body
+                                let ep_obj = reg.find_endpoint(name, ep)?;
+                                let method = ep_obj.method.as_str();
+                                if matches!(method, "POST" | "PUT" | "PATCH")
+                                    && !param_map.is_empty()
+                                {
+                                    // Separate path params from body params
+                                    let path_params: std::collections::HashSet<&str> = ep_obj
+                                        .params
+                                        .iter()
+                                        .filter(|p| {
+                                            p.location == sgr_agent::openapi::ParamLocation::Path
+                                        })
+                                        .map(|p| p.name.as_str())
+                                        .collect();
+                                    let body_params: serde_json::Map<String, serde_json::Value> =
+                                        param_map
+                                            .iter()
+                                            .filter(|(k, _)| !path_params.contains(k.as_str()))
+                                            .map(|(k, v)| {
+                                                (k.clone(), serde_json::Value::String(v.clone()))
+                                            })
+                                            .collect();
+                                    if !body_params.is_empty() {
+                                        return Some(serde_json::Value::Object(body_params));
+                                    }
+                                }
+                                None
+                            });
 
                         match reg.call(name, ep, &param_map, body_val.as_ref()).await {
                             Ok(response) => {
