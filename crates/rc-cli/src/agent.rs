@@ -1,7 +1,7 @@
 use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
 use crate::tools::{
-    FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_commit, git_diff,
-    git_status, is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
+    FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_diff, git_status,
+    is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
 };
 use anyhow::Result;
 use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
@@ -168,6 +168,15 @@ Show 3 lines of context before and after each change. File paths must be relativ
 - Read files before editing. Verify changes with git_status or tests.
 - PREFER apply_patch over edit_file for editing files — it handles multiple changes at once.
 - Use read_file instead of bash:cat — read_file has caching and better error handling.
+
+## Git Commit — Pre-commit Hook
+git_commit runs the project's pre-commit hook (tests, lint, format check).
+If commit FAILS, you get the full error output. Fix the issue and retry:
+- Format error → run the formatter (`make fmt`, `cargo fmt`, `prettier --write`, etc.)
+- Test failure → fix the failing test
+- Lint error → fix the warning
+- Then `git_add` the fixes and `git_commit` again
+Check Makefile for available commands (e.g. `make check`, `make fmt`, `make lint`).
 
 ## Anti-Loop Rules — CRITICAL
 - NEVER re-read a file you already read. The content is in your conversation history — use it.
@@ -799,11 +808,32 @@ impl Agent {
                 })
             }
             SgrAction::GitCommit { message } => {
-                git_commit(message)?;
-                Ok(ActionResult {
-                    output: format!("Committed: {}", message),
-                    done: false,
-                })
+                let cwd = self.cwd.lock().unwrap().clone();
+                // Try commit — if pre-commit hook fails, return full error output
+                // so agent can read it, fix the issue (fmt/test/clippy), and retry.
+                let r = sgr_agent::app_tools::bash::run_command_in(
+                    &format!("git commit -m '{}'", message.replace('\'', "'\\''")),
+                    &cwd,
+                    Some(120_000), // 2 min timeout for pre-commit hook
+                )
+                .await;
+                if r.exit_code == 0 {
+                    Ok(ActionResult {
+                        output: format!("Committed: {}\n{}", message, r.output),
+                        done: false,
+                    })
+                } else {
+                    Ok(ActionResult {
+                        output: format!(
+                            "Commit FAILED (exit {}). Fix the errors below, then retry git_commit.\n\n{}\n\n\
+                             HINT: If format check failed, run the formatter (e.g. `make fmt`). \
+                             If tests failed, fix the test. If lint failed, fix the warning. \
+                             Then git_add the fixes and git_commit again.",
+                            r.exit_code, r.output
+                        ),
+                        done: false,
+                    })
+                }
             }
             SgrAction::OpenEditor { path, .. } => Ok(ActionResult {
                 output: format!("Opened {} in editor", path),
