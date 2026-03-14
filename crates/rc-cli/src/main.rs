@@ -55,6 +55,19 @@ struct Args {
     #[arg(long)]
     cwd: Option<String>,
 
+    /// Loop mode: run prompt N times until <solo:done/> or max iterations.
+    /// Like BigHead — autonomous pipeline. Control: .rust-code/loop-control (stop/pause/skip)
+    #[arg(long, default_value_t = 0)]
+    r#loop: usize,
+
+    /// Max hours for loop/evolve mode (0 = unlimited)
+    #[arg(long, default_value_t = 0.0)]
+    max_hours: f64,
+
+    /// Self-evolution: evaluate each run, auto-improve agent code, rebuild + restart.
+    #[arg(long)]
+    evolve: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1420,174 +1433,272 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        agent.add_user_message(&prompt);
-
-        let config = LoopConfig {
-            max_steps: 50,
-            loop_abort_threshold: 12,
+        // --- Loop / Evolve setup ---
+        let loop_iterations = if args.evolve && args.r#loop == 0 {
+            20 // evolve defaults to 20 iterations
+        } else {
+            args.r#loop
         };
+        let is_loop_mode = loop_iterations > 0 || args.evolve;
+        let mut loop_state = if is_loop_mode {
+            let mode = if args.evolve {
+                sgr_agent::evolution::LoopMode::Evolve
+            } else {
+                sgr_agent::evolution::LoopMode::Loop
+            };
+            Some(sgr_agent::evolution::LoopState::new(
+                sgr_agent::evolution::LoopOptions {
+                    max_iterations: loop_iterations,
+                    max_hours: args.max_hours,
+                    mode,
+                    ..Default::default()
+                },
+            ))
+        } else {
+            None
+        };
+        let mut current_prompt = prompt.clone();
 
-        // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
-        let mut session = std::mem::replace(
-            agent.session_mut(),
-            sgr_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
-        );
+        if is_loop_mode {
+            eprintln!(
+                "\n\x1b[36m[LOOP] Starting autonomous loop (max {} iterations, {:.1}h timeout)\x1b[0m",
+                loop_iterations, args.max_hours,
+            );
+            eprintln!("\x1b[2mControl: echo stop > .rust-code/loop-control\x1b[0m\n");
+        }
 
-        use std::io::Write as _;
-        // Collect run stats for self-evolution eval
-        let mut run_stats = sgr_agent::evolution::RunStats::default();
-        let result = run_loop_stream(&agent, &mut session, &config, |event| match event {
-            LoopEvent::StepStart(n) => {
-                run_stats.steps = n;
-                print!("\n[Step {}] Thinking...", n);
-                std::io::stdout().flush().ok();
-            }
-            LoopEvent::Decision { situation, task } => {
-                print!("\r\x1b[K");
-                println!("\x1b[2mSituation:\x1b[0m {}", situation);
-                if !task.is_empty() {
-                    println!("Task:");
-                    for t in task {
-                        println!(" - {}", t);
-                    }
+        // --- Main loop (runs once for normal mode, N times for --loop/--evolve) ---
+        'outer: loop {
+            // Check loop state
+            if let Some(ref state) = loop_state {
+                if let Some(reason) = state.should_stop() {
+                    eprintln!("\n\x1b[36m[LOOP] Stopping: {}\x1b[0m", reason);
+                    eprintln!("\x1b[2m{}\x1b[0m", state.summary());
+                    break 'outer;
                 }
-            }
-            LoopEvent::Completed => {
-                run_stats.completed = true;
-                println!("\n[DONE] Task completed.");
-            }
-            LoopEvent::ActionStart(action) => {
-                println!("\nAction: {}", Agent::action_signature(action));
-            }
-            LoopEvent::ActionDone(result) => {
-                if result.output.contains("FAILED")
-                    || result.output.contains("error")
-                    || result.output.starts_with("Error")
-                {
-                    run_stats.tool_errors += 1;
-                    if result.output.contains("apply_patch") || result.output.contains("patch") {
-                        run_stats.patch_failures += 1;
-                    }
-                } else {
-                    run_stats.successful_calls += 1;
-                }
-                println!("\nTool Result:\n{}", result.output);
-            }
-            LoopEvent::LoopWarning(n) => {
-                run_stats.loop_warnings += 1;
-                println!("[WARN] Loop detected — {} repeats", n);
-            }
-            LoopEvent::LoopAbort(n) => {
-                run_stats.loop_aborts += 1;
                 eprintln!(
-                    "[ERR] Agent stuck in loop after {} identical actions — aborting",
-                    n
+                    "\n\x1b[36m[LOOP] Iteration {}/{}\x1b[0m",
+                    state.iteration + 1,
+                    loop_iterations,
                 );
             }
-            LoopEvent::Trimmed(n) => {
-                println!("[TRIM] Removed {} messages", n);
+
+            agent.add_user_message(&current_prompt);
+
+            let config = LoopConfig {
+                max_steps: 50,
+                loop_abort_threshold: 12,
+            };
+
+            // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
+            let mut session = std::mem::replace(
+                agent.session_mut(),
+                sgr_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
+            );
+
+            use std::io::Write as _;
+            // Collect run stats for self-evolution eval
+            let mut run_stats = sgr_agent::evolution::RunStats::default();
+            let result = run_loop_stream(&agent, &mut session, &config, |event| match event {
+                LoopEvent::StepStart(n) => {
+                    run_stats.steps = n;
+                    print!("\n[Step {}] Thinking...", n);
+                    std::io::stdout().flush().ok();
+                }
+                LoopEvent::Decision { situation, task } => {
+                    print!("\r\x1b[K");
+                    println!("\x1b[2mSituation:\x1b[0m {}", situation);
+                    if !task.is_empty() {
+                        println!("Task:");
+                        for t in task {
+                            println!(" - {}", t);
+                        }
+                    }
+                }
+                LoopEvent::Completed => {
+                    run_stats.completed = true;
+                    println!("\n[DONE] Task completed.");
+                }
+                LoopEvent::ActionStart(action) => {
+                    println!("\nAction: {}", Agent::action_signature(action));
+                }
+                LoopEvent::ActionDone(result) => {
+                    if result.output.contains("FAILED")
+                        || result.output.contains("error")
+                        || result.output.starts_with("Error")
+                    {
+                        run_stats.tool_errors += 1;
+                        if result.output.contains("apply_patch") || result.output.contains("patch")
+                        {
+                            run_stats.patch_failures += 1;
+                        }
+                    } else {
+                        run_stats.successful_calls += 1;
+                    }
+                    println!("\nTool Result:\n{}", result.output);
+                }
+                LoopEvent::LoopWarning(n) => {
+                    run_stats.loop_warnings += 1;
+                    println!("[WARN] Loop detected — {} repeats", n);
+                }
+                LoopEvent::LoopAbort(n) => {
+                    run_stats.loop_aborts += 1;
+                    eprintln!(
+                        "[ERR] Agent stuck in loop after {} identical actions — aborting",
+                        n
+                    );
+                }
+                LoopEvent::Trimmed(n) => {
+                    println!("[TRIM] Removed {} messages", n);
+                }
+                LoopEvent::MaxStepsReached(n) => {
+                    eprintln!("[ERR] Max steps ({}) reached", n);
+                }
+                LoopEvent::StreamToken(token) => {
+                    print!("{}", token);
+                    std::io::stdout().flush().ok();
+                }
+            })
+            .await;
+
+            // Restore session
+            *agent.session_mut() = session;
+
+            // Show cost summary
+            let cost = crate::tools::cost::session_stats();
+            if cost.steps > 0 {
+                eprintln!("\n\x1b[2m{}\x1b[0m", cost.status_line());
             }
-            LoopEvent::MaxStepsReached(n) => {
-                eprintln!("[ERR] Max steps ({}) reached", n);
+
+            if let Err(e) = result {
+                eprintln!("Agent error: {}", e);
             }
-            LoopEvent::StreamToken(token) => {
-                print!("{}", token);
-                std::io::stdout().flush().ok();
+
+            // Log run to evolution.jsonl
+            let run_score = sgr_agent::evolution::score(&run_stats);
+            let baseline = sgr_agent::evolution::baseline_score(".rust-code");
+            let git_hash = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "unknown".into());
+            let status = if run_score >= baseline {
+                "keep"
+            } else {
+                "discard"
+            };
+            let entry = sgr_agent::evolution::EvolutionEntry {
+                ts: {
+                    let d = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default();
+                    format!("{}", d.as_secs())
+                },
+                commit: git_hash,
+                title: agent
+                    .session()
+                    .messages()
+                    .iter()
+                    .find(|m| m.role == "user")
+                    .map(|m| m.content.chars().take(80).collect::<String>())
+                    .unwrap_or_else(|| "headless".into()),
+                score_before: baseline,
+                score_after: run_score,
+                status: status.into(),
+                stats: run_stats.clone(),
+            };
+            let _ = sgr_agent::evolution::log_evolution(".rust-code", &entry);
+            eprintln!(
+                "\x1b[2m[SCORE] {:.3} (baseline {:.3}) → {}\x1b[0m",
+                run_score, baseline, status
+            );
+
+            // Self-evolution: evaluate run and show improvement proposals
+            let improvements = sgr_agent::evolution::evaluate(&run_stats);
+            if !improvements.is_empty() {
+                eprintln!(
+                    "\n\x1b[33m[EVOLUTION] {} improvement(s) proposed ({} steps, {} errors, {} loops):\x1b[0m",
+                    improvements.len(),
+                    run_stats.steps,
+                    run_stats.tool_errors,
+                    run_stats.loop_warnings
+                );
+                for imp in &improvements {
+                    eprintln!(
+                        "  \x1b[33mP{}\x1b[0m {} — {}",
+                        imp.priority, imp.title, imp.reason
+                    );
+                }
+                eprintln!("\x1b[2mRun with --evolve to auto-apply the top improvement.\x1b[0m");
             }
-        })
-        .await;
 
-        // Restore session
-        *agent.session_mut() = session;
-
-        // Show cost summary
-        let cost = crate::tools::cost::session_stats();
-        if cost.steps > 0 {
-            eprintln!("\n\x1b[2m{}\x1b[0m", cost.status_line());
-        }
-
-        if let Err(e) = result {
-            eprintln!("Agent error: {}", e);
-        }
-
-        // Log run to evolution.jsonl
-        let run_score = sgr_agent::evolution::score(&run_stats);
-        let baseline = sgr_agent::evolution::baseline_score(".rust-code");
-        let git_hash = std::process::Command::new("git")
-            .args(["rev-parse", "--short", "HEAD"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "unknown".into());
-        let status = if run_score >= baseline {
-            "keep"
-        } else {
-            "discard"
-        };
-        let entry = sgr_agent::evolution::EvolutionEntry {
-            ts: {
-                let d = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                format!("{}", d.as_secs())
-            },
-            commit: git_hash,
-            title: agent
+            // Self-restart: if agent's last message requests restart, exec new binary.
+            // Agent triggers this by including "RESTART_AGENT" in finish summary
+            // after patching its own code and rebuilding.
+            let last_msg = agent
                 .session()
                 .messages()
                 .iter()
-                .find(|m| m.role == "user")
-                .map(|m| m.content.chars().take(80).collect::<String>())
-                .unwrap_or_else(|| "headless".into()),
-            score_before: baseline,
-            score_after: run_score,
-            status: status.into(),
-            stats: run_stats.clone(),
-        };
-        let _ = sgr_agent::evolution::log_evolution(".rust-code", &entry);
-        eprintln!(
-            "\x1b[2m[SCORE] {:.3} (baseline {:.3}) → {}\x1b[0m",
-            run_score, baseline, status
-        );
-
-        // Self-evolution: evaluate run and show improvement proposals
-        let improvements = sgr_agent::evolution::evaluate(&run_stats);
-        if !improvements.is_empty() {
-            eprintln!(
-                "\n\x1b[33m[EVOLUTION] {} improvement(s) proposed ({} steps, {} errors, {} loops):\x1b[0m",
-                improvements.len(),
-                run_stats.steps,
-                run_stats.tool_errors,
-                run_stats.loop_warnings
-            );
-            for imp in &improvements {
-                eprintln!(
-                    "  \x1b[33mP{}\x1b[0m {} — {}",
-                    imp.priority, imp.title, imp.reason
-                );
+                .rev()
+                .find(|m| m.role == "tool" || m.role == "assistant")
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+            if last_msg.contains("RESTART_AGENT") {
+                eprintln!("\n[RESTART] Agent requested self-restart, resuming with new binary...");
+                let exe = std::env::current_exe().unwrap_or_else(|_| "rust-code".into());
+                use std::os::unix::process::CommandExt;
+                let err = std::process::Command::new(&exe).arg("--resume").exec();
+                eprintln!("exec failed: {}", err);
             }
-            eprintln!("\x1b[2mRun with --evolve to auto-apply the top improvement.\x1b[0m");
-        }
 
-        // Self-restart: if agent's last message requests restart, exec new binary.
-        // Agent triggers this by including "RESTART_AGENT" in finish summary
-        // after patching its own code and rebuilding.
-        let last_msg = agent
-            .session()
-            .messages()
-            .iter()
-            .rev()
-            .find(|m| m.role == "tool" || m.role == "assistant")
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
-        if last_msg.contains("RESTART_AGENT") {
-            eprintln!("\n[RESTART] Agent requested self-restart, resuming with new binary...");
-            let exe = std::env::current_exe().unwrap_or_else(|_| "rust-code".into());
-            use std::os::unix::process::CommandExt;
-            let err = std::process::Command::new(&exe).arg("--resume").exec(); // replaces current process (unix exec)
-            eprintln!("exec failed: {}", err);
-        }
+            // --- Loop control ---
+            if let Some(ref mut state) = loop_state {
+                // Record iteration
+                let tripped = state.record_iteration(&run_stats);
+                if tripped {
+                    eprintln!(
+                        "\n\x1b[31m[CIRCUIT BREAKER] {} consecutive identical failures — stopping\x1b[0m",
+                        state.breaker.consecutive_failures()
+                    );
+                    eprintln!("\x1b[2m{}\x1b[0m", state.summary());
+                    break 'outer;
+                }
+
+                // Check for <solo:done/> signal
+                let last_output = agent
+                    .session()
+                    .messages()
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "tool" || m.role == "assistant")
+                    .map(|m| m.content.as_str())
+                    .unwrap_or("");
+                let signal = sgr_agent::evolution::parse_signal(last_output);
+                if signal == sgr_agent::evolution::SoloSignal::Done {
+                    eprintln!("\n\x1b[32m[LOOP] <solo:done/> — task complete\x1b[0m");
+                    eprintln!("\x1b[2m{}\x1b[0m", state.summary());
+                    break 'outer;
+                }
+
+                // For evolve mode: inject improvement prompt for next iteration
+                if state.options.mode == sgr_agent::evolution::LoopMode::Evolve {
+                    if let Some(evolve_prompt) = sgr_agent::evolution::evolution_prompt(&run_stats)
+                    {
+                        current_prompt = evolve_prompt;
+                    } else {
+                        eprintln!(
+                            "\n\x1b[32m[EVOLVE] No improvements needed — agent is clean\x1b[0m"
+                        );
+                        break 'outer;
+                    }
+                }
+                // For loop mode: continue with same prompt (agent resumes from session)
+                continue 'outer;
+            }
+            break 'outer;
+        } // end 'outer loop
     } else {
         // Interactive TUI mode
         let mut terminal = tui::init()?;

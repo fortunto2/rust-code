@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Telemetry from a single agent run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +284,239 @@ pub fn evolution_prompt(stats: &RunStats) -> Option<String> {
     ))
 }
 
+// ---------------------------------------------------------------------------
+// Loop engine: BigHead-style autonomous loop (compatible with solo-dev.sh)
+// ---------------------------------------------------------------------------
+
+/// Solo-compatible signals in agent output.
+/// `<solo:done/>` = stage complete, move to next
+/// `<solo:redo/>` = go back to previous stage (e.g. review found issues)
+#[derive(Debug, Clone, PartialEq)]
+pub enum SoloSignal {
+    Done,
+    Redo,
+    None,
+}
+
+/// Parse solo signals from agent output.
+pub fn parse_signal(output: &str) -> SoloSignal {
+    if output.contains("<solo:done/>") {
+        SoloSignal::Done
+    } else if output.contains("<solo:redo/>") {
+        SoloSignal::Redo
+    } else {
+        SoloSignal::None
+    }
+}
+
+/// Control commands via file. Compatible with solo-dev.sh.
+/// Write "stop", "pause", or "skip" to the control file.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlAction {
+    Continue,
+    Stop,
+    Pause,
+    Skip,
+}
+
+/// Check control file for commands. Reads and deletes (except pause which persists).
+pub fn check_control(control_path: &Path) -> ControlAction {
+    let content = match std::fs::read_to_string(control_path) {
+        Ok(c) => c.trim().to_lowercase(),
+        Err(_) => return ControlAction::Continue,
+    };
+    match content.as_str() {
+        "stop" => {
+            let _ = std::fs::remove_file(control_path);
+            ControlAction::Stop
+        }
+        "pause" => ControlAction::Pause, // don't delete — pause persists
+        "skip" => {
+            let _ = std::fs::remove_file(control_path);
+            ControlAction::Skip
+        }
+        _ => ControlAction::Continue,
+    }
+}
+
+/// Circuit breaker: stops after N consecutive identical failures.
+#[derive(Debug)]
+pub struct CircuitBreaker {
+    last_fingerprint: String,
+    consecutive: usize,
+    limit: usize,
+}
+
+impl CircuitBreaker {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            last_fingerprint: String::new(),
+            consecutive: 0,
+            limit,
+        }
+    }
+
+    /// Record a result. Returns true if circuit is tripped (should stop).
+    pub fn record(&mut self, success: bool, fingerprint: &str) -> bool {
+        if success {
+            self.consecutive = 0;
+            self.last_fingerprint.clear();
+            return false;
+        }
+        if fingerprint == self.last_fingerprint {
+            self.consecutive += 1;
+        } else {
+            self.last_fingerprint = fingerprint.to_string();
+            self.consecutive = 1;
+        }
+        self.consecutive >= self.limit
+    }
+
+    pub fn consecutive_failures(&self) -> usize {
+        self.consecutive
+    }
+}
+
+/// Loop configuration (mirrors solo-dev.sh flags).
+#[derive(Debug, Clone)]
+pub struct LoopOptions {
+    /// Max iterations (0 = unlimited)
+    pub max_iterations: usize,
+    /// Max wall clock hours (0.0 = unlimited)
+    pub max_hours: f64,
+    /// Control file path (write "stop"/"pause"/"skip")
+    pub control_file: PathBuf,
+    /// Circuit breaker: max consecutive identical failures
+    pub circuit_breaker_limit: usize,
+    /// Agent home dir for evolution.jsonl
+    pub agent_home: String,
+    /// Mode: "loop" (repeat task) or "evolve" (self-improve)
+    pub mode: LoopMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoopMode {
+    /// BigHead: repeat prompt until <solo:done/> or max iterations
+    Loop,
+    /// Evolution: evaluate → pick improvement → patch → test → commit → restart
+    Evolve,
+}
+
+impl Default for LoopOptions {
+    fn default() -> Self {
+        Self {
+            max_iterations: 20,
+            max_hours: 0.0,
+            control_file: PathBuf::from(".rust-code/loop-control"),
+            circuit_breaker_limit: 3,
+            agent_home: ".rust-code".into(),
+            mode: LoopMode::Loop,
+        }
+    }
+}
+
+/// Loop state — tracks progress across iterations.
+#[derive(Debug)]
+pub struct LoopState {
+    pub iteration: usize,
+    pub start_time: Instant,
+    pub breaker: CircuitBreaker,
+    pub options: LoopOptions,
+    pub total_score: f64,
+    pub keep_count: usize,
+    pub discard_count: usize,
+}
+
+impl LoopState {
+    pub fn new(options: LoopOptions) -> Self {
+        let limit = options.circuit_breaker_limit;
+        Self {
+            iteration: 0,
+            start_time: Instant::now(),
+            breaker: CircuitBreaker::new(limit),
+            options,
+            total_score: 0.0,
+            keep_count: 0,
+            discard_count: 0,
+        }
+    }
+
+    /// Check if loop should continue. Returns None to continue, Some(reason) to stop.
+    pub fn should_stop(&self) -> Option<String> {
+        // Max iterations
+        if self.options.max_iterations > 0 && self.iteration >= self.options.max_iterations {
+            return Some(format!(
+                "Max iterations reached ({})",
+                self.options.max_iterations
+            ));
+        }
+        // Max hours
+        if self.options.max_hours > 0.0 {
+            let elapsed_hours = self.start_time.elapsed().as_secs_f64() / 3600.0;
+            if elapsed_hours >= self.options.max_hours {
+                return Some(format!("Timeout ({:.1}h)", self.options.max_hours));
+            }
+        }
+        // Control file
+        match check_control(&self.options.control_file) {
+            ControlAction::Stop => return Some("Stop requested via control file".into()),
+            ControlAction::Pause => {
+                return Some("Paused via control file (delete to resume)".into())
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Record iteration result and check circuit breaker.
+    pub fn record_iteration(&mut self, stats: &RunStats) -> bool {
+        self.iteration += 1;
+        let s = score(stats);
+        self.total_score += s;
+        let fingerprint = format!(
+            "errors:{},loops:{},patches:{}",
+            stats.tool_errors, stats.loop_warnings, stats.patch_failures
+        );
+        let success = stats.completed && stats.tool_errors == 0;
+        if success {
+            self.keep_count += 1;
+        } else {
+            self.discard_count += 1;
+        }
+        // Returns true if circuit is tripped
+        self.breaker.record(success, &fingerprint)
+    }
+
+    /// Elapsed time as human-readable string.
+    pub fn elapsed_display(&self) -> String {
+        let secs = self.start_time.elapsed().as_secs();
+        if secs < 60 {
+            format!("{}s", secs)
+        } else if secs < 3600 {
+            format!("{}m{}s", secs / 60, secs % 60)
+        } else {
+            format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+        }
+    }
+
+    /// Summary string for display.
+    pub fn summary(&self) -> String {
+        let avg = if self.iteration > 0 {
+            self.total_score / self.iteration as f64
+        } else {
+            0.0
+        };
+        format!(
+            "{} iterations in {} | keep:{} discard:{} | avg score:{:.3}",
+            self.iteration,
+            self.elapsed_display(),
+            self.keep_count,
+            self.discard_count,
+            avg,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +633,106 @@ mod tests {
         let prompt = evolution_prompt(&stats).unwrap();
         assert!(prompt.contains("Self-Evolution"));
         assert!(prompt.contains("RESTART_AGENT"));
+    }
+
+    // --- Solo signals ---
+
+    #[test]
+    fn parse_signal_done() {
+        assert_eq!(parse_signal("result <solo:done/>"), SoloSignal::Done);
+    }
+
+    #[test]
+    fn parse_signal_redo() {
+        assert_eq!(parse_signal("needs fix <solo:redo/>"), SoloSignal::Redo);
+    }
+
+    #[test]
+    fn parse_signal_none() {
+        assert_eq!(parse_signal("just text"), SoloSignal::None);
+    }
+
+    // --- Control file ---
+
+    #[test]
+    fn control_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctrl = dir.path().join("control");
+        assert_eq!(check_control(&ctrl), ControlAction::Continue);
+    }
+
+    #[test]
+    fn control_file_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctrl = dir.path().join("control");
+        std::fs::write(&ctrl, "stop").unwrap();
+        assert_eq!(check_control(&ctrl), ControlAction::Stop);
+        assert!(!ctrl.exists()); // deleted after read
+    }
+
+    #[test]
+    fn control_file_pause() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctrl = dir.path().join("control");
+        std::fs::write(&ctrl, "pause").unwrap();
+        assert_eq!(check_control(&ctrl), ControlAction::Pause);
+        assert!(ctrl.exists()); // NOT deleted — pause persists
+    }
+
+    // --- Circuit breaker ---
+
+    #[test]
+    fn circuit_breaker_trips_on_consecutive() {
+        let mut cb = CircuitBreaker::new(3);
+        assert!(!cb.record(false, "err1"));
+        assert!(!cb.record(false, "err1"));
+        assert!(cb.record(false, "err1")); // 3rd identical failure → trip
+    }
+
+    #[test]
+    fn circuit_breaker_resets_on_success() {
+        let mut cb = CircuitBreaker::new(3);
+        cb.record(false, "err1");
+        cb.record(false, "err1");
+        cb.record(true, ""); // success resets
+        assert_eq!(cb.consecutive_failures(), 0);
+        assert!(!cb.record(false, "err1")); // starts over
+    }
+
+    #[test]
+    fn circuit_breaker_resets_on_different_error() {
+        let mut cb = CircuitBreaker::new(3);
+        cb.record(false, "err1");
+        cb.record(false, "err1");
+        assert!(!cb.record(false, "err2")); // different error → reset to 1
+        assert_eq!(cb.consecutive_failures(), 1);
+    }
+
+    // --- Loop state ---
+
+    #[test]
+    fn loop_state_max_iterations() {
+        let opts = LoopOptions {
+            max_iterations: 3,
+            ..Default::default()
+        };
+        let mut state = LoopState::new(opts);
+        assert!(state.should_stop().is_none());
+        state.iteration = 3;
+        assert!(state.should_stop().is_some());
+    }
+
+    #[test]
+    fn loop_state_summary() {
+        let mut state = LoopState::new(LoopOptions::default());
+        state.iteration = 5;
+        state.keep_count = 3;
+        state.discard_count = 2;
+        state.total_score = 4.0;
+        let s = state.summary();
+        assert!(s.contains("5 iterations"));
+        assert!(s.contains("keep:3"));
+        assert!(s.contains("discard:2"));
     }
 
     // --- Score tests ---
