@@ -129,7 +129,7 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - wait_agents: {tool_name, agent_ids?, timeout_secs?} — wait for sub-agents to complete
 - agent_status: {tool_name, agent_id?} — check sub-agent status
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
-- api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name: github/stripe/cloudflare/etc), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2" + body?), "list". Load → search → call.
+- api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2"), "list". Use "api list" to see all available APIs with descriptions. For web search/research, try loading "searxng" API and calling its search endpoint.
 
 ## Self-Update
 If you patch your own source code and need to test the fix:
