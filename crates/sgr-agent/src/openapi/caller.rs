@@ -82,7 +82,10 @@ pub async fn call_api(
 ) -> Result<String, String> {
     let url = build_url(base_url, endpoint, params)?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("rust-code/1.0")
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
     let mut req = match endpoint.method.as_str() {
         "GET" => client.get(&url),
         "POST" => client.post(&url),
