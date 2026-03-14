@@ -12,9 +12,9 @@ build:
 release:
 	$(CARGO) build --release -p $(BIN)
 
-## Run all tests (whole workspace)
+## Run all tests (our crates only, excludes genai fork)
 test:
-	$(CARGO) test --workspace
+	$(CARGO) test -p sgr-agent --features "agent search" -p sgr-agent-tui -p rust-code -p solograph
 
 ## Run headless with PROMPT
 run: build
