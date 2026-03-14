@@ -101,6 +101,8 @@ pub mod tasks;
 #[cfg(feature = "app-tools")]
 pub mod app_tools;
 
+pub mod openapi;
+
 #[cfg(feature = "providers")]
 pub mod providers;
 
@@ -142,7 +144,7 @@ pub use memory::{
 };
 #[cfg(feature = "session")]
 pub use prompt_template::{build_system_prompt, BASE_SYSTEM_PROMPT};
-#[cfg(feature = "search")]
+#[cfg(all(feature = "search", feature = "session"))]
 pub use session::search_sessions;
 #[cfg(feature = "session")]
 pub use session::{

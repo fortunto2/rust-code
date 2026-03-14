@@ -56,6 +56,7 @@ rust-code --resume                                 # continue last session
 - **Background tasks** (`F7`) — run long commands in `tmux` windows with realtime output preview
 - **Skills system** (`F9`) — browse, search, and install agent skills from [skills.sh](https://skills.sh) registry
 - **MCP support** — connect external tool servers via `.mcp.json` (e.g. Playwright, codegraph, Supabase)
+- **OpenAPI → Tool** — any API as one tool: load spec → fuzzy search endpoints → call. 10 popular APIs pre-configured (GitHub 1093 endpoints, Cloudflare 2656, Stripe, OpenAI, etc.) + APIs.guru directory (2800+ APIs)
 - **Git integration** — diff sidebar, history viewer, stage and commit from the agent
 - **Session persistence** — chat history in `.rust-code/session_*.jsonl`, resume with `--resume`
 - **Open-in-editor** — jump to file:line in `$EDITOR` from any panel

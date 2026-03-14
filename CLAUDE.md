@@ -28,10 +28,17 @@ Agent loop: user message → Agent::decide() → model returns `Decision { situa
   - `ToolFilter` — progressive discovery (keyword + fuzzy scoring)
 - **Session** (`feature = "session"`): `Session`, `LoopDetector` (4-tier), `MemoryContext`, hints, tasks, intent guard
 - **App tools** (`feature = "app-tools"`): bash, fs, git, apply_patch
+- **OpenAPI** (always available): parse any OpenAPI 3.x spec → fuzzy search endpoints → HTTP call
+  - `ApiRegistry` — load multiple APIs, search across all, call by endpoint name
+  - 10 popular APIs pre-configured: github, stripe, openai, supabase, posthog, slack, linear, cloudflare, vercel, sentry
+  - APIs.guru fallback — 2800+ APIs searchable by name
+  - Auto-cache specs to `~/.sgr-agent/openapi-cache/`, auto-detect auth from env vars
+  - `$ref` resolution for parameters and schemas, path-level param inheritance
 - **Providers** (`feature = "providers"`): TOML config, auth, CLI proxy, Codex proxy
 - **Telemetry** (`feature = "telemetry"`): OTEL file telemetry
+- **Llm** (`feature = "genai"`): provider-agnostic LLM facade — `LlmConfig::auto("gpt-4o")` / `LlmConfig::endpoint(key, url, model)`
 - **Demo**: `cargo run -p sgr-agent --features agent --example agent_demo`
-- **Tests**: `cargo test -p sgr-agent --all-features` — 410+ tests
+- **Tests**: `cargo test -p sgr-agent --all-features` — 450+ tests
 
 ## Agent Memory System
 - **Agent home dir** (`.rust-code/`): SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md (user notes), MEMORY.jsonl (typed agent memory), context/*.md
@@ -113,6 +120,8 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/sgr-agent/src/loop_detect.rs` | 4-tier loop detection (exact, semantic, stagnation, frequency) |
 | `crates/sgr-agent/src/app_loop.rs` | Session-based agent loop with streaming |
 | `crates/sgr-agent/src/app_tools/` | Shared tools: bash, fs, git, apply_patch |
+| `crates/sgr-agent/src/openapi/` | OpenAPI spec → tool: parse, fuzzy search, HTTP call, auto-cache |
+| `crates/sgr-agent/src/llm.rs` | Llm facade + LlmConfig (provider-agnostic, wraps genai) |
 | `crates/sgr-agent/src/providers/` | Provider config, auth, CLI/Codex proxy |
 | `crates/sgr-agent-tui/src/` | TUI shell: chat, picker, focus, command palette |
 | `Makefile` | Build targets: check, lint, fmt, test, release, audit |
