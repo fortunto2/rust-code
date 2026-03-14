@@ -22,7 +22,58 @@ pub struct ApiSpec {
     pub auth_env: Option<String>,
 }
 
-/// Popular APIs useful for development — hardcoded for instant access.
+/// Load API registry from TOML (agent-editable, no recompilation).
+/// Priority: .rust-code/apis.toml (project) > ~/.sgr-agent/apis.toml (global) > hardcoded.
+pub fn load_api_registry() -> Vec<ApiSpec> {
+    for path in &[
+        PathBuf::from(".rust-code").join("apis.toml"),
+        dirs_like_home().join(".sgr-agent").join("apis.toml"),
+    ] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = toml_parse_apis(&content) {
+                return parsed;
+            }
+        }
+    }
+    popular_apis()
+}
+
+fn toml_parse_apis(content: &str) -> Result<Vec<ApiSpec>, String> {
+    let table: toml::Table = content.parse().map_err(|e| format!("TOML: {}", e))?;
+    let api_table = table
+        .get("api")
+        .and_then(|v| v.as_table())
+        .ok_or("missing [api.*]")?;
+    let mut apis = Vec::new();
+    for (name, val) in api_table {
+        let t = match val.as_table() {
+            Some(t) => t,
+            None => continue,
+        };
+        apis.push(ApiSpec {
+            name: name.clone(),
+            description: t
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+            spec_url: t
+                .get("spec_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+            base_url: t
+                .get("base_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+            auth_env: t.get("auth_env").and_then(|v| v.as_str()).map(String::from),
+        });
+    }
+    Ok(apis)
+}
+
+/// Popular APIs useful for development — hardcoded fallback.
 pub fn popular_apis() -> Vec<ApiSpec> {
     vec![
         ApiSpec {
@@ -89,6 +140,13 @@ pub fn popular_apis() -> Vec<ApiSpec> {
             auth_env: Some("VERCEL_TOKEN".into()),
         },
         ApiSpec {
+            name: "open-meteo".into(),
+            description: "Open-Meteo — free weather + air quality + geocoding APIs".into(),
+            spec_url: "https://raw.githubusercontent.com/open-meteo/open-meteo/main/openapi.yml".into(),
+            base_url: "https://api.open-meteo.com".into(),
+            auth_env: None,
+        },
+        ApiSpec {
             name: "sentry".into(),
             description: "Sentry API — issues, events, projects".into(),
             spec_url: "https://api.apis.guru/v2/specs/sentry.io/0.0.1/openapi.json".into(),
@@ -98,15 +156,27 @@ pub fn popular_apis() -> Vec<ApiSpec> {
     ]
 }
 
-/// Find a popular API by name (case-insensitive).
+/// Find API by name — checks TOML registry first, then hardcoded.
 pub fn find_popular(name: &str) -> Option<ApiSpec> {
     let lower = name.to_lowercase();
-    popular_apis().into_iter().find(|a| a.name == lower)
+    load_api_registry().into_iter().find(|a| a.name == lower)
 }
 
-/// List all popular API names.
+/// List all available API names (from TOML registry or hardcoded).
 pub fn list_popular() -> Vec<String> {
-    popular_apis().into_iter().map(|a| a.name).collect()
+    load_api_registry().into_iter().map(|a| a.name).collect()
+}
+
+/// Path to the TOML registry file.
+/// Checks .rust-code/apis.toml (project) first, then ~/.sgr-agent/apis.toml (global).
+pub fn registry_toml_path() -> PathBuf {
+    // Project-local override
+    let local = PathBuf::from(".rust-code").join("apis.toml");
+    if local.exists() {
+        return local;
+    }
+    // Global
+    dirs_like_home().join(".sgr-agent").join("apis.toml")
 }
 
 /// Default cache directory: `~/.sgr-agent/openapi-cache/`
@@ -165,10 +235,11 @@ pub async fn download_spec(url: &str) -> Result<String, String> {
         if serde_json::from_str::<serde_json::Value>(&text).is_ok() {
             return Ok(text);
         }
-        return Err(format!(
-            "YAML specs not yet supported (need serde_yaml dep). URL: {}",
-            url
-        ));
+        // Parse YAML → JSON
+        let yaml_val: serde_json::Value =
+            serde_yaml::from_str(&text).map_err(|e| format!("YAML parse error: {}", e))?;
+        return serde_json::to_string(&yaml_val)
+            .map_err(|e| format!("YAML→JSON conversion error: {}", e));
     }
 
     Ok(text)

@@ -15,7 +15,7 @@ openai = []
 agent = ["async-trait", "indexmap", "futures", "tokio-util"]
 session = ["agent", "dep:uuid"]
 app-tools = ["session", "dep:anyhow"]
-providers = ["dep:toml", "dep:base64"]
+providers = ["dep:base64"]
 telemetry = ["dep:tracing-subscriber", "dep:tracing-log", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:chrono"]
 logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
 search = ["dep:nucleo-matcher"]
@@ -36,7 +36,7 @@ futures = { version = "0.3", optional = true }
 tokio-util = { version = "0.7", optional = true }
 uuid = { version = "1", optional = true, features = ["v7"] }
 anyhow = { version = "1", optional = true }
-toml = { version = "0.8", optional = true }
+toml = "0.8"
 base64 = { version = "0.22", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }
 tracing-appender = { version = "0.2", optional = true }
@@ -46,6 +46,7 @@ opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
+serde_yaml = "0.9"
 genai = { path = "../genai", optional = true }
 
 # Uniffi for iOS/Android Swift/Kotlin bindings (optional)
