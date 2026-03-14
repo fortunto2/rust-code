@@ -63,12 +63,18 @@ pub fn search_endpoints(endpoints: &[Endpoint], query: &str, limit: usize) -> Ve
 /// Simple substring search fallback (no nucleo dependency).
 #[cfg(not(feature = "search"))]
 pub fn search_endpoints(endpoints: &[Endpoint], query: &str, limit: usize) -> Vec<SearchResult> {
+    if query.is_empty() || endpoints.is_empty() {
+        return Vec::new();
+    }
+
     let query_lower = query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
     let mut results: Vec<SearchResult> = Vec::new();
 
     for ep in endpoints {
         let searchable = build_searchable_str(ep).to_lowercase();
-        if searchable.contains(&query_lower) {
+        // Match if ALL query words appear in the searchable string
+        if query_words.iter().all(|w| searchable.contains(w)) {
             results.push(SearchResult {
                 name: ep.name.clone(),
                 method: ep.method.clone(),
