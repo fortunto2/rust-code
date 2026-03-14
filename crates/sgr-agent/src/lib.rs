@@ -101,6 +101,7 @@ pub mod tasks;
 #[cfg(feature = "app-tools")]
 pub mod app_tools;
 
+pub mod benchmark;
 pub mod evolution;
 pub mod openapi;
 
