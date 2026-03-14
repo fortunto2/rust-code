@@ -1114,6 +1114,7 @@ pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> 
                 content: content.clone(),
                 tool_call_id: None,
                 tool_calls: vec![],
+                images: vec![],
             }
         })
         .collect()

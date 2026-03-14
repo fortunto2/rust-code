@@ -46,7 +46,7 @@ opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
-genai = { version = "0.6.0-beta.5", optional = true }
+genai = { path = "../genai", optional = true }
 
 # Uniffi for iOS/Android Swift/Kotlin bindings (optional)
 # uniffi = { version = "0.31", optional = true }
