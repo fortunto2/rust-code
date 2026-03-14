@@ -36,6 +36,7 @@ pub struct RunStats {
 }
 
 impl Default for RunStats {
+    #[allow(clippy::derivable_impls)]
     fn default() -> Self {
         Self {
             steps: 0,
@@ -326,7 +327,7 @@ pub fn analyze_sessions(agent_home: &str, max_sessions: usize) -> Vec<SessionPat
     let mut loop_warnings: usize = 0;
     let mut tool_errors: Vec<String> = Vec::new();
     let mut reread_warnings: usize = 0;
-    let mut total_messages: usize = 0;
+    let mut _total_messages: usize = 0;
 
     for path in &session_files {
         let content = match std::fs::read_to_string(path) {
@@ -342,7 +343,7 @@ pub fn analyze_sessions(agent_home: &str, max_sessions: usize) -> Vec<SessionPat
             let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
             if role == "tool" || role == "assistant" {
-                total_messages += 1;
+                _total_messages += 1;
 
                 // Patch failures
                 if text.contains("apply_patch error") || text.contains("Commit FAILED") {
@@ -413,7 +414,7 @@ pub fn analyze_sessions(agent_home: &str, max_sessions: usize) -> Vec<SessionPat
                     count,
                     examples: tool_errors
                         .iter()
-                        .filter(|e| e.contains(&error_type.split_whitespace().next().unwrap_or("")))
+                        .filter(|e| e.contains(error_type.split_whitespace().next().unwrap_or("")))
                         .take(2)
                         .cloned()
                         .collect(),
@@ -857,7 +858,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_str().unwrap();
         // Write fake session with patch errors
-        let session = vec![
+        let session = [
             r#"{"role":"user","content":"fix bug"}"#,
             r#"{"role":"tool","content":"apply_patch error: failed to find match"}"#,
             r#"{"role":"tool","content":"apply_patch error: invalid hunk"}"#,
@@ -895,7 +896,7 @@ mod tests {
     fn evolution_prompt_with_history_includes_patterns() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_str().unwrap();
-        let session = vec![
+        let session = [
             r#"{"role":"tool","content":"apply_patch error: x"}"#,
             r#"{"role":"tool","content":"apply_patch error: y"}"#,
             r#"{"role":"tool","content":"apply_patch error: z"}"#,

@@ -41,25 +41,31 @@ Run it:
 
 ```bash
 rust-code                                          # interactive TUI
-rust-code --prompt "Find the bug in src/main.rs"   # headless mode
+rust-code -p "Find the bug in src/main.rs"         # headless mode
 rust-code --resume                                 # continue last session
+rust-code --resume "refactor"                      # fuzzy-search sessions by topic
+rust-code -p "build feature X" --loop 5            # autonomous loop (BigHead mode)
+rust-code -p "improve yourself" --evolve           # self-evolution mode
 ```
 
 ## Features
 
 - **Interactive TUI** — chat UI built with `ratatui` and `crossterm`
 - **SGR agent loop** — typed tool execution with fallback chain (Gemini Pro → Flash → Flash Lite)
-- **18 built-in tools** — file read/write/edit, bash, search, git status/diff/add/commit, and more
-- **Task Management** — persistent kanban board tracking via `.tasks/*.md` using the built-in `TaskTool`
+- **22 built-in tools** — file read/write/edit/patch, bash (fg + bg), search, git, memory, tasks, agent swarm, MCP, OpenAPI
+- **Agent swarm** — spawn child agents with roles, wait/cancel, parallel task execution
+- **Task management** — persistent kanban board via `.tasks/*.md`
 - **Fuzzy file search** (`Ctrl+P`) — fast file navigation with `nucleo` and live file preview
 - **Project symbol search** (`F6`) — browse functions, structs, enums with code preview
 - **Background tasks** (`F7`) — run long commands in `tmux` windows with realtime output preview
 - **Skills system** (`F9`) — browse, search, and install agent skills from [skills.sh](https://skills.sh) registry
 - **MCP support** — connect external tool servers via `.mcp.json` (e.g. Playwright, codegraph, Supabase)
-- **OpenAPI → Tool** — any API as one tool: load spec → fuzzy search endpoints → call. 10 popular APIs pre-configured (GitHub 1093 endpoints, Cloudflare 2656, Stripe, OpenAI, etc.) + APIs.guru directory (2800+ APIs)
+- **OpenAPI → Tool** — any API as one tool: load spec → fuzzy search endpoints → call. 10 popular APIs pre-configured (GitHub, Cloudflare, Stripe, OpenAI, etc.) + APIs.guru directory (2800+ APIs). TOML registry at `~/.sgr-agent/apis.toml`
 - **Git integration** — diff sidebar, history viewer, stage and commit from the agent
 - **Session persistence** — chat history in `.rust-code/session_*.jsonl`, resume with `--resume`
 - **Open-in-editor** — jump to file:line in `$EDITOR` from any panel
+- **BigHead mode** (`--loop N`) — autonomous task loop with circuit breaker, control file, and `<solo:done/>` signal
+- **Self-evolution** (`--evolve`) — agent evaluates its own runs, patches code, rebuilds, and restarts
 
 ### Background Tasks (tmux)
 
@@ -135,8 +141,9 @@ rust-code
 
 Notes:
 
-- Default: Gemini 3.1 Pro with fallback to Flash and Flash Lite.
-- Provider configuration via `~/.rust-code/config.toml` or `rust-code setup`.
+- Default: Gemini 3.1 Pro Preview with fallback to Flash and Flash Lite.
+- Provider configuration: `~/.rust-code/config.toml` or `rust-code setup` or `rust-code config set`.
+- Vertex AI uses `global` region by default (not `us-central1`).
 
 ## Quick Start
 
@@ -231,34 +238,95 @@ Background tasks are backed by `tmux`, so having `tmux` installed is useful if y
 Usage: rust-code [COMMAND] [OPTIONS]
 
 Commands:
-  setup     Run interactive provider setup wizard
-  doctor    Check system dependencies and API authentication
-  skills    Manage installed agent skills (add, remove, search, list)
-  sessions  List or manage past chat sessions
+  setup       Interactive provider setup wizard
+  doctor      Check system deps and API auth (--fix to auto-install)
+  skills      Manage agent skills (add, remove, search, list, catalog)
+  sessions    List or search past chat sessions
+  mcp         Show MCP server status and tools
+  config      Set default provider (show, set, reset)
+  task        Manage project tasks (list, show, create, done, update)
 
 Options:
-  -p, --prompt <PROMPT>  Run in headless mode with a prompt
-  -r, --resume           Resume last session
-  -h, --help             Print help
-  -V, --version          Print version
+  -p, --prompt <PROMPT>    Run in headless mode with a prompt
+  -r, --resume [TOPIC]     Resume last session or fuzzy-search by topic
+  -s, --session <PATH>     Resume specific session file
+      --cwd <PATH>         Working directory for headless mode
+      --model <NAME>       Override model name
+      --intent <MODE>      Intent mode: auto, ask, build, plan
+      --sgr                Use SGR backend (pure Rust, no BAML)
+      --local              Use local Ollama model
+      --codex              Use ChatGPT Plus/Pro via Codex proxy
+      --gemini-cli         Use Gemini CLI as LLM backend
+      --loop <N>           Autonomous loop (BigHead mode)
+      --max-hours <FLOAT>  Time limit for loop/evolve mode
+      --evolve             Self-evolution mode
+  -h, --help               Print help
+  -V, --version            Print version
 ```
+
+### OpenAPI → Tool
+
+Convert any REST API into a searchable, callable tool — no code generation needed.
+
+```bash
+# The agent can search and call APIs on the fly:
+# "search github repos" → finds GET /search/repositories → calls it
+```
+
+- 10 popular APIs pre-configured: GitHub (1093 endpoints), Cloudflare (2656), Stripe, OpenAI, Supabase, PostHog, Slack, Linear, Vercel, Sentry
+- APIs.guru fallback: 2800+ APIs searchable by name
+- Auto-cache specs to `~/.sgr-agent/openapi-cache/`
+- TOML registry at `~/.sgr-agent/apis.toml` for custom APIs
+- Auto-detect auth from env vars (`GITHUB_TOKEN`, `STRIPE_SECRET_KEY`, etc.)
+- Full `$ref` resolution, path-level parameter inheritance, YAML support
+
+### BigHead Mode (Autonomous Loop)
+
+Run the agent in a loop for autonomous task execution:
+
+```bash
+rust-code -p "build a CLI tool for air quality" --loop 10 --max-hours 2
+```
+
+- Circuit breaker: stops after 3 consecutive identical failures
+- Control file: `.rust-code/loop-control` (write `stop`, `pause`, `skip`)
+- Signal: agent outputs `<solo:done/>` when task is complete
+- Skills: `--loop` auto-loads `skills/bighead/SKILL.md`
+
+### Self-Evolution
+
+The agent can evaluate and improve itself:
+
+```bash
+rust-code -p "improve your error handling" --evolve
+```
+
+- Evaluates each run: error rate, loop warnings, patch failures, steps
+- Analyzes session history for recurring patterns
+- Proposes and applies improvements to its own code
+- Rebuilds and restarts via `RESTART_AGENT` signal
+- Evolution log: `.rust-code/evolution.jsonl`
 
 ## Development
 
-The workspace consists of 4 crates:
+The workspace consists of 5 crates:
 
 | Crate | What |
 |-------|------|
-| `rc-cli` | Main binary — TUI, headless mode, agent loop |
-| `sgr-agent` | LLM client + agent framework + session/memory/tools |
+| `rc-cli` | Main binary — TUI, headless mode, 22 tools, agent loop |
+| `sgr-agent` | LLM client + agent framework + session/memory/tools/providers/OpenAPI |
 | `sgr-agent-tui` | Shared TUI shell — chat panel, fuzzy picker, focus system |
 | `solograph` | MCP server for code intelligence |
+| `genai` | Local fork of rust-genai — multi-provider LLM client |
 
 ```bash
 make build    # dev build
-make test     # run all tests
+make test     # run all tests (450+ in sgr-agent alone)
+make lint     # clippy on sgr-agent + sgr-agent-tui + solograph (-D warnings)
 make check    # test + clippy + fmt (pre-commit gate)
-make install  # build + install to /usr/local/bin
+make install  # build + strip + install to /usr/local/bin
+make audit    # unused deps + large files audit
+make help     # show all targets
 ```
 
 ## Built With
@@ -266,7 +334,7 @@ make install  # build + install to /usr/local/bin
 | What | Crate / Link |
 |------|-------------|
 | Agent architecture | [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) — typed tool dispatch via union types |
-| LLM client | [rust-genai](https://github.com/jeremychone/rust-genai) — multi-provider Rust client (Gemini, OpenAI, Anthropic, Ollama, etc.) |
+| LLM client | [rust-genai](https://github.com/jeremychone/rust-genai) (local fork) — multi-provider Rust client (Gemini, OpenAI, Anthropic, Ollama, etc.) |
 | TUI framework | [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm) |
 | Text input | [tui-textarea](https://github.com/rhysd/tui-textarea) |
 | Fuzzy search | [Nucleo](https://github.com/helix-editor/nucleo) (from Helix editor) |

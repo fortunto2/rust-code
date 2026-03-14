@@ -11,10 +11,11 @@ AI-powered terminal coding agent written in Rust.
 - tmux (background task execution)
 
 ## Architecture
-- `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs)
-- `crates/sgr-agent/` — LLM client + agent framework + session/memory/tools/providers (all-in-one)
+- `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs), 22 tools (backend.rs)
+- `crates/sgr-agent/` — LLM client + agent framework + session/memory/tools/providers/OpenAPI (all-in-one)
 - `crates/sgr-agent-tui/` — shared TUI shell: chat panel, streaming, agent loop integration, fuzzy picker
 - `crates/solograph/` — MCP server for code intelligence
+- `crates/genai/` — local fork of rust-genai (multi-provider LLM client: Gemini, OpenAI, Anthropic, Ollama, etc.)
 
 Agent loop: user message → Agent::decide() → model returns `Decision { situation, task, tool_calls }` → execute tools → feed result back → repeat until `finish_task` or completion.
 
@@ -70,6 +71,10 @@ make install         # build + strip + install to /usr/local/bin
 make audit           # unused deps + large files audit
 make help            # show all targets
 cargo run -- -p "prompt"  # test headless
+cargo run -- -p "task" --loop 5  # BigHead autonomous loop
+cargo run -- -p "improve" --evolve  # self-evolution mode
+cargo run -- doctor --fix  # check + fix dependencies
+cargo run -- mcp list  # show MCP servers and tools
 ```
 
 ## Release Process
@@ -101,7 +106,7 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 |------|------|
 | `crates/rc-cli/src/app.rs` | TUI — all panels, keybindings, drawing (~3k lines) |
 | `crates/rc-cli/src/main.rs` | CLI entry, headless mode, sessions command |
-| `crates/rc-cli/src/agent.rs` | Agent struct, 18 tools, SgrAgent impl |
+| `crates/rc-cli/src/agent.rs` | Agent struct, 22 tools, SgrAgent impl |
 | `crates/sgr-agent/src/lib.rs` | LLM client + agent framework + session exports |
 | `crates/sgr-agent/src/agent.rs` | Agent trait, Decision, AgentError |
 | `crates/sgr-agent/src/agent_tool.rs` | Tool trait, ToolOutput, ToolError |
@@ -123,7 +128,10 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/sgr-agent/src/openapi/` | OpenAPI spec → tool: parse, fuzzy search, HTTP call, auto-cache |
 | `crates/sgr-agent/src/llm.rs` | Llm facade + LlmConfig (provider-agnostic, wraps genai) |
 | `crates/sgr-agent/src/providers/` | Provider config, auth, CLI/Codex proxy |
+| `crates/sgr-agent/src/evolution.rs` | Self-evolution engine: RunStats, scoring, session analysis, loop engine |
+| `crates/sgr-agent/src/benchmark.rs` | 5-task benchmark suite with scoring + comparison |
 | `crates/sgr-agent-tui/src/` | TUI shell: chat, picker, focus, command palette |
+| `crates/rc-cli/src/backend.rs` | SgrAction enum (22 tools), tool definitions, tool call mapping |
 | `Makefile` | Build targets: check, lint, fmt, test, release, audit |
 | `.githooks/pre-commit` | Pre-commit gate: test + clippy + fmt-check |
 | `install.sh` | One-liner installer with doctor |
