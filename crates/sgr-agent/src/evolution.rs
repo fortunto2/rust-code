@@ -11,7 +11,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Telemetry from a single agent run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +48,102 @@ impl Default for RunStats {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Score: single number to measure agent efficiency
+// ---------------------------------------------------------------------------
+
+/// Efficiency score: 0.0 (terrible) to 1.0 (perfect).
+/// `successful_calls / steps` weighted by completion.
+pub fn score(stats: &RunStats) -> f64 {
+    if stats.steps == 0 {
+        return 0.0;
+    }
+    let efficiency = stats.successful_calls as f64 / stats.steps as f64;
+    let completion_bonus = if stats.completed { 1.0 } else { 0.5 };
+    let loop_penalty = 1.0 - (stats.loop_warnings as f64 * 0.05).min(0.3);
+    (efficiency * completion_bonus * loop_penalty).clamp(0.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
+// Evolution log: JSONL record of each experiment
+// ---------------------------------------------------------------------------
+
+/// One entry in evolution.jsonl — records a single self-improvement attempt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionEntry {
+    /// ISO timestamp
+    pub ts: String,
+    /// Git commit hash (short)
+    pub commit: String,
+    /// What was tried
+    pub title: String,
+    /// Score before this change
+    pub score_before: f64,
+    /// Score after this change
+    pub score_after: f64,
+    /// "keep", "discard", or "crash"
+    pub status: String,
+    /// Run stats
+    pub stats: RunStats,
+}
+
+/// Default evolution log path.
+pub fn evolution_log_path(agent_home: &str) -> PathBuf {
+    PathBuf::from(agent_home).join("evolution.jsonl")
+}
+
+/// Append an entry to evolution.jsonl.
+pub fn log_evolution(agent_home: &str, entry: &EvolutionEntry) -> Result<(), String> {
+    let path = evolution_log_path(agent_home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
+    }
+    let line = serde_json::to_string(entry).map_err(|e| format!("serialize: {}", e))?;
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("open: {}", e))?;
+    writeln!(f, "{}", line).map_err(|e| format!("write: {}", e))?;
+    Ok(())
+}
+
+/// Load evolution history.
+pub fn load_evolution(agent_home: &str) -> Vec<EvolutionEntry> {
+    let path = evolution_log_path(agent_home);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Get the latest score (baseline for comparison).
+pub fn baseline_score(agent_home: &str) -> f64 {
+    load_evolution(agent_home)
+        .last()
+        .map(|e| e.score_after)
+        .unwrap_or(0.0)
+}
+
+/// Count how many "keep" vs "discard" in history.
+pub fn evolution_summary(agent_home: &str) -> (usize, usize, usize) {
+    let entries = load_evolution(agent_home);
+    let keep = entries.iter().filter(|e| e.status == "keep").count();
+    let discard = entries.iter().filter(|e| e.status == "discard").count();
+    let crash = entries.iter().filter(|e| e.status == "crash").count();
+    (keep, discard, crash)
+}
+
+// ---------------------------------------------------------------------------
+// Improvements
+// ---------------------------------------------------------------------------
 
 /// A proposed self-improvement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,5 +399,180 @@ mod tests {
         let prompt = evolution_prompt(&stats).unwrap();
         assert!(prompt.contains("Self-Evolution"));
         assert!(prompt.contains("RESTART_AGENT"));
+    }
+
+    // --- Score tests ---
+
+    #[test]
+    fn score_perfect_run() {
+        let stats = RunStats {
+            steps: 5,
+            successful_calls: 5,
+            completed: true,
+            ..Default::default()
+        };
+        let s = score(&stats);
+        assert!(s > 0.9, "perfect run score should be >0.9, got {}", s);
+    }
+
+    #[test]
+    fn score_zero_steps() {
+        assert_eq!(score(&RunStats::default()), 0.0);
+    }
+
+    #[test]
+    fn score_incomplete_penalized() {
+        let complete = RunStats {
+            steps: 10,
+            successful_calls: 8,
+            completed: true,
+            ..Default::default()
+        };
+        let incomplete = RunStats {
+            steps: 10,
+            successful_calls: 8,
+            completed: false,
+            ..Default::default()
+        };
+        assert!(score(&complete) > score(&incomplete));
+    }
+
+    #[test]
+    fn score_loops_penalized() {
+        let clean = RunStats {
+            steps: 10,
+            successful_calls: 8,
+            completed: true,
+            ..Default::default()
+        };
+        let loopy = RunStats {
+            steps: 10,
+            successful_calls: 8,
+            completed: true,
+            loop_warnings: 5,
+            ..Default::default()
+        };
+        assert!(score(&clean) > score(&loopy));
+    }
+
+    #[test]
+    fn score_clamped_to_01() {
+        let stats = RunStats {
+            steps: 1,
+            successful_calls: 100, // impossible but tests clamping
+            completed: true,
+            ..Default::default()
+        };
+        assert!(score(&stats) <= 1.0);
+    }
+
+    // --- JSONL tests ---
+
+    #[test]
+    fn log_and_load_evolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+
+        let entry = EvolutionEntry {
+            ts: "2026-03-14T12:00:00Z".into(),
+            commit: "abc1234".into(),
+            title: "test improvement".into(),
+            score_before: 0.5,
+            score_after: 0.7,
+            status: "keep".into(),
+            stats: RunStats {
+                steps: 10,
+                successful_calls: 8,
+                completed: true,
+                ..Default::default()
+            },
+        };
+
+        log_evolution(home, &entry).unwrap();
+        log_evolution(home, &entry).unwrap();
+
+        let history = load_evolution(home);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].title, "test improvement");
+        assert_eq!(history[0].score_after, 0.7);
+    }
+
+    #[test]
+    fn baseline_score_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(baseline_score(dir.path().to_str().unwrap()), 0.0);
+    }
+
+    #[test]
+    fn baseline_score_from_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+
+        log_evolution(
+            home,
+            &EvolutionEntry {
+                ts: "t1".into(),
+                commit: "a".into(),
+                title: "first".into(),
+                score_before: 0.0,
+                score_after: 0.5,
+                status: "keep".into(),
+                stats: Default::default(),
+            },
+        )
+        .unwrap();
+        log_evolution(
+            home,
+            &EvolutionEntry {
+                ts: "t2".into(),
+                commit: "b".into(),
+                title: "second".into(),
+                score_before: 0.5,
+                score_after: 0.8,
+                status: "keep".into(),
+                stats: Default::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(baseline_score(home), 0.8);
+    }
+
+    #[test]
+    fn evolution_summary_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+        let base = EvolutionEntry {
+            ts: "t".into(),
+            commit: "x".into(),
+            title: "x".into(),
+            score_before: 0.0,
+            score_after: 0.0,
+            status: "keep".into(),
+            stats: Default::default(),
+        };
+        log_evolution(home, &base).unwrap();
+        log_evolution(
+            home,
+            &EvolutionEntry {
+                status: "discard".into(),
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        log_evolution(
+            home,
+            &EvolutionEntry {
+                status: "crash".into(),
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        log_evolution(home, &base).unwrap();
+
+        let (keep, discard, crash) = evolution_summary(home);
+        assert_eq!(keep, 2);
+        assert_eq!(discard, 1);
+        assert_eq!(crash, 1);
     }
 }

@@ -1510,11 +1510,52 @@ async fn main() -> Result<()> {
             eprintln!("Agent error: {}", e);
         }
 
+        // Log run to evolution.jsonl
+        let run_score = sgr_agent::evolution::score(&run_stats);
+        let baseline = sgr_agent::evolution::baseline_score(".rust-code");
+        let git_hash = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "unknown".into());
+        let status = if run_score >= baseline {
+            "keep"
+        } else {
+            "discard"
+        };
+        let entry = sgr_agent::evolution::EvolutionEntry {
+            ts: {
+                let d = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                format!("{}", d.as_secs())
+            },
+            commit: git_hash,
+            title: agent
+                .session()
+                .messages()
+                .iter()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.chars().take(80).collect::<String>())
+                .unwrap_or_else(|| "headless".into()),
+            score_before: baseline,
+            score_after: run_score,
+            status: status.into(),
+            stats: run_stats.clone(),
+        };
+        let _ = sgr_agent::evolution::log_evolution(".rust-code", &entry);
+        eprintln!(
+            "\x1b[2m[SCORE] {:.3} (baseline {:.3}) → {}\x1b[0m",
+            run_score, baseline, status
+        );
+
         // Self-evolution: evaluate run and show improvement proposals
         let improvements = sgr_agent::evolution::evaluate(&run_stats);
         if !improvements.is_empty() {
             eprintln!(
-                "\n\x1b[33m[EVOLUTION] {} improvement(s) proposed after run ({} steps, {} errors, {} loops):\x1b[0m",
+                "\n\x1b[33m[EVOLUTION] {} improvement(s) proposed ({} steps, {} errors, {} loops):\x1b[0m",
                 improvements.len(),
                 run_stats.steps,
                 run_stats.tool_errors,
