@@ -86,12 +86,28 @@ impl Message {
         }
     }
     /// Tool result with inline images (for VLM — Gemini sees the images).
-    pub fn tool_with_images(call_id: impl Into<String>, content: impl Into<String>, images: Vec<ImagePart>) -> Self {
-        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(call_id.into()), tool_calls: vec![], images }
+    pub fn tool_with_images(
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+        images: Vec<ImagePart>,
+    ) -> Self {
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some(call_id.into()),
+            tool_calls: vec![],
+            images,
+        }
     }
     /// User message with inline images.
     pub fn user_with_images(content: impl Into<String>, images: Vec<ImagePart>) -> Self {
-        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: vec![], images }
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            images,
+        }
     }
 }
 

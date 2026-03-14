@@ -449,7 +449,8 @@ impl GeminiClient {
                         // Gemini requires ALL functionResponses for one turn in a SINGLE
                         // "function" content entry. Collect consecutive Tool messages.
                         let mut parts = Vec::new();
-                        let mut pending_images: Vec<(&str, &[crate::types::ImagePart])> = Vec::new();
+                        let mut pending_images: Vec<(&str, &[crate::types::ImagePart])> =
+                            Vec::new();
                         while i < messages.len() && messages[i].role == Role::Tool {
                             let tool_msg = &messages[i];
                             let call_id = tool_msg.tool_call_id.as_deref().unwrap_or("unknown");
@@ -478,7 +479,9 @@ impl GeminiClient {
                         // Gemini doesn't support inlineData inside functionResponse,
                         // so attach images as a follow-up user message.
                         for (call_id, images) in pending_images {
-                            let mut img_parts: Vec<Value> = vec![json!({"text": format!("[Images from {} tool result]", call_id)})];
+                            let mut img_parts: Vec<Value> = vec![
+                                json!({"text": format!("[Images from {} tool result]", call_id)}),
+                            ];
                             for img in images {
                                 img_parts.push(json!({
                                     "inlineData": {
@@ -492,7 +495,8 @@ impl GeminiClient {
                     } else {
                         // Text mode — convert tool results to user messages
                         let call_id = msg.tool_call_id.as_deref().unwrap_or("tool");
-                        let mut parts: Vec<Value> = vec![json!({"text": format!("[{}] {}", call_id, msg.content)})];
+                        let mut parts: Vec<Value> =
+                            vec![json!({"text": format!("[{}] {}", call_id, msg.content)})];
                         for img in &msg.images {
                             parts.push(json!({
                                 "inlineData": {

@@ -709,9 +709,17 @@ mod tests {
             .unwrap()
             .as_secs();
         let jsonl = [
-            format!(r#"{{"category":"decision","section":"Build System","content":"Use cargo, not make","context":"tested both","confidence":"confirmed","created":{now}}}"#),
-            format!(r#"{{"category":"pattern","section":"Build System","content":"Always run check before test","context":null,"confidence":"tentative","created":{}}}"#, now + 100),
-            format!(r#"{{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":{}}}"#, now + 200),
+            format!(
+                r#"{{"category":"decision","section":"Build System","content":"Use cargo, not make","context":"tested both","confidence":"confirmed","created":{now}}}"#
+            ),
+            format!(
+                r#"{{"category":"pattern","section":"Build System","content":"Always run check before test","context":null,"confidence":"tentative","created":{}}}"#,
+                now + 100
+            ),
+            format!(
+                r#"{{"category":"preference","section":"Style","content":"User prefers short commits","context":"observed","confidence":"confirmed","created":{}}}"#,
+                now + 200
+            ),
         ];
         std::fs::write(dir.join("MEMORY.jsonl"), jsonl.join("\n") + "\n").unwrap();
 

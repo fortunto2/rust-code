@@ -62,14 +62,21 @@ pub fn build_url(
     Ok(url)
 }
 
-/// Simple percent-encoding for query values.
+/// Percent-encoding for query values according to RFC 3986.
 fn urlencod(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('+', "%2B")
-        .replace('#', "%23")
+    let mut encoded = String::with_capacity(s.len() + s.len() / 2);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                write!(encoded, "%{:02X}", b).unwrap();
+            }
+        }
+    }
+    encoded
 }
 
 /// Execute an API call. Returns the response body as string.
@@ -250,6 +257,11 @@ mod tests {
     fn urlencod_special_chars() {
         assert_eq!(urlencod("hello world"), "hello%20world");
         assert_eq!(urlencod("a&b=c"), "a%26b%3Dc");
+        assert_eq!(urlencod("foo+bar"), "foo%2Bbar");
+        assert_eq!(urlencod("path/to/file"), "path%2Fto%2Ffile");
+        assert_eq!(urlencod("user@host.com"), "user%40host.com");
+        assert_eq!(urlencod("~-_."), "~-_.");
+        assert_eq!(urlencod("🚀"), "%F0%9F%9A%80");
     }
 
     #[test]
