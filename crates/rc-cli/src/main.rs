@@ -1682,10 +1682,12 @@ async fn main() -> Result<()> {
                     break 'outer;
                 }
 
-                // For evolve mode: inject improvement prompt for next iteration
+                // For evolve mode: analyze history + current run, inject improvement prompt
                 if state.options.mode == sgr_agent::evolution::LoopMode::Evolve {
-                    if let Some(evolve_prompt) = sgr_agent::evolution::evolution_prompt(&run_stats)
-                    {
+                    if let Some(evolve_prompt) = sgr_agent::evolution::evolution_prompt_with_history(
+                        &run_stats,
+                        ".rust-code",
+                    ) {
                         current_prompt = evolve_prompt;
                     } else {
                         eprintln!(

@@ -285,6 +285,214 @@ pub fn evolution_prompt(stats: &RunStats) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Session history analysis: learn from past runs
+// ---------------------------------------------------------------------------
+
+/// Pattern found across multiple sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionPattern {
+    /// What pattern was found
+    pub pattern: String,
+    /// How many times it appeared
+    pub count: usize,
+    /// Example occurrences (first 3)
+    pub examples: Vec<String>,
+}
+
+/// Analyze recent session logs for recurring issues.
+/// Reads last `max_sessions` JSONL files from agent home dir.
+pub fn analyze_sessions(agent_home: &str, max_sessions: usize) -> Vec<SessionPattern> {
+    let dir = PathBuf::from(agent_home);
+    let mut session_files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension().map(|e| e == "jsonl").unwrap_or(false)
+                        && p.file_name()
+                            .map(|n| n.to_string_lossy().starts_with("session_"))
+                            .unwrap_or(false)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    session_files.sort();
+    session_files.reverse(); // newest first
+    session_files.truncate(max_sessions);
+
+    // Count patterns across all sessions
+    let mut patch_errors: Vec<String> = Vec::new();
+    let mut loop_warnings: usize = 0;
+    let mut tool_errors: Vec<String> = Vec::new();
+    let mut reread_warnings: usize = 0;
+    let mut total_messages: usize = 0;
+
+    for path in &session_files {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            let msg: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+
+            if role == "tool" || role == "assistant" {
+                total_messages += 1;
+
+                // Patch failures
+                if text.contains("apply_patch error") || text.contains("Commit FAILED") {
+                    let snippet: String = text.lines().take(2).collect::<Vec<_>>().join(" ");
+                    patch_errors.push(truncate_string(&snippet, 100));
+                }
+
+                // Loop warnings
+                if text.contains("Loop detected") || text.contains("LOOP WARNING") {
+                    loop_warnings += 1;
+                }
+
+                // Tool errors
+                if text.contains("FAILED") || text.starts_with("Error") {
+                    let snippet: String = text.lines().next().unwrap_or("").to_string();
+                    tool_errors.push(truncate_string(&snippet, 100));
+                }
+
+                // Re-read warnings
+                if text.contains("RE-READ") || text.contains("already read") {
+                    reread_warnings += 1;
+                }
+            }
+        }
+    }
+
+    let mut patterns = Vec::new();
+
+    if patch_errors.len() > 2 {
+        patterns.push(SessionPattern {
+            pattern: format!(
+                "apply_patch failures ({} across {} sessions)",
+                patch_errors.len(),
+                session_files.len()
+            ),
+            count: patch_errors.len(),
+            examples: patch_errors.into_iter().take(3).collect(),
+        });
+    }
+
+    if loop_warnings > 3 {
+        patterns.push(SessionPattern {
+            pattern: format!(
+                "Loop warnings ({} across {} sessions)",
+                loop_warnings,
+                session_files.len()
+            ),
+            count: loop_warnings,
+            examples: vec![],
+        });
+    }
+
+    if tool_errors.len() > 5 {
+        // Group by first word to find most common error type
+        let mut error_types: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for err in &tool_errors {
+            let key = err.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+            *error_types.entry(key).or_insert(0) += 1;
+        }
+        let mut sorted: Vec<_> = error_types.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+        for (error_type, count) in sorted.into_iter().take(3) {
+            if count > 2 {
+                patterns.push(SessionPattern {
+                    pattern: format!("Recurring error: '{}' ({}x)", error_type, count),
+                    count,
+                    examples: tool_errors
+                        .iter()
+                        .filter(|e| e.contains(&error_type.split_whitespace().next().unwrap_or("")))
+                        .take(2)
+                        .cloned()
+                        .collect(),
+                });
+            }
+        }
+    }
+
+    if reread_warnings > 3 {
+        patterns.push(SessionPattern {
+            pattern: format!(
+                "File re-reads ({} — agent wastes tokens re-reading)",
+                reread_warnings
+            ),
+            count: reread_warnings,
+            examples: vec![],
+        });
+    }
+
+    patterns.sort_by(|a, b| b.count.cmp(&a.count));
+    patterns
+}
+
+fn truncate_string(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!(
+            "{}...",
+            &s[..s
+                .char_indices()
+                .take(max)
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0)]
+        )
+    }
+}
+
+/// Build an evolution prompt that includes session history analysis.
+pub fn evolution_prompt_with_history(stats: &RunStats, agent_home: &str) -> Option<String> {
+    let improvements = evaluate(stats);
+    let patterns = analyze_sessions(agent_home, 10);
+
+    if improvements.is_empty() && patterns.is_empty() {
+        return None;
+    }
+
+    let mut prompt = format!(
+        "## Self-Evolution Task\n\n\
+         Your last run stats: {} steps, {} errors, {} loops, completed={}\n\n",
+        stats.steps, stats.tool_errors, stats.loop_warnings, stats.completed,
+    );
+
+    if !patterns.is_empty() {
+        prompt.push_str("### Recurring Issues (from last 10 sessions)\n\n");
+        for p in &patterns {
+            prompt.push_str(&format!("- **{}**\n", p.pattern));
+            for ex in &p.examples {
+                prompt.push_str(&format!("  - `{}`\n", ex));
+            }
+        }
+        prompt.push('\n');
+    }
+
+    if !improvements.is_empty() {
+        prompt.push_str(&format_improvements(&improvements));
+    }
+
+    prompt.push_str(
+        "\nPick the highest-priority issue. Read the target file(s), \
+         make the minimal change, write tests, run `make check`, commit, \
+         and finish with RESTART_AGENT if you modified agent code.",
+    );
+
+    Some(prompt)
+}
+
+// ---------------------------------------------------------------------------
 // Loop engine: BigHead-style autonomous loop (compatible with solo-dev.sh)
 // ---------------------------------------------------------------------------
 
@@ -633,6 +841,76 @@ mod tests {
         let prompt = evolution_prompt(&stats).unwrap();
         assert!(prompt.contains("Self-Evolution"));
         assert!(prompt.contains("RESTART_AGENT"));
+    }
+
+    // --- Session analysis ---
+
+    #[test]
+    fn analyze_sessions_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let patterns = analyze_sessions(dir.path().to_str().unwrap(), 10);
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
+    fn analyze_sessions_finds_patch_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+        // Write fake session with patch errors
+        let session = vec![
+            r#"{"role":"user","content":"fix bug"}"#,
+            r#"{"role":"tool","content":"apply_patch error: failed to find match"}"#,
+            r#"{"role":"tool","content":"apply_patch error: invalid hunk"}"#,
+            r#"{"role":"tool","content":"apply_patch error: context mismatch"}"#,
+            r#"{"role":"tool","content":"done"}"#,
+        ];
+        std::fs::write(dir.path().join("session_1000.jsonl"), session.join("\n")).unwrap();
+
+        let patterns = analyze_sessions(home, 10);
+        assert!(
+            patterns.iter().any(|p| p.pattern.contains("apply_patch")),
+            "should find patch errors, got: {:?}",
+            patterns
+        );
+    }
+
+    #[test]
+    fn analyze_sessions_finds_loops() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+        let mut lines = vec![r#"{"role":"user","content":"task"}"#.to_string()];
+        for _ in 0..5 {
+            lines.push(
+                r#"{"role":"tool","content":"LOOP WARNING: Loop detected — 5 repeats"}"#
+                    .to_string(),
+            );
+        }
+        std::fs::write(dir.path().join("session_2000.jsonl"), lines.join("\n")).unwrap();
+
+        let patterns = analyze_sessions(home, 10);
+        assert!(patterns.iter().any(|p| p.pattern.contains("Loop")));
+    }
+
+    #[test]
+    fn evolution_prompt_with_history_includes_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_str().unwrap();
+        let session = vec![
+            r#"{"role":"tool","content":"apply_patch error: x"}"#,
+            r#"{"role":"tool","content":"apply_patch error: y"}"#,
+            r#"{"role":"tool","content":"apply_patch error: z"}"#,
+        ];
+        std::fs::write(dir.path().join("session_3000.jsonl"), session.join("\n")).unwrap();
+
+        let stats = RunStats {
+            steps: 10,
+            tool_errors: 5,
+            completed: false,
+            ..Default::default()
+        };
+        let prompt = evolution_prompt_with_history(&stats, home).unwrap();
+        assert!(prompt.contains("Recurring Issues"));
+        assert!(prompt.contains("apply_patch"));
     }
 
     // --- Solo signals ---
