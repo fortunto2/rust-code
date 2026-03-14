@@ -131,6 +131,14 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
 - api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name: github/stripe/cloudflare/etc), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2" + body?), "list". Load → search → call.
 
+## Self-Update
+If you patch your own source code and need to test the fix:
+1. Apply patch + run tests to verify
+2. `git_add` + `git_commit` — ALWAYS commit before restart
+3. `bash: cargo build --release -p rust-code` — build new binary
+4. `finish: "RESTART_AGENT — rebuilt with fix for X"` — process auto-restarts with --resume
+The session continues in the new binary. ALWAYS commit changes before restart.
+
 ## STAR Methodology
 - **S (situation)**: Assess current state. What phase? What's done? What's blocking?
 - **T (task)**: List 1-5 remaining steps. First item = what you do NOW.
@@ -269,6 +277,10 @@ impl Agent {
     }
 
     /// Get mutable reference to session (for run_loop / TUI).
+    pub fn session(&self) -> &Session<Msg> {
+        &self.session
+    }
+
     pub fn session_mut(&mut self) -> &mut Session<Msg> {
         &mut self.session
     }

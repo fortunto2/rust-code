@@ -1492,6 +1492,25 @@ async fn main() -> Result<()> {
         if let Err(e) = result {
             eprintln!("Agent error: {}", e);
         }
+
+        // Self-restart: if agent's last message requests restart, exec new binary.
+        // Agent triggers this by including "RESTART_AGENT" in finish summary
+        // after patching its own code and rebuilding.
+        let last_msg = agent
+            .session()
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool" || m.role == "assistant")
+            .map(|m| m.content.as_str())
+            .unwrap_or("");
+        if last_msg.contains("RESTART_AGENT") {
+            eprintln!("\n[RESTART] Agent requested self-restart, resuming with new binary...");
+            let exe = std::env::current_exe().unwrap_or_else(|_| "rust-code".into());
+            use std::os::unix::process::CommandExt;
+            let err = std::process::Command::new(&exe).arg("--resume").exec(); // replaces current process (unix exec)
+            eprintln!("exec failed: {}", err);
+        }
     } else {
         // Interactive TUI mode
         let mut terminal = tui::init()?;
