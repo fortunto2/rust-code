@@ -1459,6 +1459,33 @@ async fn main() -> Result<()> {
         };
         let mut current_prompt = prompt.clone();
 
+        // Inject skill for loop/evolve mode
+        if is_loop_mode {
+            let skill_name = if args.evolve {
+                "self-evolve"
+            } else {
+                "bighead"
+            };
+            // Load bundled skill from skills/ dir
+            let skill_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../skills")
+                .join(skill_name)
+                .join("SKILL.md");
+            if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                agent.session_mut().push(
+                    <crate::agent::Role as sgr_agent::MessageRole>::system(),
+                    format!("## Active Skill: {}\n\n{}", skill_name, skill_content),
+                );
+                eprintln!("[SKILL] Loaded: {}", skill_name);
+            } else {
+                eprintln!(
+                    "[WARN] Skill {} not found at {}",
+                    skill_name,
+                    skill_path.display()
+                );
+            }
+        }
+
         if is_loop_mode {
             eprintln!(
                 "\n\x1b[36m[LOOP] Starting autonomous loop (max {} iterations, {:.1}h timeout)\x1b[0m",
@@ -1666,16 +1693,17 @@ async fn main() -> Result<()> {
                     break 'outer;
                 }
 
-                // Check for <solo:done/> signal
-                let last_output = agent
+                // Check for <solo:done/> signal in any recent message
+                let recent_text: String = agent
                     .session()
                     .messages()
                     .iter()
                     .rev()
-                    .find(|m| m.role == "tool" || m.role == "assistant")
+                    .take(5)
                     .map(|m| m.content.as_str())
-                    .unwrap_or("");
-                let signal = sgr_agent::evolution::parse_signal(last_output);
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let signal = sgr_agent::evolution::parse_signal(&recent_text);
                 if signal == sgr_agent::evolution::SoloSignal::Done {
                     eprintln!("\n\x1b[32m[LOOP] <solo:done/> — task complete\x1b[0m");
                     eprintln!("\x1b[2m{}\x1b[0m", state.summary());
