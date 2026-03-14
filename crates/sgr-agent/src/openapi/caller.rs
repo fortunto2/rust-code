@@ -251,4 +251,15 @@ mod tests {
         assert_eq!(urlencod("hello world"), "hello%20world");
         assert_eq!(urlencod("a&b=c"), "a%26b%3Dc");
     }
+
+    #[test]
+    fn test_simple_base64() {
+        assert_eq!(simple_base64(b""), "");
+        assert_eq!(simple_base64(b"f"), "Zg==");
+        assert_eq!(simple_base64(b"fo"), "Zm8=");
+        assert_eq!(simple_base64(b"foo"), "Zm9v");
+        assert_eq!(simple_base64(b"foob"), "Zm9vYg==");
+        assert_eq!(simple_base64(b"fooba"), "Zm9vYmE=");
+        assert_eq!(simple_base64(b"foobar"), "Zm9vYmFy");
+    }
 }
