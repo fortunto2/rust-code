@@ -297,25 +297,20 @@ impl Agent {
         &mut self.session
     }
 
-    /// Build message history for LLM call as (role, content) pairs.
+    /// Build message history for LLM call (preserves images for multimodal).
     ///
     /// Injects ephemeral project map after system messages (not stored in session).
     /// - First call: full repomap (all top files with symbols)
     /// - Subsequent calls: compact summary + detailed symbols for changed files only
-    fn build_history(&mut self) -> Vec<(String, String)> {
+    fn build_history(&mut self) -> Vec<Msg> {
         self.step_count += 1;
 
-        let msgs: Vec<_> = self
-            .session
-            .messages()
-            .iter()
-            .map(|m| (m.role.clone(), m.content.clone()))
-            .collect();
+        let msgs: Vec<Msg> = self.session.messages().to_vec();
 
         // Find where system messages end to insert repomap there
         let insert_at = msgs
             .iter()
-            .rposition(|(role, _)| role == "system")
+            .rposition(|m| m.role == "system")
             .map(|i| i + 1)
             .unwrap_or(0);
 
@@ -338,7 +333,7 @@ impl Agent {
 
         let mut result = Vec::with_capacity(msgs.len() + 1);
         result.extend_from_slice(&msgs[..insert_at]);
-        result.push(("system".into(), map_content));
+        result.push(Msg::new(Role::system(), map_content));
         result.extend_from_slice(&msgs[insert_at..]);
         result
     }
@@ -369,14 +364,14 @@ impl Agent {
         self.session.trim();
         let history = self.build_history();
 
-        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
+        let input_chars: usize = history.iter().map(|m| m.content.len()).sum();
         self.last_input_chars = input_chars;
 
         let provider = self.provider.as_ref().ok_or_else(|| {
             anyhow::anyhow!("No LLM provider configured. Use --sgr or set GEMINI_API_KEY.")
         })?;
 
-        let mut sgr_msgs = backend::to_sgr_messages(&history);
+        let mut sgr_msgs = backend::msgs_to_sgr_messages(&history);
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
 
         provider.call_flexible(&sgr_msgs).await
