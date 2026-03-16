@@ -50,6 +50,8 @@ impl MessageRole for Role {
 pub struct Msg {
     pub role: String,
     pub content: String,
+    /// Inline images (base64 + mime_type) for multimodal input.
+    pub images: Vec<sgr_agent::ImagePart>,
 }
 
 impl AgentMessage for Msg {
@@ -58,6 +60,7 @@ impl AgentMessage for Msg {
         Self {
             role: role.0,
             content,
+            images: vec![],
         }
     }
     fn role(&self) -> &Role {
@@ -344,6 +347,17 @@ impl Agent {
         self.session.push(Role::user(), content.into());
     }
 
+    /// Add a user message with inline images (for multimodal input).
+    pub fn add_user_message_with_images(
+        &mut self,
+        content: impl Into<String>,
+        images: Vec<sgr_agent::ImagePart>,
+    ) {
+        let mut msg = Msg::new(Role::user(), content.into());
+        msg.images = images;
+        self.session.push_msg(msg);
+    }
+
     pub fn add_assistant_message(&mut self, content: impl Into<String>) {
         self.session.push(Role::assistant(), content.into());
     }
@@ -388,12 +402,16 @@ impl Agent {
                     "tool" => sgr_agent::types::Role::Tool,
                     _ => sgr_agent::types::Role::User,
                 };
-                match role {
+                let msg = match role {
                     sgr_agent::types::Role::System => sgr_agent::Message::system(&m.content),
+                    sgr_agent::types::Role::User if !m.images.is_empty() => {
+                        sgr_agent::Message::user_with_images(&m.content, m.images.clone())
+                    }
                     sgr_agent::types::Role::User => sgr_agent::Message::user(&m.content),
                     sgr_agent::types::Role::Assistant => sgr_agent::Message::assistant(&m.content),
                     sgr_agent::types::Role::Tool => sgr_agent::Message::tool("", &m.content),
-                }
+                };
+                msg
             })
             .collect();
 
@@ -426,6 +444,7 @@ impl Agent {
                             sgr_agent::types::Role::User => "user".into(),
                         },
                         content: m.content.clone(),
+                        images: m.images.clone(),
                     })
                     .collect();
                 let session_msgs = self.session.messages_mut();
@@ -1442,18 +1461,14 @@ impl SgrAgent for Agent {
     type Error = anyhow::Error;
 
     async fn decide(&self, messages: &[Msg]) -> Result<StepDecision<Action>> {
-        let history: Vec<(String, String)> = messages
-            .iter()
-            .map(|m| (m.role.clone(), m.content.clone()))
-            .collect();
-        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
+        let input_chars: usize = messages.iter().map(|m| m.content.len()).sum();
 
         let provider = self
             .provider
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
-        let mut sgr_msgs = backend::to_sgr_messages(&history);
+        let mut sgr_msgs = backend::msgs_to_sgr_messages(messages);
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
         let step = provider.call_flexible(&sgr_msgs).await?;
 
@@ -1620,16 +1635,13 @@ impl SgrAgentStream for Agent {
     where
         T: FnMut(&str) + Send,
     {
-        let history: Vec<(String, String)> = messages
-            .iter()
-            .map(|m| (m.role.clone(), m.content.clone()))
-            .collect();
-        let input_chars: usize = history.iter().map(|(_, c)| c.len()).sum();
+        let sgr_msgs_base = backend::msgs_to_sgr_messages(messages);
+        let input_chars: usize = messages.iter().map(|m| m.content.len()).sum();
         let provider = self.provider.clone();
         async move {
             let provider = provider.ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
-            let mut sgr_msgs = backend::to_sgr_messages(&history);
+            let mut sgr_msgs = sgr_msgs_base;
             sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
             let step = provider.call_flexible(&sgr_msgs).await?;
             // Emit situation as single token (no streaming yet)

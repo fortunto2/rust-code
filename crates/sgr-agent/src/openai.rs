@@ -259,9 +259,29 @@ impl OpenAIClient {
                     Role::Assistant => "assistant",
                     Role::Tool => "tool",
                 };
+                // Multimodal: if message has images, use content array format
+                let content = if !msg.images.is_empty()
+                    && (msg.role == Role::User || msg.role == Role::System)
+                {
+                    let mut parts: Vec<Value> = vec![json!({
+                        "type": "text",
+                        "text": msg.content,
+                    })];
+                    for img in &msg.images {
+                        parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", img.mime_type, img.data),
+                            }
+                        }));
+                    }
+                    json!(parts)
+                } else {
+                    json!(msg.content)
+                };
                 let mut m = json!({
                     "role": role,
-                    "content": msg.content,
+                    "content": content,
                 });
                 if let Some(id) = &msg.tool_call_id {
                     m["tool_call_id"] = json!(id);

@@ -68,6 +68,11 @@ struct Args {
     #[arg(long)]
     evolve: bool,
 
+    /// Attach image file(s) to the prompt (for multimodal input).
+    /// Supported: PNG, JPEG, GIF, WebP. Can be repeated: --image a.png --image b.jpg
+    #[arg(long, num_args = 1)]
+    image: Vec<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -1527,6 +1532,50 @@ async fn main() -> Result<()> {
             eprintln!("\x1b[2mControl: echo stop > .rust-code/loop-control\x1b[0m\n");
         }
 
+        // Load images from --image flags
+        let attached_images: Vec<sgr_agent::ImagePart> = args
+            .image
+            .iter()
+            .filter_map(|path| {
+                let data = match std::fs::read(path) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("[WARN] Cannot read image {}: {}", path, e);
+                        return None;
+                    }
+                };
+                let mime = match path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .as_str()
+                {
+                    "png" => "image/png",
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "gif" => "image/gif",
+                    "webp" => "image/webp",
+                    "svg" => "image/svg+xml",
+                    ext => {
+                        eprintln!("[WARN] Unknown image format: .{}", ext);
+                        return None;
+                    }
+                };
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                eprintln!(
+                    "[IMAGE] Attached: {} ({}, {}KB)",
+                    path,
+                    mime,
+                    data.len() / 1024
+                );
+                Some(sgr_agent::ImagePart {
+                    data: b64,
+                    mime_type: mime.to_string(),
+                })
+            })
+            .collect();
+
         // --- Main loop (runs once for normal mode, N times for --loop/--evolve) ---
         'outer: loop {
             // Check loop state
@@ -1543,7 +1592,11 @@ async fn main() -> Result<()> {
                 );
             }
 
-            agent.add_user_message(&current_prompt);
+            if !attached_images.is_empty() {
+                agent.add_user_message_with_images(&current_prompt, attached_images.clone());
+            } else {
+                agent.add_user_message(&current_prompt);
+            }
 
             let config = LoopConfig {
                 max_steps: 50,

@@ -37,3 +37,6 @@ sgr-agent-tui = { version = "0.4.0", path = "../sgr-agent-tui" }
 schemars = "0.8"
 dirs = "5"
 toml = "0.8"
+base64 = "0.22"
+arboard = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -1120,6 +1120,28 @@ pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> 
         .collect()
 }
 
+/// Convert Msg structs to sgr-agent Messages (preserves images).
+pub fn msgs_to_sgr_messages(messages: &[crate::agent::Msg]) -> Vec<sgr_agent::Message> {
+    messages
+        .iter()
+        .map(|m| {
+            let r = match m.role.as_str() {
+                "system" => sgr_agent::Role::System,
+                "assistant" => sgr_agent::Role::Assistant,
+                "tool" => sgr_agent::Role::Tool,
+                _ => sgr_agent::Role::User,
+            };
+            sgr_agent::Message {
+                role: r,
+                content: m.content.clone(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                images: m.images.clone(),
+            }
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

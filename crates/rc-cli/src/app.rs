@@ -779,6 +779,8 @@ pub struct App<'a> {
     pub command_palette: CommandPalette,
     /// Temporary output from slash commands (shown near input, not in chat).
     pub command_output: Option<String>,
+    /// Pending images to attach to the next message (from clipboard paste).
+    pub pending_images: Vec<sgr_agent::ImagePart>,
 }
 
 #[derive(Clone, Copy)]
@@ -947,6 +949,7 @@ impl<'a> App<'a> {
             provider_override: None,
             command_palette: CommandPalette::new(&Self::SLASH_COMMANDS),
             command_output: None,
+            pending_images: vec![],
         }
     }
 
@@ -4410,6 +4413,51 @@ impl<'a> App<'a> {
                 self.messages.push("[SYS] Git status refreshed".to_string());
                 self.chat_pin_bottom();
             }
+            KeyCode::Char('v') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Paste image from clipboard
+                match arboard::Clipboard::new() {
+                    Ok(mut clipboard) => {
+                        if let Ok(img) = clipboard.get_image() {
+                            // Convert RGBA to PNG
+                            let mut png_buf = Vec::new();
+                            if let Ok(()) = {
+                                use std::io::Cursor;
+                                let mut cursor = Cursor::new(&mut png_buf);
+                                let encoder = image::codecs::png::PngEncoder::new(&mut cursor);
+                                use image::ImageEncoder;
+                                encoder.write_image(
+                                    &img.bytes,
+                                    img.width as u32,
+                                    img.height as u32,
+                                    image::ExtendedColorType::Rgba8,
+                                )
+                            } {
+                                use base64::Engine;
+                                let b64 =
+                                    base64::engine::general_purpose::STANDARD.encode(&png_buf);
+                                self.pending_images.push(sgr_agent::ImagePart {
+                                    data: b64,
+                                    mime_type: "image/png".to_string(),
+                                });
+                                self.messages.push(format!(
+                                    "[SYS] Image pasted from clipboard ({}KB, {} total)",
+                                    png_buf.len() / 1024,
+                                    self.pending_images.len()
+                                ));
+                                self.chat_pin_bottom();
+                            }
+                        } else if let Ok(text) = clipboard.get_text() {
+                            // Fallback: paste text normally
+                            self.textarea.insert_str(&text);
+                        }
+                    }
+                    Err(_) => {
+                        self.messages
+                            .push("[WARN] Cannot access clipboard".to_string());
+                        self.chat_pin_bottom();
+                    }
+                }
+            }
             KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.mode = AppMode::SessionSearch;
                 self.session_state.input = TextArea::default();
@@ -4612,13 +4660,18 @@ impl<'a> App<'a> {
                     let agent_tx = tx.clone();
                     let prompt_clone = self.decorate_prompt_for_mode(&prompt);
                     let pending_notes = self.pending_notes.clone();
+                    let images = std::mem::take(&mut self.pending_images);
 
                     // Sync intent before agent loop
                     let intent = self.interaction_mode.to_intent();
                     self.agent_task = Some(tokio::spawn(async move {
                         let mut locked_agent = agent.lock().await;
                         locked_agent.intent = intent;
-                        locked_agent.add_user_message(prompt_clone);
+                        if !images.is_empty() {
+                            locked_agent.add_user_message_with_images(prompt_clone, images);
+                        } else {
+                            locked_agent.add_user_message(prompt_clone);
+                        }
 
                         let mut detector = LoopDetector::new(6);
 
@@ -4853,8 +4906,13 @@ impl<'a> App<'a> {
         if self.interaction_mode == InteractionMode::Bash {
             let cwd = self.bash_cwd.display();
             format!(" {cwd} $ (Enter run, ↑↓ history, Ctrl+R search, Shift+Tab mode) ")
+        } else if !self.pending_images.is_empty() {
+            format!(
+                " Message [{} img] (Enter send, Ctrl+V paste, Ctrl+P files, Ctrl+C quit) ",
+                self.pending_images.len()
+            )
         } else {
-            " Message (Enter send, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "
+            " Message (Enter send, Ctrl+V paste, Shift+Tab mode, Ctrl+P files, Ctrl+H history, Ctrl+C quit) "
                 .to_string()
         }
     }
