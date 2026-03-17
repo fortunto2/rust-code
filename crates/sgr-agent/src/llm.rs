@@ -11,8 +11,11 @@
 
 use crate::client::LlmClient;
 use crate::genai_client::GenaiClient;
+use crate::schema::response_schema_for;
 use crate::tool::ToolDef;
 use crate::types::{LlmConfig, Message, SgrError, ToolCall};
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// Provider-agnostic LLM client. Construct via `Llm::new(&LlmConfig)`.
@@ -44,6 +47,34 @@ impl Llm {
     /// Non-streaming text completion.
     pub async fn generate(&self, messages: &[Message]) -> Result<String, SgrError> {
         self.inner.complete(messages).await
+    }
+
+    /// Function calling with stateful session support (OpenAI Responses API).
+    /// Returns tool calls + response_id for use as `previous_response_id` in next call.
+    pub async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        self.inner
+            .tools_call_stateful(messages, tools, previous_response_id)
+            .await
+    }
+
+    /// Structured output — generates JSON schema from `T`, sends via native response_format,
+    /// parses result into `T`. Uses genai's JsonSpec (handles additionalProperties for OpenAI).
+    pub async fn structured<T: JsonSchema + DeserializeOwned>(
+        &self,
+        messages: &[Message],
+    ) -> Result<T, SgrError> {
+        let schema = response_schema_for::<T>();
+        let (parsed, _tool_calls, raw_text) = self.inner.structured_call(messages, &schema).await?;
+        match parsed {
+            Some(value) => serde_json::from_value::<T>(value)
+                .map_err(|e| SgrError::Schema(format!("Parse error: {e}\nRaw: {raw_text}"))),
+            None => Err(SgrError::EmptyResponse),
+        }
     }
 }
 

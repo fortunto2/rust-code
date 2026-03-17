@@ -176,6 +176,41 @@ fn strip_unsupported_gemini(value: &mut Value) {
     }
 }
 
+/// Make a JSON Schema compatible with OpenAI strict mode.
+///
+/// OpenAI `strict: true` requires:
+/// 1. `additionalProperties: false` on every object
+/// 2. All properties listed in `required` (optional fields use `"type": ["string", "null"]`)
+///
+/// See: https://developers.openai.com/api/docs/guides/structured-outputs
+pub fn make_openai_strict(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        let is_object = obj.get("type").and_then(|v| v.as_str()) == Some("object");
+        if is_object {
+            obj.insert("additionalProperties".into(), Value::Bool(false));
+            // All properties must be in required
+            if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+                let all_keys: Vec<Value> = props.keys().map(|k| Value::String(k.clone())).collect();
+                obj.insert("required".into(), Value::Array(all_keys));
+            }
+        }
+        // OpenAI strict mode: oneOf not supported, convert to anyOf
+        if let Some(one_of) = obj.remove("oneOf") {
+            obj.insert("anyOf".into(), one_of);
+        }
+        // Recurse
+        for key in obj.keys().cloned().collect::<Vec<_>>() {
+            if let Some(child) = obj.get_mut(&key) {
+                make_openai_strict(child);
+            }
+        }
+    } else if let Some(arr) = value.as_array_mut() {
+        for item in arr {
+            make_openai_strict(item);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -202,7 +202,9 @@ impl OpenAIClient {
 
     fn build_request<T: JsonSchema>(&self, messages: &[Message], tools: &[ToolDef]) -> Value {
         let msgs = self.messages_to_openai(messages);
-        let schema = response_schema_for::<T>();
+        let mut schema = response_schema_for::<T>();
+        // OpenAI strict mode: additionalProperties:false + all properties required
+        crate::schema::make_openai_strict(&mut schema);
 
         let mut body = json!({
             "model": self.config.model,

@@ -7,8 +7,8 @@ use crate::tool::ToolDef;
 use crate::types::{Message, Role, SgrError, ToolCall};
 use futures::StreamExt;
 use genai::chat::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponse, ChatStreamEvent, ContentPart,
-    MessageContent, Tool, ToolResponse,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponse, ChatResponseFormat, ChatStreamEvent,
+    ContentPart, JsonSpec, MessageContent, Tool, ToolResponse,
 };
 use serde_json::Value;
 
@@ -275,6 +275,30 @@ impl GenaiClient {
         }
         Ok(full_text)
     }
+
+    /// Function calling with stateful session support (OpenAI Responses API).
+    /// When `previous_response_id` is set, the server uses cached conversation state.
+    /// Always sets `store: true` so response_id can be used for future stateful calls.
+    pub async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        let mut req = self.build_request(messages);
+        let genai_tools: Vec<Tool> = tools.iter().map(to_genai_tool).collect();
+        req = req.with_tools(genai_tools);
+        // Always store for stateful sessions — enables response_id reuse
+        req.store = Some(true);
+        if let Some(prev_id) = previous_response_id {
+            req.previous_response_id = Some(prev_id.to_string());
+        }
+
+        let response = self.exec(req).await?;
+        let tool_calls = Self::extract_tool_calls(&response);
+        let response_id = response.response_id;
+        Ok((tool_calls, response_id))
+    }
 }
 
 /// Convert ToolDef to genai Tool.
@@ -317,16 +341,21 @@ impl LlmClient for GenaiClient {
         messages: &[Message],
         schema: &Value,
     ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
-        let schema_hint = format!(
-            "\n\nRespond with valid JSON matching this schema:\n{}\n\nDo NOT wrap in markdown code blocks. Output raw JSON only.",
-            serde_json::to_string_pretty(schema).unwrap_or_default()
-        );
+        let req = self.build_request(messages);
 
-        let mut req = self.build_request(messages);
-        let current_system = req.system.take().unwrap_or_default();
-        req = req.with_system(format!("{}{}", current_system, schema_hint));
+        // OpenAI strict mode: additionalProperties:false + all properties required
+        let mut strict_schema = schema.clone();
+        crate::schema::make_openai_strict(&mut strict_schema);
+        let json_spec = JsonSpec::new("sgr_response", strict_schema);
+        let mut opts = self.build_options().unwrap_or_default();
+        opts = opts.with_response_format(ChatResponseFormat::JsonSpec(json_spec));
 
-        let response = self.exec(req).await?;
+        let response = self
+            .client
+            .exec_chat(&self.model, req, Some(&opts))
+            .await
+            .map_err(map_genai_error)?;
+
         let raw_text = Self::extract_text(&response);
         let tool_calls = Self::extract_tool_calls(&response);
         let parsed = serde_json::from_str::<Value>(&raw_text).ok();
