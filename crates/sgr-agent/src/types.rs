@@ -278,6 +278,9 @@ pub struct LlmConfig {
     pub temp: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// OpenAI prompt cache key — caches system prompt prefix server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
 }
 
 fn default_temperature() -> f64 {
@@ -293,6 +296,7 @@ impl LlmConfig {
             base_url: None,
             temp: default_temperature(),
             max_tokens: None,
+            prompt_cache_key: None,
         }
     }
 
@@ -304,6 +308,7 @@ impl LlmConfig {
             base_url: None,
             temp: default_temperature(),
             max_tokens: None,
+            prompt_cache_key: None,
         }
     }
 
@@ -319,6 +324,7 @@ impl LlmConfig {
             base_url: Some(base_url.into()),
             temp: default_temperature(),
             max_tokens: None,
+            prompt_cache_key: None,
         }
     }
 
@@ -331,6 +337,12 @@ impl LlmConfig {
     /// Set max output tokens.
     pub fn max_tokens(mut self, m: u32) -> Self {
         self.max_tokens = Some(m);
+        self
+    }
+
+    /// Set OpenAI prompt cache key for server-side system prompt caching.
+    pub fn prompt_cache_key(mut self, key: impl Into<String>) -> Self {
+        self.prompt_cache_key = Some(key.into());
         self
     }
 }

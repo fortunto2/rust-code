@@ -19,6 +19,8 @@ pub struct GenaiClient {
     pub(crate) model: String,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_tokens: Option<u32>,
+    /// OpenAI prompt cache key — caches the system prompt prefix server-side.
+    pub(crate) prompt_cache_key: Option<String>,
 }
 
 impl GenaiClient {
@@ -29,6 +31,7 @@ impl GenaiClient {
             model: model.into(),
             temperature: None,
             max_tokens: None,
+            prompt_cache_key: None,
         }
     }
 
@@ -45,6 +48,7 @@ impl GenaiClient {
         };
         client.temperature = Some(config.temp);
         client.max_tokens = config.max_tokens;
+        client.prompt_cache_key = config.prompt_cache_key.clone();
         client
     }
 
@@ -214,7 +218,10 @@ impl GenaiClient {
 
     /// Build chat options from our config.
     fn build_options(&self) -> Option<ChatOptions> {
-        if self.temperature.is_none() && self.max_tokens.is_none() {
+        if self.temperature.is_none()
+            && self.max_tokens.is_none()
+            && self.prompt_cache_key.is_none()
+        {
             return None;
         }
         let mut opts = ChatOptions::default();
@@ -223,6 +230,9 @@ impl GenaiClient {
         }
         if let Some(max) = self.max_tokens {
             opts = opts.with_max_tokens(max);
+        }
+        if let Some(ref key) = self.prompt_cache_key {
+            opts = opts.with_prompt_cache_key(key);
         }
         Some(opts)
     }
