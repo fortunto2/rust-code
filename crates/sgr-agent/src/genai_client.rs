@@ -337,7 +337,7 @@ impl GenaiClient {
             ));
             otel_span.set_attribute(opentelemetry::KeyValue::new(
                 "llm.model_name",
-                self.model.clone(),
+                strip_model_namespace(&self.model).to_string(),
             ));
 
             // Input messages: serialize as gen_ai.prompt.{i}.role/content
@@ -496,6 +496,12 @@ impl GenaiClient {
             span.set_attribute("langsmith.span.kind", "llm");
             span.set_attribute("gen_ai.operation.name", "chat");
             span.set_attribute("gen_ai.request.model", self.model.clone());
+            // Phoenix / OpenInference conventions
+            span.set_attribute("openinference.span.kind", "LLM");
+            span.set_attribute(
+                "llm.model_name",
+                strip_model_namespace(&self.model).to_string(),
+            );
         }
 
         async {
@@ -563,6 +569,12 @@ fn to_genai_tool(def: &ToolDef) -> Tool {
     }
     tool = tool.with_schema(def.parameters.clone());
     tool
+}
+
+/// Strip provider namespace from model name for Phoenix/OpenInference pricing.
+/// e.g. "openai/gpt-5.4" → "gpt-5.4", "anthropic/claude-sonnet-4.6" → "claude-sonnet-4.6"
+fn strip_model_namespace(model: &str) -> &str {
+    model.rsplit_once('/').map_or(model, |(_, name)| name)
 }
 
 /// Map genai error to our SgrError.
