@@ -253,7 +253,6 @@ Options:
       --cwd <PATH>         Working directory for headless mode
       --model <NAME>       Override model name
       --intent <MODE>      Intent mode: auto, ask, build, plan
-      --sgr                Use SGR backend (pure Rust, no BAML)
       --local              Use local Ollama model
       --codex              Use ChatGPT Plus/Pro via Codex proxy
       --gemini-cli         Use Gemini CLI as LLM backend

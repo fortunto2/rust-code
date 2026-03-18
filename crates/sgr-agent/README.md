@@ -171,8 +171,6 @@ async fn main() {
 | `schema` | `json_schema_for::<T>()` — derive JSON Schema from Rust types via `schemars` |
 | `flexible_parser` | Extract JSON from markdown blocks, broken JSON, streaming chunks, chain-of-thought text |
 | `coerce` | Fuzzy type coercion — `"42"` → `42`, `"true"` → `true`, fuzzy enum matching |
-| `baml_parser` | Parse BAML schema files into class/function/union definitions |
-| `codegen` | Generate JSON Schema from parsed BAML definitions |
 
 ### Agent Framework layer (`feature = "agent"`)
 

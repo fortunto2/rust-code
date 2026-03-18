@@ -1,12 +1,16 @@
 ---
 type: opportunity
-status: active
+status: archived
 title: rust-code
 created: 2026-03-05
-tags: [rust, agent, cli, baml, sgr, ai, tui, ratatui, nucleo]
+tags: [rust, agent, cli, sgr, ai, tui, ratatui, nucleo]
 ---
 
-# PRD: rust-code
+# PRD: rust-code (archived)
+
+> **Note**: This is the original PRD from project inception. BAML, rc-baml, rc-core,
+> rc-tools have been removed. Current architecture uses sgr-agent with native
+> structured output via genai crate. See CLAUDE.md for current state.
 
 ## 1. Problem
 Текущие coding-агенты (Claude Code, Aider, OpenCode) написаны на Python или TypeScript. Это тянет за собой проблемы с дистрибуцией (зависимости от Node/uv/pip), высокое потребление памяти и хрупкость вызова инструментов (JSON parsing errors). Также им часто не хватает по-настоящему быстрого, интерактивного интерфейса со встроенным поиском.
