@@ -79,10 +79,20 @@ impl GenaiClient {
     /// Create for any OpenAI-compatible endpoint (OpenRouter, Ollama, LiteLLM, etc.).
     /// `base_url` should be the API base (e.g. `https://openrouter.ai/api/v1`),
     /// NOT including `/chat/completions` — genai appends that automatically.
+    ///
+    /// Adapter selection:
+    /// - Default: `OpenAI` (Chat Completions) — correct for most proxies
+    /// - Explicit: use namespace prefix to override, e.g. `openai_resp::gpt-5.4`
+    ///   routes through the Responses API adapter (`/responses` endpoint)
     pub fn custom_endpoint(api_key: &str, base_url: &str, model: impl Into<String>) -> Self {
         use genai::adapter::AdapterKind;
         use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
         use genai::{ModelIden, ServiceTarget};
+
+        let model_str: String = model.into();
+        // If the model has an explicit namespace (e.g. "openai_resp::gpt-5.4"),
+        // respect the user's adapter choice. Otherwise default to OpenAI (Chat Completions).
+        let explicit_adapter = model_str.contains("::");
 
         let api_key = api_key.to_string();
         // Strip /chat/completions if caller included it — genai adds it automatically
@@ -97,7 +107,12 @@ impl GenaiClient {
                 let ServiceTarget { model, .. } = service_target;
                 let endpoint = Endpoint::from_owned(url.clone());
                 let auth = AuthData::from_single(api_key.clone());
-                let model = ModelIden::new(AdapterKind::OpenAI, model.model_name);
+                let adapter = if explicit_adapter {
+                    model.adapter_kind // User explicitly chose via namespace
+                } else {
+                    AdapterKind::OpenAI // Default for custom endpoints
+                };
+                let model = ModelIden::new(adapter, model.model_name);
                 Ok(ServiceTarget {
                     endpoint,
                     auth,
@@ -109,7 +124,7 @@ impl GenaiClient {
         let client = genai::Client::builder()
             .with_service_target_resolver(target_resolver)
             .build();
-        Self::new(client, model)
+        Self::new(client, model_str)
     }
 
     /// Build a ChatRequest from our Message slice.
