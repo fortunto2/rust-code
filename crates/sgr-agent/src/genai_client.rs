@@ -255,6 +255,7 @@ impl GenaiClient {
             let tracer = provider.tracer("sgr-agent");
             let mut otel_span = tracer.start("gen_ai.chat");
 
+            // LangSmith conventions
             otel_span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
             otel_span.set_attribute(opentelemetry::KeyValue::new("gen_ai.system", "OpenRouter"));
             otel_span.set_attribute(opentelemetry::KeyValue::new(
@@ -262,6 +263,15 @@ impl GenaiClient {
                 self.model.clone(),
             ));
             otel_span.set_attribute(opentelemetry::KeyValue::new("llm.request.type", "chat"));
+            // Phoenix / OpenInference conventions
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "openinference.span.kind",
+                "LLM",
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "llm.model_name",
+                self.model.clone(),
+            ));
 
             // Input messages: serialize as gen_ai.prompt.{i}.role/content
             // Use serde since ChatMessage variants are complex
@@ -334,7 +344,7 @@ impl GenaiClient {
                 },
             ));
 
-            // Token usage
+            // Token usage — GenAI conventions (LangSmith)
             otel_span.set_attribute(opentelemetry::KeyValue::new(
                 "gen_ai.usage.prompt_tokens",
                 i64::from(pt),
@@ -350,6 +360,19 @@ impl GenaiClient {
             otel_span.set_attribute(opentelemetry::KeyValue::new(
                 "gen_ai.response.model",
                 response.provider_model_iden.model_name.to_string(),
+            ));
+            // Token usage — OpenInference conventions (Phoenix)
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "llm.token_count.prompt",
+                i64::from(pt),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "llm.token_count.completion",
+                i64::from(ct),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "llm.token_count.total",
+                i64::from(pt + ct),
             ));
 
             // End span (sets end_time, triggers export)
