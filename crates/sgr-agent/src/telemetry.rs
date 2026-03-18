@@ -103,6 +103,10 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
     };
 
     let tracer_provider = builder.build();
+
+    // Register global provider so native OTEL spans (gen_ai.chat) get exported
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+
     let tracer = tracer_provider.tracer(prefix.to_string());
 
     // Layer 1: OTEL context → attaches trace_id/span_id to tracing spans

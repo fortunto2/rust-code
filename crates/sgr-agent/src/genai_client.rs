@@ -240,56 +240,129 @@ impl GenaiClient {
 
     /// Execute chat and return response.
     /// Instrumented with GenAI span conventions for OTEL export (LangSmith, etc.).
+    ///
+    /// Uses native OpenTelemetry SDK for spans (not tracing::info_span!) because
+    /// tracing-opentelemetry doesn't export set_attribute() calls made inside
+    /// .instrument() blocks. Native OTEL spans support set_attribute at any time.
     async fn exec(&self, req: ChatRequest) -> Result<ChatResponse, SgrError> {
-        let span = tracing::info_span!(
-            "gen_ai.chat",
-            model = %self.model,
-            prompt_tokens = tracing::field::Empty,
-            completion_tokens = tracing::field::Empty,
-        );
-
+        // Use native OTEL tracer for the span (not tracing crate).
+        // tracing-opentelemetry doesn't export set_attribute() inside .instrument(),
+        // so we use the OTEL SDK directly — like the Python LangSmith examples.
         #[cfg(feature = "telemetry")]
-        {
-            use tracing_opentelemetry::OpenTelemetrySpanExt;
-            span.set_attribute("langsmith.span.kind", "llm");
-            span.set_attribute("gen_ai.operation.name", "chat");
-            span.set_attribute("gen_ai.request.model", self.model.clone());
-        }
+        let otel_cx = {
+            use opentelemetry::trace::{Span, TraceContextExt, Tracer, TracerProvider};
+            let provider = opentelemetry::global::tracer_provider();
+            let tracer = provider.tracer("sgr-agent");
+            let mut otel_span = tracer.start("gen_ai.chat");
 
-        let response = async {
-            let resp = self
-                .client
-                .exec_chat(&self.model, req, self.build_options().as_ref())
-                .await
-                .map_err(map_genai_error)?;
+            otel_span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
+            otel_span.set_attribute(opentelemetry::KeyValue::new("gen_ai.system", "OpenRouter"));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.request.model",
+                self.model.clone(),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new("llm.request.type", "chat"));
 
-            // Set token usage on current span (multiple conventions for compatibility)
-            let pt = resp.usage.prompt_tokens.unwrap_or(0);
-            let ct = resp.usage.completion_tokens.unwrap_or(0);
-            let current = tracing::Span::current();
-            current.record("prompt_tokens", pt);
-            current.record("completion_tokens", ct);
-
-            #[cfg(feature = "telemetry")]
-            {
-                use tracing_opentelemetry::OpenTelemetrySpanExt;
-                // GenAI + OpenLLMetry conventions (for forward-compat with LangSmith mapping)
-                current.set_attribute("gen_ai.usage.input_tokens", i64::from(pt));
-                current.set_attribute("gen_ai.usage.output_tokens", i64::from(ct));
-                current.set_attribute("llm.token_count.prompt", i64::from(pt));
-                current.set_attribute("llm.token_count.completion", i64::from(ct));
-                current.set_attribute("llm.usage.total_tokens", i64::from(pt + ct));
-                // LangSmith metadata (visible in UI immediately)
-                current.set_attribute(
-                    "langsmith.metadata.token_usage",
-                    format!("in={pt},out={ct},total={}", pt + ct),
-                );
+            // Input messages: serialize as gen_ai.prompt.{i}.role/content
+            // Use serde since ChatMessage variants are complex
+            for (i, msg) in req.messages.iter().enumerate() {
+                let json = serde_json::to_string(msg).unwrap_or_default();
+                // Extract role from JSON
+                let role = if json.contains("\"role\":\"user\"") {
+                    "user"
+                } else if json.contains("\"role\":\"assistant\"") {
+                    "assistant"
+                } else {
+                    "system"
+                };
+                // Content: truncate to 4KB for OTEL attr limit
+                let content = if json.len() > 4000 {
+                    format!("{}...", &json[..4000])
+                } else {
+                    json
+                };
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    format!("gen_ai.prompt.{i}.role"),
+                    role.to_string(),
+                ));
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    format!("gen_ai.prompt.{i}.content"),
+                    content,
+                ));
+            }
+            // Also system prompt if present
+            if let Some(ref sys) = req.system {
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "gen_ai.prompt.system",
+                    if sys.len() > 4000 {
+                        format!("{}...", &sys[..4000])
+                    } else {
+                        sys.clone()
+                    },
+                ));
             }
 
-            Ok::<_, SgrError>(resp)
+            opentelemetry::Context::current().with_span(otel_span)
+        };
+
+        let response = self
+            .client
+            .exec_chat(&self.model, req, self.build_options().as_ref())
+            .await
+            .map_err(map_genai_error)?;
+
+        // Record token usage + output on the OTEL span
+        #[cfg(feature = "telemetry")]
+        {
+            use opentelemetry::trace::{Span, TraceContextExt};
+            let otel_span = otel_cx.span();
+            let pt = response.usage.prompt_tokens.unwrap_or(0);
+            let ct = response.usage.completion_tokens.unwrap_or(0);
+
+            // Output (completion)
+            let output_text = response.first_text().unwrap_or("").to_string();
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.completion.0.role",
+                "assistant",
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.completion.0.content",
+                if output_text.len() > 4000 {
+                    format!("{}...", &output_text[..4000])
+                } else {
+                    output_text
+                },
+            ));
+
+            // Token usage
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.usage.prompt_tokens",
+                i64::from(pt),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.usage.completion_tokens",
+                i64::from(ct),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.usage.total_tokens",
+                i64::from(pt + ct),
+            ));
+            otel_span.set_attribute(opentelemetry::KeyValue::new(
+                "gen_ai.response.model",
+                response.provider_model_iden.model_name.to_string(),
+            ));
+
+            // End span (sets end_time, triggers export)
+            otel_span.end();
         }
-        .instrument(span)
-        .await?;
+
+        // Also log for file telemetry (tracing)
+        tracing::info!(
+            model = %self.model,
+            prompt_tokens = response.usage.prompt_tokens.unwrap_or(0),
+            completion_tokens = response.usage.completion_tokens.unwrap_or(0),
+            "gen_ai.chat"
+        );
 
         Ok(response)
     }
