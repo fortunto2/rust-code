@@ -221,11 +221,7 @@ fn find_closest_lines(content: &str, old_string: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }
 
 #[cfg(test)]
@@ -360,7 +356,7 @@ mod tests {
         // Try to apply an edit that's already done (old_string absent, new_string present)
         let result = edit_file(path, "let x = 1;", "let x = 2;").await;
         assert!(result.is_ok()); // Should succeed silently
-                                 // File should be unchanged
+        // File should be unchanged
         let content = read_file(path, None, None).await.unwrap();
         assert!(content.contains("let x = 2"));
         assert!(!content.contains("let x = 1"));

@@ -109,22 +109,21 @@ impl ChatState {
 
     /// Toggle expanded state of currently selected message.
     pub fn toggle_expand(&mut self) {
-        if let Some(idx) = self.list_state.selected() {
-            if let Some(msg) = self.messages.get_mut(idx) {
-                if msg.is_collapsible() {
-                    msg.expanded = !msg.expanded;
-                }
-            }
+        if let Some(idx) = self.list_state.selected()
+            && let Some(msg) = self.messages.get_mut(idx)
+            && msg.is_collapsible()
+        {
+            msg.expanded = !msg.expanded;
         }
     }
 
     /// Replace the last message if it starts with `prefix`, otherwise push new.
     pub fn replace_or_push(&mut self, prefix: &str, msg: String) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.text.starts_with(prefix) {
-                last.text = msg;
-                return;
-            }
+        if let Some(last) = self.messages.last_mut()
+            && last.text.starts_with(prefix)
+        {
+            last.text = msg;
+            return;
         }
         self.push(msg);
     }
@@ -132,12 +131,12 @@ impl ChatState {
     /// Append text to the last message that starts with `prefix`.
     /// If no such message, push a new one with `prefix + chunk`.
     pub fn append_stream_chunk(&mut self, prefix: &str, chunk: &str) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.text.starts_with(prefix) {
-                last.text.push_str(chunk);
-                self.scroll_to_bottom();
-                return;
-            }
+        if let Some(last) = self.messages.last_mut()
+            && last.text.starts_with(prefix)
+        {
+            last.text.push_str(chunk);
+            self.scroll_to_bottom();
+            return;
         }
         self.push(format!("{}{}", prefix, chunk));
     }

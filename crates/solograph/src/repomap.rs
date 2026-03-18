@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::scanner::scan_project;
-use crate::symbols::{extract_symbols, Symbol, SymbolKind};
+use crate::symbols::{Symbol, SymbolKind, extract_symbols};
 
 /// Generate a YAML-style repomap for a project directory.
 ///
@@ -232,12 +232,12 @@ fn extract_signature(source: &str, sym: &Symbol) -> Option<String> {
 
     // For decorators (Python @, Rust #[]), merge with next non-decorator line
     let mut sig = trimmed.to_string();
-    if sig.starts_with('@') || sig.starts_with("#[") {
-        if let Some(next) = lines.get(idx + 1) {
-            let next_trimmed = next.trim();
-            if !next_trimmed.starts_with('@') && !next_trimmed.starts_with("#[") {
-                sig = format!("{} {}", sig, next_trimmed);
-            }
+    if (sig.starts_with('@') || sig.starts_with("#["))
+        && let Some(next) = lines.get(idx + 1)
+    {
+        let next_trimmed = next.trim();
+        if !next_trimmed.starts_with('@') && !next_trimmed.starts_with("#[") {
+            sig = format!("{} {}", sig, next_trimmed);
         }
     }
 

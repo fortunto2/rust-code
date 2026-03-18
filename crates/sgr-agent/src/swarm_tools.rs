@@ -3,7 +3,7 @@
 //! These tools are registered in the parent's ToolRegistry, allowing the agent
 //! to spawn, wait, query status, and cancel sub-agents via normal tool calls.
 
-use crate::agent_tool::{parse_args, Tool, ToolError, ToolOutput};
+use crate::agent_tool::{Tool, ToolError, ToolOutput, parse_args};
 use crate::context::AgentContext;
 use crate::swarm::{AgentId, AgentRole, SwarmManager};
 use serde::Deserialize;
@@ -214,7 +214,7 @@ impl Tool for WaitAgentsTool {
                             return Err(ToolError::Execution(format!(
                                 "Error for {}: {}",
                                 id_str, e
-                            )))
+                            )));
                         }
                     }
                 }
@@ -228,7 +228,7 @@ impl Tool for WaitAgentsTool {
             match tokio::time::timeout(timeout, rx).await {
                 Ok(Ok(result)) => results.push(result),
                 Ok(Err(_)) => {
-                    return Err(ToolError::Execution(format!("Channel closed for {}", id)))
+                    return Err(ToolError::Execution(format!("Channel closed for {}", id)));
                 }
                 Err(_) => return Err(ToolError::Execution(format!("Timeout waiting for {}", id))),
             }

@@ -8,6 +8,6 @@ pub mod bash;
 pub mod fs;
 pub mod git;
 
-pub use bash::{run_command, run_command_in, run_interactive, BashResult};
+pub use bash::{BashResult, run_command, run_command_in, run_interactive};
 pub use fs::{edit_file, read_file, write_file};
-pub use git::{git_add, git_commit, git_diff, git_status, GitStatus};
+pub use git::{GitStatus, git_add, git_commit, git_diff, git_status};

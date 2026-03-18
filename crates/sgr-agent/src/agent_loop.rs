@@ -788,8 +788,8 @@ mod tests {
     use crate::registry::ToolRegistry;
     use crate::types::{Message, SgrError, ToolCall};
     use serde_json::Value;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingAgent {
         max_calls: usize,
@@ -979,8 +979,8 @@ mod tests {
         // Calls 1-2: build up frequency, total_calls < threshold so tier 2 not checked
         assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=1, edit=1, cons=1
         assert_eq!(d.check(&["edit_file".into()]), LoopCheckResult::Ok); // total=2, edit=2, cons=2
-                                                                         // Call 3: break consecutive (different sig) but edit_file still in sig
-                                                                         // total=3, edit=3, cons=1 → tier 2: 3/3=1.0 > 0.9 → first warning
+        // Call 3: break consecutive (different sig) but edit_file still in sig
+        // total=3, edit=3, cons=1 → tier 2: 3/3=1.0 > 0.9 → first warning
         assert_eq!(
             d.check(&["edit_file".into(), "read_file".into()]),
             LoopCheckResult::Tier2Warning("edit_file".into())

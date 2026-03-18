@@ -9,7 +9,7 @@
 //! - Scroll indicators (▲/▼) when list is scrollable
 //! - Prefix-priority matching (exact prefix ranked higher than substring)
 
-use crate::focus::{point_in_rect, FocusLayer, FocusResult};
+use crate::focus::{FocusLayer, FocusResult, point_in_rect};
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::prelude::*;

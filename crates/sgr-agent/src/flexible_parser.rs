@@ -191,30 +191,28 @@ pub fn collect_candidates(raw: &str) -> Vec<Candidate> {
     // 4. Try fixing each candidate that failed
     let fixable: Vec<String> = candidates.iter().map(|c| c.json.clone()).collect();
     for json in &fixable {
-        if let Some(fixed) = try_fix_json(json) {
-            if !candidates.iter().any(|c| c.json == fixed) {
-                candidates.push(Candidate {
-                    json: fixed,
-                    source: CandidateSource::Fixed,
-                });
-            }
+        if let Some(fixed) = try_fix_json(json)
+            && !candidates.iter().any(|c| c.json == fixed)
+        {
+            candidates.push(Candidate {
+                json: fixed,
+                source: CandidateSource::Fixed,
+            });
         }
     }
 
     // Also try fixing the raw input directly if no candidates yet
-    if candidates.is_empty()
+    if (candidates.is_empty()
         || !candidates
             .iter()
-            .any(|c| c.source == CandidateSource::Direct)
+            .any(|c| c.source == CandidateSource::Direct))
+        && let Some(fixed) = try_fix_json(raw)
+        && !candidates.iter().any(|c| c.json == fixed)
     {
-        if let Some(fixed) = try_fix_json(raw) {
-            if !candidates.iter().any(|c| c.json == fixed) {
-                candidates.push(Candidate {
-                    json: fixed,
-                    source: CandidateSource::Fixed,
-                });
-            }
-        }
+        candidates.push(Candidate {
+            json: fixed,
+            source: CandidateSource::Fixed,
+        });
     }
 
     // 5. Truncation recovery — try progressively aggressive cuts for streaming
@@ -542,10 +540,10 @@ fn truncation_recovery_candidates(s: &str) -> Vec<String> {
         if cut == 0 || cut >= s.len() {
             continue;
         }
-        if let Some(candidate) = try_close_at(s, cut) {
-            if !results.contains(&candidate) {
-                results.push(candidate);
-            }
+        if let Some(candidate) = try_close_at(s, cut)
+            && !results.contains(&candidate)
+        {
+            results.push(candidate);
         }
     }
 

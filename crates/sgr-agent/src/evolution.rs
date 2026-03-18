@@ -670,7 +670,7 @@ impl LoopState {
         match check_control(&self.options.control_file) {
             ControlAction::Stop => return Some("Stop requested via control file".into()),
             ControlAction::Pause => {
-                return Some("Paused via control file (delete to resume)".into())
+                return Some("Paused via control file (delete to resume)".into());
             }
             _ => {}
         }

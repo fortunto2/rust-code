@@ -6,7 +6,7 @@
 //!
 //! Both produce `serde_json::Value` compatible with Gemini/OpenAI APIs.
 
-use schemars::{schema_for, JsonSchema};
+use schemars::{JsonSchema, schema_for};
 use serde_json::Value;
 
 /// Generate a JSON Schema for type `T` (for tool parameters).
@@ -50,18 +50,18 @@ fn clean_schema(value: &mut Value) {
         }
 
         // Recursively clean nested schemas
-        if let Some(props) = obj.get_mut("properties") {
-            if let Some(props_obj) = props.as_object_mut() {
-                for (_, prop_schema) in props_obj.iter_mut() {
-                    clean_schema(prop_schema);
-                }
+        if let Some(props) = obj.get_mut("properties")
+            && let Some(props_obj) = props.as_object_mut()
+        {
+            for (_, prop_schema) in props_obj.iter_mut() {
+                clean_schema(prop_schema);
             }
         }
-        if let Some(defs) = obj.get_mut("definitions") {
-            if let Some(defs_obj) = defs.as_object_mut() {
-                for (_, def) in defs_obj.iter_mut() {
-                    clean_schema(def);
-                }
+        if let Some(defs) = obj.get_mut("definitions")
+            && let Some(defs_obj) = defs.as_object_mut()
+        {
+            for (_, def) in defs_obj.iter_mut() {
+                clean_schema(def);
             }
         }
         if let Some(items) = obj.get_mut("items") {
@@ -69,11 +69,11 @@ fn clean_schema(value: &mut Value) {
         }
         // oneOf / anyOf / allOf
         for key in &["oneOf", "anyOf", "allOf"] {
-            if let Some(arr) = obj.get_mut(*key) {
-                if let Some(arr_vec) = arr.as_array_mut() {
-                    for item in arr_vec.iter_mut() {
-                        clean_schema(item);
-                    }
+            if let Some(arr) = obj.get_mut(*key)
+                && let Some(arr_vec) = arr.as_array_mut()
+            {
+                for item in arr_vec.iter_mut() {
+                    clean_schema(item);
                 }
             }
         }
@@ -117,13 +117,13 @@ fn resolve_refs(value: &mut Value, definitions: &Value) {
         // If this is a $ref, replace with the definition
         if let Some(ref_str) = obj.get("$ref").and_then(|v| v.as_str()).map(String::from) {
             // "#/definitions/Foo" → "Foo"
-            if let Some(name) = ref_str.strip_prefix("#/definitions/") {
-                if let Some(def) = definitions.get(name) {
-                    let mut resolved = def.clone();
-                    resolve_refs(&mut resolved, definitions);
-                    *value = resolved;
-                    return;
-                }
+            if let Some(name) = ref_str.strip_prefix("#/definitions/")
+                && let Some(def) = definitions.get(name)
+            {
+                let mut resolved = def.clone();
+                resolve_refs(&mut resolved, definitions);
+                *value = resolved;
+                return;
             }
         }
 
@@ -154,17 +154,16 @@ fn strip_unsupported_gemini(value: &mut Value) {
         obj.remove("default");
 
         // Fix type arrays: ["string", "null"] → "string" + nullable: true
-        if let Some(type_val) = obj.get("type").cloned() {
-            if let Some(arr) = type_val.as_array() {
-                let non_null: Vec<&Value> =
-                    arr.iter().filter(|v| v.as_str() != Some("null")).collect();
-                let has_null = arr.iter().any(|v| v.as_str() == Some("null"));
-                if let Some(first) = non_null.first() {
-                    obj.insert("type".to_string(), (*first).clone());
-                }
-                if has_null {
-                    obj.insert("nullable".to_string(), Value::Bool(true));
-                }
+        if let Some(type_val) = obj.get("type").cloned()
+            && let Some(arr) = type_val.as_array()
+        {
+            let non_null: Vec<&Value> = arr.iter().filter(|v| v.as_str() != Some("null")).collect();
+            let has_null = arr.iter().any(|v| v.as_str() == Some("null"));
+            if let Some(first) = non_null.first() {
+                obj.insert("type".to_string(), (*first).clone());
+            }
+            if has_null {
+                obj.insert("nullable".to_string(), Value::Bool(true));
             }
         }
 

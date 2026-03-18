@@ -1,6 +1,6 @@
 use sgr_agent::{
-    process_step, AgentMessage, LoopConfig, LoopDetector, LoopEvent, MessageRole, Session,
-    SgrAgentStream,
+    AgentMessage, LoopConfig, LoopDetector, LoopEvent, MessageRole, Session, SgrAgentStream,
+    process_step,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;

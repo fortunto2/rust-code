@@ -4,7 +4,7 @@
 //! and AgentContext. Sub-agents can use different models and providers.
 
 use crate::agent::{Agent, AgentError};
-use crate::agent_loop::{run_loop, LoopConfig};
+use crate::agent_loop::{LoopConfig, run_loop};
 use crate::context::AgentContext;
 use crate::registry::ToolRegistry;
 use crate::types::Message;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 /// Unique identifier for a sub-agent.

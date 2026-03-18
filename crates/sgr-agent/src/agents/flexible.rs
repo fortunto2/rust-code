@@ -33,7 +33,9 @@ impl<C: LlmClient> FlexibleAgent<C> {
 
 /// Build tool descriptions for system prompt using SchemaSimplifier.
 fn tools_prompt(tools: &ToolRegistry) -> String {
-    let mut s = String::from("## Available Tools\n\nRespond with JSON: {\"situation\": \"...\", \"task\": [...], \"actions\": [{\"tool_name\": \"...\", ...args}]}\n\n");
+    let mut s = String::from(
+        "## Available Tools\n\nRespond with JSON: {\"situation\": \"...\", \"task\": [...], \"actions\": [{\"tool_name\": \"...\", ...args}]}\n\n",
+    );
     for t in tools.list() {
         s.push_str(&schema_simplifier::simplify_tool(
             t.name(),
@@ -131,8 +133,8 @@ mod tests {
     use crate::tool::ToolDef;
     use crate::types::{SgrError, ToolCall};
     use serde_json::Value;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockTextClient {
         response: String,
@@ -268,9 +270,11 @@ mod tests {
         let decision = agent.decide(&msgs, &tools).await.unwrap();
         assert!(decision.completed);
         assert!(decision.tool_calls.is_empty());
-        assert!(decision
-            .situation
-            .contains("Failed to parse after 3 attempts"));
+        assert!(
+            decision
+                .situation
+                .contains("Failed to parse after 3 attempts")
+        );
     }
 
     #[test]

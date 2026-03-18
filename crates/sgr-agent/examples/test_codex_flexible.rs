@@ -105,19 +105,20 @@ async fn call_codex_text(prompt: &str) -> Result<String, String> {
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                 let event_type = event["type"].as_str().unwrap_or("");
-                if event_type == "response.output_text.done" {
-                    if let Some(t) = event["text"].as_str() {
-                        output = t.to_string();
-                    }
+                if event_type == "response.output_text.done"
+                    && let Some(t) = event["text"].as_str()
+                {
+                    output = t.to_string();
                 }
-                if event_type == "response.completed" && output.is_empty() {
-                    if let Some(outputs) = event["response"]["output"].as_array() {
-                        for o in outputs {
-                            if let Some(contents) = o["content"].as_array() {
-                                for c in contents {
-                                    if let Some(t) = c["text"].as_str() {
-                                        output.push_str(t);
-                                    }
+                if event_type == "response.completed"
+                    && output.is_empty()
+                    && let Some(outputs) = event["response"]["output"].as_array()
+                {
+                    for o in outputs {
+                        if let Some(contents) = o["content"].as_array() {
+                            for c in contents {
+                                if let Some(t) = c["text"].as_str() {
+                                    output.push_str(t);
                                 }
                             }
                         }

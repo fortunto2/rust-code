@@ -6,7 +6,8 @@
 //! Custom: cargo run -p sgr-agent --features agent --example agent_demo -- "your prompt"
 
 use serde_json::Value;
-use sgr_agent::agent_loop::{run_loop, LoopConfig, LoopEvent};
+use sgr_agent::ProviderConfig;
+use sgr_agent::agent_loop::{LoopConfig, LoopEvent, run_loop};
 use sgr_agent::agent_tool::{Tool, ToolError, ToolOutput};
 use sgr_agent::agents::sgr::SgrAgent;
 use sgr_agent::context::AgentContext;
@@ -14,7 +15,6 @@ use sgr_agent::gemini::GeminiClient;
 use sgr_agent::registry::ToolRegistry;
 use sgr_agent::router::{ModelRouter, RouterConfig};
 use sgr_agent::types::Message;
-use sgr_agent::ProviderConfig;
 use std::path::PathBuf;
 use std::process::Command;
 

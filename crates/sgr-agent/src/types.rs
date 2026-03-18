@@ -506,13 +506,13 @@ pub enum SgrError {
 impl SgrError {
     /// Build error from HTTP status + body, auto-detecting rate limits.
     pub fn from_api_response(status: u16, body: String) -> Self {
-        if status == 429 || body.contains("usage_limit_reached") || body.contains("rate_limit") {
-            if let Some(mut info) = RateLimitInfo::from_error_body(&body) {
-                if info.message.is_none() {
-                    info.message = Some(body.chars().take(200).collect());
-                }
-                return SgrError::RateLimit { status, info };
+        if (status == 429 || body.contains("usage_limit_reached") || body.contains("rate_limit"))
+            && let Some(mut info) = RateLimitInfo::from_error_body(&body)
+        {
+            if info.message.is_none() {
+                info.message = Some(body.chars().take(200).collect());
             }
+            return SgrError::RateLimit { status, info };
         }
         SgrError::Api { status, body }
     }

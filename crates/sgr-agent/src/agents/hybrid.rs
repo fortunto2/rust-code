@@ -153,8 +153,8 @@ mod tests {
     use crate::tool::ToolDef;
     use crate::types::{SgrError, ToolCall};
     use serde_json::Value;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock client that returns reasoning in phase 1, tool call in phase 2.
     struct MockHybridClient {

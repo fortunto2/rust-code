@@ -71,12 +71,11 @@ impl AgentContext {
         // If the path doesn't exist yet (new file), canonicalize the parent.
         let resolved = std::fs::canonicalize(&abs_path).unwrap_or_else(|_| {
             // File doesn't exist — canonicalize parent, then append filename
-            if let Some(parent) = abs_path.parent() {
-                if let Ok(canon_parent) = std::fs::canonicalize(parent) {
-                    if let Some(name) = abs_path.file_name() {
-                        return canon_parent.join(name);
-                    }
-                }
+            if let Some(parent) = abs_path.parent()
+                && let Ok(canon_parent) = std::fs::canonicalize(parent)
+                && let Some(name) = abs_path.file_name()
+            {
+                return canon_parent.join(name);
             }
             abs_path.clone()
         });

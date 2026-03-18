@@ -425,8 +425,10 @@ def top_level_func():
         let symbols = extract_symbols(Path::new("test.py"), src);
         assert!(symbols.iter().any(|s| s.name == "MyClass"));
         assert!(symbols.iter().any(|s| s.name == "top_level_func"));
-        assert!(symbols
-            .iter()
-            .any(|s| s.name == "_private_method" && !s.public));
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "_private_method" && !s.public)
+        );
     }
 }

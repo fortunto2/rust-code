@@ -11,7 +11,7 @@ use crate::tool::ToolDef;
 use crate::types::*;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// OpenAI-compatible API client.
 pub struct OpenAIClient {

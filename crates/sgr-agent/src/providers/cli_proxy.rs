@@ -349,7 +349,8 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
             let err = format!("{{\"error\":{{\"message\":\"Invalid request: {}\"}}}}", e);
             let response = format!(
                 "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                err.len(), err
+                err.len(),
+                err
             );
             let _ = stream.write_all(response.as_bytes()).await;
             return;
@@ -368,7 +369,8 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, provider: CliProvi
             );
             let response = format!(
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                err.len(), err
+                err.len(),
+                err
             );
             let _ = stream.write_all(response.as_bytes()).await;
             return;

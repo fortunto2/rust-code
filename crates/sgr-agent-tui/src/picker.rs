@@ -202,10 +202,10 @@ impl FuzzyPicker {
 
         for (idx, item) in self.items.iter().enumerate() {
             // Channel filter
-            if let Some(ref ch) = active_channel {
-                if &item.channel != ch {
-                    continue;
-                }
+            if let Some(ref ch) = active_channel
+                && &item.channel != ch
+            {
+                continue;
             }
 
             // Fuzzy score
@@ -530,11 +530,11 @@ fn render_preview(preview: &PickerPreview, area: Rect, buf: &mut Buffer) {
     if row < area.y + area.height {
         for &bc in &beat_cols {
             let px = content_x + bc as u16;
-            if px < area.x + area.width {
-                if let Some(cell) = buf.cell_mut((px, row)) {
-                    cell.set_char('\u{2502}');
-                    cell.set_fg(Color::Red);
-                }
+            if px < area.x + area.width
+                && let Some(cell) = buf.cell_mut((px, row))
+            {
+                cell.set_char('\u{2502}');
+                cell.set_fg(Color::Red);
             }
         }
     }

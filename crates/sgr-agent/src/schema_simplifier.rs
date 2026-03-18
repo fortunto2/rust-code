@@ -66,14 +66,13 @@ fn simplify_object(schema: &Value, lines: &mut Vec<String>, indent: usize) {
         }
 
         // Array items
-        if prop.get("type").and_then(|t| t.as_str()) == Some("array") {
-            if let Some(items) = prop.get("items") {
-                if items.get("type").and_then(|t| t.as_str()) == Some("object") {
-                    let item_prefix = "  ".repeat(indent + 1);
-                    lines.push(format!("{}  Each item:", item_prefix));
-                    simplify_object(items, lines, indent + 2);
-                }
-            }
+        if prop.get("type").and_then(|t| t.as_str()) == Some("array")
+            && let Some(items) = prop.get("items")
+            && items.get("type").and_then(|t| t.as_str()) == Some("object")
+        {
+            let item_prefix = "  ".repeat(indent + 1);
+            lines.push(format!("{}  Each item:", item_prefix));
+            simplify_object(items, lines, indent + 2);
         }
     }
 }

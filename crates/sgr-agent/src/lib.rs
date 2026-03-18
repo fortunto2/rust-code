@@ -119,50 +119,50 @@ pub mod logging;
 pub use app_config::{AgentConfig, AgentConfigError};
 #[cfg(feature = "session")]
 pub use app_loop::{
-    process_step, run_loop, run_loop_stream, ActionResult, LoopConfig, LoopEvent, SgrAgent,
-    SgrAgentStream, StepDecision,
+    ActionResult, LoopConfig, LoopEvent, SgrAgent, SgrAgentStream, StepDecision, process_step,
+    run_loop, run_loop_stream,
 };
 #[cfg(feature = "session")]
 pub use doctor::{
-    check_gcloud_adc, check_provider_auth, default_tool_checks, fix_missing, format_check,
-    optional_tool_checks, print_doctor_report, run_doctor, run_tool_check, CheckResult,
-    CheckStatus, DoctorCheck,
+    CheckResult, CheckStatus, DoctorCheck, check_gcloud_adc, check_provider_auth,
+    default_tool_checks, fix_missing, format_check, optional_tool_checks, print_doctor_report,
+    run_doctor, run_tool_check,
 };
 #[cfg(feature = "session")]
 pub use hints::{
-    collect_hints, default_sources, default_sources_with_tasks, HintContext, HintSource,
-    PatternHints, TaskHints, ToolHints, WorkflowHints,
+    HintContext, HintSource, PatternHints, TaskHints, ToolHints, WorkflowHints, collect_hints,
+    default_sources, default_sources_with_tasks,
 };
 #[cfg(feature = "session")]
-pub use intent_guard::{guard_step, intent_allows, ActionKind, Intent, IntentCheck};
+pub use intent_guard::{ActionKind, Intent, IntentCheck, guard_step, intent_allows};
 #[cfg(feature = "logging")]
 pub use logging::init_logging;
 #[cfg(feature = "session")]
-pub use loop_detect::{normalize_signature, LoopDetector, LoopStatus};
+pub use loop_detect::{LoopDetector, LoopStatus, normalize_signature};
 #[cfg(feature = "session")]
 pub use memory::{
-    action_result_done, action_result_from, action_result_json, load_context_dir, load_manifesto,
-    load_manifesto_from, norm, norm_owned, truncate_json_array, MemoryContext,
+    MemoryContext, action_result_done, action_result_from, action_result_json, load_context_dir,
+    load_manifesto, load_manifesto_from, norm, norm_owned, truncate_json_array,
 };
 #[cfg(feature = "session")]
-pub use prompt_template::{build_system_prompt, BASE_SYSTEM_PROMPT};
+pub use prompt_template::{BASE_SYSTEM_PROMPT, build_system_prompt};
 #[cfg(all(feature = "search", feature = "session"))]
 pub use session::search_sessions;
 #[cfg(feature = "session")]
 pub use session::{
-    import_claude_session, list_sessions, AgentMessage, EntryType, MessageRole, Session,
-    SessionHeader, SessionMeta,
+    AgentMessage, EntryType, MessageRole, Session, SessionHeader, SessionMeta,
+    import_claude_session, list_sessions,
 };
 #[cfg(feature = "session")]
 pub use tasks::{
-    append_notes, create_task, load_tasks, save_task, tasks_context, tasks_dir, tasks_summary,
-    update_status, Priority, Task, TaskStatus,
+    Priority, Task, TaskStatus, append_notes, create_task, load_tasks, save_task, tasks_context,
+    tasks_dir, tasks_summary, update_status,
 };
 #[cfg(feature = "telemetry")]
-pub use telemetry::{init_telemetry, TelemetryGuard};
+pub use telemetry::{TelemetryGuard, init_telemetry};
 
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};
-pub use tool::{tool, ToolDef};
+pub use tool::{ToolDef, tool};
 pub use types::*;

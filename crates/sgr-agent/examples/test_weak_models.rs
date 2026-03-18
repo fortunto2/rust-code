@@ -46,83 +46,83 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         // --- Weak model patterns ---
         (
             "1. Llama-style: thinks first, JSON after",
-            "Let me analyze the request. The user wants me to read a file.\n\nI should use the read_file tool to read src/main.rs.\n\nHere is my response:\n\n{\"situation\": \"need to read file\", \"task\": [\"read src/main.rs\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}"
+            "Let me analyze the request. The user wants me to read a file.\n\nI should use the read_file tool to read src/main.rs.\n\nHere is my response:\n\n{\"situation\": \"need to read file\", \"task\": [\"read src/main.rs\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}",
         ),
         (
             "2. Phi-style: wraps in ```python block",
-            "```python\n{\"situation\": \"checking tests\", \"task\": [\"run tests\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test\"}]}\n```"
+            "```python\n{\"situation\": \"checking tests\", \"task\": [\"run tests\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test\"}]}\n```",
         ),
         (
             "3. Mistral-style: XML tags around JSON",
-            "<response>\n{\"situation\": \"reading code\", \"task\": [\"read file\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"lib.rs\"}]}\n</response>"
+            "<response>\n{\"situation\": \"reading code\", \"task\": [\"read file\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"lib.rs\"}]}\n</response>",
         ),
         (
             "4. Gemma-style: repeats the schema first",
-            "Based on the schema provided, I will respond with:\n- situation: a string describing the current state\n- task: an array of strings\n- actions: an array of tool calls\n\n{\"situation\": \"building project\", \"task\": [\"build\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo build\"}]}"
+            "Based on the schema provided, I will respond with:\n- situation: a string describing the current state\n- task: an array of strings\n- actions: an array of tool calls\n\n{\"situation\": \"building project\", \"task\": [\"build\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo build\"}]}",
         ),
         (
             "5. Qwen-style: numbered reasoning then JSON",
-            "1. First, I need to understand the situation\n2. The user wants to run tests\n3. I'll use the bash tool\n\nAnswer:\n{\"situation\": \"running tests\", \"task\": [\"execute test suite\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test --all\"}]}"
+            "1. First, I need to understand the situation\n2. The user wants to run tests\n3. I'll use the bash tool\n\nAnswer:\n{\"situation\": \"running tests\", \"task\": [\"execute test suite\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test --all\"}]}",
         ),
         (
             "6. Wrong field: 'analysis' instead of 'situation'",
-            "{\"analysis\": \"need to check code\", \"situation\": \"checking\", \"task\": [\"read\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"main.rs\"}]}"
+            "{\"analysis\": \"need to check code\", \"situation\": \"checking\", \"task\": [\"read\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"main.rs\"}]}",
         ),
         (
             "7. Extra fields: reasoning, confidence, etc",
-            "{\"reasoning\": \"the user needs help\", \"confidence\": 0.95, \"situation\": \"helping user\", \"task\": [\"assist\"], \"actions\": [{\"tool_name\": \"finish\", \"summary\": \"done helping\"}], \"next_steps\": [\"monitor\"]}"
+            "{\"reasoning\": \"the user needs help\", \"confidence\": 0.95, \"situation\": \"helping user\", \"task\": [\"assist\"], \"actions\": [{\"tool_name\": \"finish\", \"summary\": \"done helping\"}], \"next_steps\": [\"monitor\"]}",
         ),
         (
             "8. Hallucinated tool name",
-            "{\"situation\": \"searching\", \"task\": [\"find code\"], \"actions\": [{\"tool_name\": \"grep\", \"pattern\": \"TODO\", \"path\": \".\"}]}"
+            "{\"situation\": \"searching\", \"task\": [\"find code\"], \"actions\": [{\"tool_name\": \"grep\", \"pattern\": \"TODO\", \"path\": \".\"}]}",
         ),
         (
             "9. Single quotes (Python-style JSON)",
-            "{'situation': 'editing file', 'task': ['fix bug'], 'actions': [{'tool_name': 'edit_file', 'path': 'src/lib.rs', 'old_string': 'bug', 'new_string': 'fix'}]}"
+            "{'situation': 'editing file', 'task': ['fix bug'], 'actions': [{'tool_name': 'edit_file', 'path': 'src/lib.rs', 'old_string': 'bug', 'new_string': 'fix'}]}",
         ),
         (
             "10. Trailing text after JSON",
-            "{\"situation\": \"done\", \"task\": [\"complete\"], \"actions\": [{\"tool_name\": \"finish\", \"summary\": \"all done\"}]}\n\nI hope this helps! Let me know if you need anything else."
+            "{\"situation\": \"done\", \"task\": [\"complete\"], \"actions\": [{\"tool_name\": \"finish\", \"summary\": \"all done\"}]}\n\nI hope this helps! Let me know if you need anything else.",
         ),
         (
             "11. Double-wrapped JSON (model outputs JSON as string)",
-            "\"{\\\"situation\\\": \\\"reading\\\", \\\"task\\\": [\\\"read\\\"], \\\"actions\\\": [{\\\"tool_name\\\": \\\"read_file\\\", \\\"path\\\": \\\"test.rs\\\"}]}\""
+            "\"{\\\"situation\\\": \\\"reading\\\", \\\"task\\\": [\\\"read\\\"], \\\"actions\\\": [{\\\"tool_name\\\": \\\"read_file\\\", \\\"path\\\": \\\"test.rs\\\"}]}\"",
         ),
         (
             "12. Markdown with extra backticks",
-            "````json\n{\"situation\": \"writing\", \"task\": [\"create file\"], \"actions\": [{\"tool_name\": \"write_file\", \"path\": \"hello.rs\", \"content\": \"fn main() {}\"}]}\n````"
+            "````json\n{\"situation\": \"writing\", \"task\": [\"create file\"], \"actions\": [{\"tool_name\": \"write_file\", \"path\": \"hello.rs\", \"content\": \"fn main() {}\"}]}\n````",
         ),
         (
             "13. Line-by-line JSON (pretty-printed with comments)",
-            "{\n  // Current situation\n  \"situation\": \"analyzing code\",\n  // What needs to be done\n  \"task\": [\"review code\"],\n  // Actions to take\n  \"actions\": [\n    {\n      \"tool_name\": \"read_file\",\n      \"path\": \"src/main.rs\"\n    }\n  ]\n}"
+            "{\n  // Current situation\n  \"situation\": \"analyzing code\",\n  // What needs to be done\n  \"task\": [\"review code\"],\n  // Actions to take\n  \"actions\": [\n    {\n      \"tool_name\": \"read_file\",\n      \"path\": \"src/main.rs\"\n    }\n  ]\n}",
         ),
         (
             "14. YAML output (Gemini 2.5 Flash sometimes does this)",
-            "situation: need to check code\ntask:\n  - read main file\nactions:\n  - tool_name: read_file\n    path: src/main.rs"
+            "situation: need to check code\ntask:\n  - read main file\nactions:\n  - tool_name: read_file\n    path: src/main.rs",
         ),
         (
             "15. Empty actions (model refuses to act)",
-            "{\"situation\": \"I'm not sure what to do\", \"task\": [\"think about it\"], \"actions\": []}"
+            "{\"situation\": \"I'm not sure what to do\", \"task\": [\"think about it\"], \"actions\": []}",
         ),
         (
             "16. Actions as single object (not array)",
-            "{\"situation\": \"reading\", \"task\": [\"read\"], \"actions\": {\"tool_name\": \"read_file\", \"path\": \"main.rs\"}}"
+            "{\"situation\": \"reading\", \"task\": [\"read\"], \"actions\": {\"tool_name\": \"read_file\", \"path\": \"main.rs\"}}",
         ),
         (
             "17. Task as string (not array)",
-            "{\"situation\": \"testing\", \"task\": \"run all tests\", \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test\"}]}"
+            "{\"situation\": \"testing\", \"task\": \"run all tests\", \"actions\": [{\"tool_name\": \"bash\", \"command\": \"cargo test\"}]}",
         ),
         (
             "18. Truncated mid-key (streaming cutoff)",
-            "{\"situation\": \"working on it\", \"task\": [\"fix the bug\"], \"actions\": [{\"tool_name\": \"edit_file\", \"path\": \"src/main.rs\", \"old_str"
+            "{\"situation\": \"working on it\", \"task\": [\"fix the bug\"], \"actions\": [{\"tool_name\": \"edit_file\", \"path\": \"src/main.rs\", \"old_str",
         ),
         (
             "19. Unicode mess (Chinese model)",
-            "{\"situation\": \"代码分析\", \"task\": [\"read file\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}"
+            "{\"situation\": \"代码分析\", \"task\": [\"read file\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}",
         ),
         (
             "20. Multiple JSON objects (model outputs alternatives)",
-            "Option A:\n{\"situation\": \"wrong\", \"task\": [\"bad\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"rm -rf /\"}]}\n\nOption B (recommended):\n{\"situation\": \"reading code\", \"task\": [\"review\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}"
+            "Option A:\n{\"situation\": \"wrong\", \"task\": [\"bad\"], \"actions\": [{\"tool_name\": \"bash\", \"command\": \"rm -rf /\"}]}\n\nOption B (recommended):\n{\"situation\": \"reading code\", \"task\": [\"review\"], \"actions\": [{\"tool_name\": \"read_file\", \"path\": \"src/main.rs\"}]}",
         ),
     ]
 }

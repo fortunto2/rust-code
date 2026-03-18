@@ -21,11 +21,11 @@ pub mod spec;
 
 pub use caller::ApiAuth;
 pub use registry::{
-    default_cache_dir, download_spec, find_popular, list_popular, load_api_registry,
-    load_or_download, popular_apis, search_apis_guru, ApiSpec,
+    ApiSpec, default_cache_dir, download_spec, find_popular, list_popular, load_api_registry,
+    load_or_download, popular_apis, search_apis_guru,
 };
-pub use search::{format_results, search_endpoints, SearchResult};
-pub use spec::{filter_endpoints, parse_spec, Endpoint, Param, ParamLocation};
+pub use search::{SearchResult, format_results, search_endpoints};
+pub use spec::{Endpoint, Param, ParamLocation, filter_endpoints, parse_spec};
 
 use std::collections::HashMap;
 

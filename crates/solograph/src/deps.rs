@@ -278,12 +278,14 @@ tempfile = "3"
 }"#;
         let deps = parse_package_json(content);
         assert_eq!(deps.len(), 3);
-        assert!(deps
-            .iter()
-            .any(|d| d.name == "react" && d.version == "^18.0.0"));
-        assert!(deps
-            .iter()
-            .any(|d| d.name == "typescript" && d.kind == DependencyKind::Dev));
+        assert!(
+            deps.iter()
+                .any(|d| d.name == "react" && d.version == "^18.0.0")
+        );
+        assert!(
+            deps.iter()
+                .any(|d| d.name == "typescript" && d.kind == DependencyKind::Dev)
+        );
     }
 
     #[test]

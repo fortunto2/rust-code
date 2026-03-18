@@ -176,11 +176,11 @@ impl FocusRing {
     /// Try to focus the panel at (col, row). Returns true if a panel was hit.
     pub fn click(&mut self, col: u16, row: u16) -> bool {
         for (idx, rect) in self.rects.iter().enumerate() {
-            if let Some(r) = rect {
-                if point_in_rect(col, row, *r) {
-                    self.current = idx;
-                    return true;
-                }
+            if let Some(r) = rect
+                && point_in_rect(col, row, *r)
+            {
+                self.current = idx;
+                return true;
             }
         }
         false

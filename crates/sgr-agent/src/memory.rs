@@ -156,10 +156,10 @@ impl MemoryContext {
 
         for (filename, label) in KNOWN_FILES {
             let path = dir.join(filename);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if !content.trim().is_empty() {
-                    ctx.parts.push((label.to_string(), content));
-                }
+            if let Ok(content) = std::fs::read_to_string(&path)
+                && !content.trim().is_empty()
+            {
+                ctx.parts.push((label.to_string(), content));
             }
         }
 
@@ -189,12 +189,12 @@ impl MemoryContext {
         ];
         for (filename, label) in project_files {
             let path = project_dir.join(filename);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if !content.trim().is_empty() {
-                    let expanded = expand_imports(&content, project_dir, 0);
-                    ctx.parts.push((label.to_string(), expanded));
-                    break; // first found wins
-                }
+            if let Ok(content) = std::fs::read_to_string(&path)
+                && !content.trim().is_empty()
+            {
+                let expanded = expand_imports(&content, project_dir, 0);
+                ctx.parts.push((label.to_string(), expanded));
+                break; // first found wins
             }
         }
 
@@ -205,12 +205,12 @@ impl MemoryContext {
         ];
         for (filename, label) in local_files {
             let path = project_dir.join(filename);
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if !content.trim().is_empty() {
-                    let expanded = expand_imports(&content, project_dir, 0);
-                    ctx.parts.push((label.to_string(), expanded));
-                    break;
-                }
+            if let Ok(content) = std::fs::read_to_string(&path)
+                && !content.trim().is_empty()
+            {
+                let expanded = expand_imports(&content, project_dir, 0);
+                ctx.parts.push((label.to_string(), expanded));
+                break;
             }
         }
 
@@ -478,16 +478,16 @@ fn load_rules_dir(dir: &std::path::Path, ctx: &mut MemoryContext) {
         files.sort_by_key(|e| e.file_name());
 
         for entry in files {
-            if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                if !content.trim().is_empty() {
-                    let label = entry
-                        .path()
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("rule")
-                        .to_string();
-                    ctx.parts.push((label, content));
-                }
+            if let Ok(content) = std::fs::read_to_string(entry.path())
+                && !content.trim().is_empty()
+            {
+                let label = entry
+                    .path()
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("rule")
+                    .to_string();
+                ctx.parts.push((label, content));
             }
         }
     }

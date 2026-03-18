@@ -23,10 +23,10 @@ impl PromptLoader {
     /// Returns cached version if already loaded.
     pub fn load(&self, relative_path: &str) -> Result<String, PromptError> {
         // Check cache first
-        if let Ok(cache) = self.cache.read() {
-            if let Some(cached) = cache.get(relative_path) {
-                return Ok(cached.clone());
-            }
+        if let Ok(cache) = self.cache.read()
+            && let Some(cached) = cache.get(relative_path)
+        {
+            return Ok(cached.clone());
         }
 
         let full_path = self.base_dir.join(relative_path);

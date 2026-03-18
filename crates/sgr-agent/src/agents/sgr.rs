@@ -50,18 +50,17 @@ impl<C: LlmClient> Agent for SgrAgent<C> {
         let (output, native_calls, raw) = self.client.structured_call(&msgs, &schema).await?;
 
         // Try to parse structured output first
-        if let Some(val) = output {
-            if let Ok((situation, tool_calls)) = union_schema::parse_action(&val.to_string(), &defs)
-            {
-                let completed =
-                    tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
-                return Ok(Decision {
-                    situation,
-                    task: vec![],
-                    tool_calls,
-                    completed,
-                });
-            }
+        if let Some(val) = output
+            && let Ok((situation, tool_calls)) = union_schema::parse_action(&val.to_string(), &defs)
+        {
+            let completed =
+                tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
+            return Ok(Decision {
+                situation,
+                task: vec![],
+                tool_calls,
+                completed,
+            });
         }
 
         // Fall back to native tool calls

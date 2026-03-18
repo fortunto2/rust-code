@@ -124,7 +124,6 @@ fn edge_cases() -> Vec<(&'static str, &'static str)> {
             "1. Clean JSON",
             r#"{"situation":"reading file","task":["read src/main.rs"],"actions":[{"tool_name":"read_file","path":"src/main.rs"}]}"#,
         ),
-
         // === MARKDOWN WRAPPING ===
         (
             "2. Markdown ```json block",
@@ -134,7 +133,6 @@ fn edge_cases() -> Vec<(&'static str, &'static str)> {
             "3. Markdown ``` no lang tag",
             "```\n{\"situation\":\"building\",\"task\":[\"run cargo build\"],\"actions\":[{\"tool_name\":\"bash\",\"command\":\"cargo build\"}]}\n```",
         ),
-
         // === CHAIN OF THOUGHT ===
         (
             "4. CoT then JSON",
@@ -144,7 +142,6 @@ fn edge_cases() -> Vec<(&'static str, &'static str)> {
             "5. CoT + markdown block",
             "I'll analyze the situation:\n- The project needs a new feature\n- Let me start by reading the code\n\n```json\n{\"situation\":\"adding feature\",\"task\":[\"read code first\"],\"actions\":[{\"tool_name\":\"read_file\",\"path\":\"src/main.rs\"}]}\n```\n\nThis should give us what we need.",
         ),
-
         // === BROKEN JSON ===
         (
             "6. Trailing comma in actions array",
@@ -162,97 +159,81 @@ fn edge_cases() -> Vec<(&'static str, &'static str)> {
             "9. Single quotes",
             "{'situation': 'checking code', 'task': ['read file'], 'actions': [{'tool_name': 'read_file', 'path': 'main.rs'}]}",
         ),
-
         // === TRUNCATED ===
         (
             "10. Missing closing brackets",
             r#"{"situation":"in progress","task":["continue work"],"actions":[{"tool_name":"bash","command":"cargo build"}]"#,
         ),
-
         // === MULTI-ACTION (complex real-world) ===
         (
             "11. Multiple actions",
             r#"{"situation":"need to read multiple files","task":["read 3 files","analyze deps"],"actions":[{"tool_name":"read_file","path":"src/main.rs"},{"tool_name":"read_file","path":"src/lib.rs"},{"tool_name":"read_file","path":"Cargo.toml"}]}"#,
         ),
-
         // === ESCAPED CONTENT ===
         (
             "12. Content with escaped quotes and newlines",
             r#"{"situation":"writing code","task":["create file"],"actions":[{"tool_name":"write_file","path":"test.rs","content":"fn main() {\n    println!(\"hello \\\"world\\\"\");\n}"}]}"#,
         ),
-
         // === WRONG FIELD ORDER ===
         (
             "13. Actions first, situation last",
             r#"{"actions":[{"tool_name":"finish","summary":"done"}],"task":["wrap up"],"situation":"completed all work"}"#,
         ),
-
         // === NESTED JSON IN CONTENT ===
         (
             "14. JSON inside string field",
             r#"{"situation":"writing config","task":["create config file"],"actions":[{"tool_name":"write_file","path":"config.json","content":"{\"key\": \"value\", \"port\": 8080}"}]}"#,
         ),
-
         // === UNICODE ===
         (
             "15. Cyrillic content",
             r#"{"situation":"writing Russian text","task":["create file"],"actions":[{"tool_name":"write_file","path":"hello.txt","content":"Привет мир! Это тест."}]}"#,
         ),
-
         // === EDIT TOOL (tricky: old_string/new_string with code) ===
         (
             "16. Edit tool with code in strings",
             r#"{"situation":"fixing function","task":["edit file"],"actions":[{"tool_name":"edit_file","path":"src/lib.rs","old_string":"fn foo() {","new_string":"fn foo() -> i32 {"}]}"#,
         ),
-
         // === EXTRA FIELDS (model adds fields not in schema) ===
         (
             "17. Extra unknown fields",
             r#"{"situation":"analyzing","task":["read file"],"reasoning":"I should check the file first","confidence":0.95,"actions":[{"tool_name":"read_file","path":"main.rs"}]}"#,
         ),
-
         // === DEEPLY NESTED MARKDOWN ===
         (
             "18. Markdown with indent",
             "Here is my response:\n\n    ```json\n    {\n      \"situation\": \"starting\",\n      \"task\": [\"begin work\"],\n      \"actions\": [{\"tool_name\": \"bash\", \"command\": \"ls\"}]\n    }\n    ```",
         ),
-
         // === TASK AS STRING (not array) ===
         (
             "19. task as string instead of string[]",
             r#"{"situation":"reading","task":"read the main file","actions":[{"tool_name":"read_file","path":"main.rs"}]}"#,
         ),
-
         // === EMPTY ACTIONS ===
         (
             "20. Empty actions array",
             r#"{"situation":"thinking","task":["decide what to do"],"actions":[]}"#,
         ),
-
         // === MCP TOOL (complex arguments field) ===
         (
             "21. McpToolCall with JSON arguments string",
             r#"{"situation":"searching code","task":["search for auth"],"actions":[{"tool_name":"mcp_call","server":"codegraph","tool":"project_code_search","arguments":"{\"query\": \"auth middleware\", \"project\": \"myapp\"}"}]}"#,
         ),
-
         // === MULTIPLE TOOL TYPES IN ONE STEP ===
         (
             "22. Mixed tool types",
             r##"{"situation":"setting up","task":["read, create, and run"],"actions":[{"tool_name":"read_file","path":"Cargo.toml"},{"tool_name":"write_file","path":"test.rs","content":"#[test]\nfn it_works() {}"},{"tool_name":"bash","command":"cargo test"}]}"##,
         ),
-
         // === STREAMING PARTIAL (incomplete mid-action) ===
         (
             "23. Truncated mid-action (streaming)",
             r#"{"situation":"working","task":["fix bug"],"actions":[{"tool_name":"edit_file","path":"src/main.rs","old_string":"let x = 1","new_stri"#,
         ),
-
         // === COMPLETELY WRONG FORMAT ===
         (
             "24. Plain text (no JSON at all)",
             "I'll read the file src/main.rs and check for any issues with the return type. Let me do that now.",
         ),
-
         // === YAML-LIKE (Gemini 2.5 Flash sometimes does this) ===
         (
             "25. YAML-ish output",

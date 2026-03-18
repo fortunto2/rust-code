@@ -15,7 +15,7 @@ use crate::tool::ToolDef;
 use crate::types::*;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Gemini API client.
 pub struct GeminiClient {
@@ -662,47 +662,44 @@ impl GeminiClient {
 
                 // Vertex AI fallback: tool call in finishMessage when no functionDeclarations
                 // Format: "Unexpected tool call: {\"tool_name\": \"bash\", \"command\": \"...\"}"
-                if calls.is_empty() {
-                    if let Some(msg) = candidate.get("finishMessage").and_then(|m| m.as_str()) {
-                        tracing::debug!(
-                            finish_message = msg,
-                            "parsing finishMessage for tool calls"
-                        );
-                        if let Some(json_start) = msg.find('{') {
-                            let json_str = &msg[json_start..];
-                            // Try to find matching closing brace for clean extraction
-                            let json_str = if let Some(end) = json_str.rfind('}') {
-                                &json_str[..=end]
+                if calls.is_empty()
+                    && let Some(msg) = candidate.get("finishMessage").and_then(|m| m.as_str())
+                {
+                    tracing::debug!(finish_message = msg, "parsing finishMessage for tool calls");
+                    if let Some(json_start) = msg.find('{') {
+                        let json_str = &msg[json_start..];
+                        // Try to find matching closing brace for clean extraction
+                        let json_str = if let Some(end) = json_str.rfind('}') {
+                            &json_str[..=end]
+                        } else {
+                            json_str
+                        };
+                        if let Ok(tc_json) = serde_json::from_str::<Value>(json_str) {
+                            // Handle two formats:
+                            // 1. Flat: {"tool_name": "bash", "command": "..."}
+                            // 2. Actions array: {"actions": [{"tool_name": "read_file", "path": "..."}]}
+                            let items: Vec<Value> = if let Some(actions) =
+                                tc_json.get("actions").and_then(|a| a.as_array())
+                            {
+                                actions.clone()
                             } else {
-                                json_str
+                                vec![tc_json]
                             };
-                            if let Ok(tc_json) = serde_json::from_str::<Value>(json_str) {
-                                // Handle two formats:
-                                // 1. Flat: {"tool_name": "bash", "command": "..."}
-                                // 2. Actions array: {"actions": [{"tool_name": "read_file", "path": "..."}]}
-                                let items: Vec<Value> = if let Some(actions) =
-                                    tc_json.get("actions").and_then(|a| a.as_array())
-                                {
-                                    actions.clone()
-                                } else {
-                                    vec![tc_json]
-                                };
-                                for item in items {
-                                    let name = item
-                                        .get("tool_name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("unknown")
-                                        .to_string();
-                                    let mut args = item.clone();
-                                    if let Some(obj) = args.as_object_mut() {
-                                        obj.remove("tool_name");
-                                    }
-                                    calls.push(ToolCall {
-                                        id: name.clone(),
-                                        name,
-                                        arguments: args,
-                                    });
+                            for item in items {
+                                let name = item
+                                    .get("tool_name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let mut args = item.clone();
+                                if let Some(obj) = args.as_object_mut() {
+                                    obj.remove("tool_name");
                                 }
+                                calls.push(ToolCall {
+                                    id: name.clone(),
+                                    name,
+                                    arguments: args,
+                                });
                             }
                         }
                     }

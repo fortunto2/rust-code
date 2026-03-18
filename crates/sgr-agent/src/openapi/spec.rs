@@ -348,12 +348,16 @@ mod tests {
             .iter()
             .filter(|e| e.path == "/repos/{owner}/{repo}/issues")
             .collect();
-        assert!(issues
-            .iter()
-            .any(|e| e.name == "repos_owner_repo_issues_get"));
-        assert!(issues
-            .iter()
-            .any(|e| e.name == "repos_owner_repo_issues_post"));
+        assert!(
+            issues
+                .iter()
+                .any(|e| e.name == "repos_owner_repo_issues_get")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|e| e.name == "repos_owner_repo_issues_post")
+        );
     }
 
     #[test]

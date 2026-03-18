@@ -1,11 +1,11 @@
 use anyhow::Result;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
+    event::{DisableMouseCapture, EnableMouseCapture},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::{CrosstermBackend, Terminal};
-use std::io::{stdout, Stdout};
+use std::io::{Stdout, stdout};
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 

@@ -31,11 +31,11 @@ pub fn build_url(
     // Substitute path params
     let mut path = endpoint.path.clone();
     for p in &endpoint.params {
-        if p.location == ParamLocation::Path {
-            if let Some(value) = params.get(&p.name) {
-                let token = format!("{{{}}}", p.name);
-                path = path.replace(&token, value);
-            }
+        if p.location == ParamLocation::Path
+            && let Some(value) = params.get(&p.name)
+        {
+            let token = format!("{{{}}}", p.name);
+            path = path.replace(&token, value);
         }
     }
 
@@ -165,11 +165,7 @@ fn simple_base64(data: &[u8]) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }
 
 #[cfg(test)]

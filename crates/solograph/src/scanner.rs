@@ -218,8 +218,10 @@ mod tests {
         let files = files.unwrap();
         assert!(!files.is_empty());
         // Should contain our own source files
-        assert!(files
-            .iter()
-            .any(|p| p.to_str().unwrap().contains("scanner.rs")));
+        assert!(
+            files
+                .iter()
+                .any(|p| p.to_str().unwrap().contains("scanner.rs"))
+        );
     }
 }

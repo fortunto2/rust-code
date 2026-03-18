@@ -51,10 +51,10 @@ impl SessionMeta {
                 first_uuid = value["uuid"].as_str().map(String::from);
             }
 
-            if topic.is_empty() {
-                if let Some((EntryType::User, content)) = parse_entry(&value) {
-                    topic = truncate_topic(&content);
-                }
+            if topic.is_empty()
+                && let Some((EntryType::User, content)) = parse_entry(&value)
+            {
+                topic = truncate_topic(&content);
             }
         }
 

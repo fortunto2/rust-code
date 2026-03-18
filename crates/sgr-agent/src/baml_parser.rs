@@ -100,21 +100,21 @@ impl BamlModule {
             }
 
             // Class definition
-            if line.starts_with("class ") {
-                if let Some((class, consumed)) = parse_class(&lines[i..]) {
-                    self.classes.push(class);
-                    i += consumed;
-                    continue;
-                }
+            if line.starts_with("class ")
+                && let Some((class, consumed)) = parse_class(&lines[i..])
+            {
+                self.classes.push(class);
+                i += consumed;
+                continue;
             }
 
             // Function definition
-            if line.starts_with("function ") {
-                if let Some((func, consumed)) = parse_function(&lines[i..]) {
-                    self.functions.push(func);
-                    i += consumed;
-                    continue;
-                }
+            if line.starts_with("function ")
+                && let Some((func, consumed)) = parse_function(&lines[i..])
+            {
+                self.functions.push(func);
+                i += consumed;
+                continue;
             }
 
             i += 1;

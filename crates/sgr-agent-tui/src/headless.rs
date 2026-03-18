@@ -1,5 +1,5 @@
 use crate::agent_task::TuiAgent;
-use sgr_agent::{run_loop_stream, LoopConfig, LoopEvent, Session};
+use sgr_agent::{LoopConfig, LoopEvent, Session, run_loop_stream};
 use std::io::Write;
 
 /// Run agent in headless mode (no TUI, stdout output).

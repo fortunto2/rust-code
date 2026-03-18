@@ -15,7 +15,7 @@ pub mod traits;
 
 #[cfg(feature = "search")]
 pub use meta::search_sessions;
-pub use meta::{import_claude_session, list_sessions, SessionMeta};
+pub use meta::{SessionMeta, import_claude_session, list_sessions};
 pub use store::{Session, SessionHeader};
 pub use traits::{AgentMessage, EntryType, MessageRole};
 

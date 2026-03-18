@@ -41,10 +41,10 @@ fn coerce_to_integer(value: &mut Value) {
             }
         }
         Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                if f.fract() != 0.0 {
-                    *value = Value::Number((f.round() as i64).into());
-                }
+            if let Some(f) = n.as_f64()
+                && f.fract() != 0.0
+            {
+                *value = Value::Number((f.round() as i64).into());
             }
         }
         Value::Bool(b) => {
@@ -58,10 +58,10 @@ fn coerce_to_integer(value: &mut Value) {
 fn coerce_to_number(value: &mut Value) {
     if let Value::String(s) = value {
         let trimmed = s.trim().trim_end_matches(',');
-        if let Ok(f) = trimmed.parse::<f64>() {
-            if let Some(n) = serde_json::Number::from_f64(f) {
-                *value = Value::Number(n);
-            }
+        if let Ok(f) = trimmed.parse::<f64>()
+            && let Some(n) = serde_json::Number::from_f64(f)
+        {
+            *value = Value::Number(n);
         }
     }
 }
@@ -98,11 +98,11 @@ fn coerce_to_string(value: &mut Value, schema: &Value) {
 
     // Exact match (case-insensitive)
     for v in enum_values {
-        if let Some(expected) = v.as_str() {
-            if raw.eq_ignore_ascii_case(expected) {
-                *value = Value::String(expected.to_string());
-                return;
-            }
+        if let Some(expected) = v.as_str()
+            && raw.eq_ignore_ascii_case(expected)
+        {
+            *value = Value::String(expected.to_string());
+            return;
         }
     }
 
@@ -126,11 +126,11 @@ fn coerce_array(value: &mut Value, schema: &Value) {
         }
     }
 
-    if let Value::Array(arr) = value {
-        if let Some(items_schema) = schema.get("items") {
-            for item in arr.iter_mut() {
-                coerce_value(item, items_schema);
-            }
+    if let Value::Array(arr) = value
+        && let Some(items_schema) = schema.get("items")
+    {
+        for item in arr.iter_mut() {
+            coerce_value(item, items_schema);
         }
     }
 }
@@ -143,26 +143,26 @@ fn coerce_array(value: &mut Value, schema: &Value) {
 /// - missing object → `{}`
 ///   This matches BAML's behavior for streaming/truncated partial responses.
 fn coerce_object(value: &mut Value, schema: &Value) {
-    if let Value::Object(map) = value {
-        if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-            for (key, prop_schema) in props {
-                if let Some(field_value) = map.get_mut(key) {
-                    coerce_value(field_value, prop_schema);
-                } else {
-                    // Fill missing required fields with defaults
-                    let prop_type = prop_schema
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("");
-                    let default_val = match prop_type {
-                        "array" => Some(Value::Array(vec![])),
-                        "string" => Some(Value::String(String::new())),
-                        "object" => Some(Value::Object(serde_json::Map::new())),
-                        _ => None,
-                    };
-                    if let Some(val) = default_val {
-                        map.insert(key.clone(), val);
-                    }
+    if let Value::Object(map) = value
+        && let Some(props) = schema.get("properties").and_then(|p| p.as_object())
+    {
+        for (key, prop_schema) in props {
+            if let Some(field_value) = map.get_mut(key) {
+                coerce_value(field_value, prop_schema);
+            } else {
+                // Fill missing required fields with defaults
+                let prop_type = prop_schema
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let default_val = match prop_type {
+                    "array" => Some(Value::Array(vec![])),
+                    "string" => Some(Value::String(String::new())),
+                    "object" => Some(Value::Object(serde_json::Map::new())),
+                    _ => None,
+                };
+                if let Some(val) = default_val {
+                    map.insert(key.clone(), val);
                 }
             }
         }

@@ -128,8 +128,8 @@ impl GenaiClient {
 
     /// Create with explicit API key + auto-detect provider from model name.
     fn with_api_key(api_key: &str, model: impl Into<String>) -> Self {
-        use genai::resolver::{AuthData, ServiceTargetResolver};
         use genai::ServiceTarget;
+        use genai::resolver::{AuthData, ServiceTargetResolver};
 
         let api_key = api_key.to_string();
         let target_resolver = ServiceTargetResolver::from_resolver_fn(

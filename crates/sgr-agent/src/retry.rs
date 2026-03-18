@@ -47,10 +47,10 @@ fn is_retryable(err: &SgrError) -> bool {
 /// Calculate delay for attempt N, honoring rate limit headers.
 fn delay_for_attempt(attempt: usize, config: &RetryConfig, err: &SgrError) -> Duration {
     // Honor retry-after header from rate limit
-    if let Some(info) = err.rate_limit_info() {
-        if let Some(secs) = info.retry_after_secs {
-            return Duration::from_secs(secs + 1); // +1s safety margin
-        }
+    if let Some(info) = err.rate_limit_info()
+        && let Some(secs) = info.retry_after_secs
+    {
+        return Duration::from_secs(secs + 1); // +1s safety margin
     }
 
     // Exponential backoff: base * 2^attempt, capped at max
@@ -163,8 +163,8 @@ impl<C: LlmClient> LlmClient for RetryClient<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FailingClient {
         fail_count: usize,

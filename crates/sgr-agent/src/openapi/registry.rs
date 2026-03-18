@@ -29,10 +29,10 @@ pub fn load_api_registry() -> Vec<ApiSpec> {
         PathBuf::from(".rust-code").join("apis.toml"),
         dirs_like_home().join(".sgr-agent").join("apis.toml"),
     ] {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(parsed) = toml_parse_apis(&content) {
-                return parsed;
-            }
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(parsed) = toml_parse_apis(&content)
+        {
+            return parsed;
         }
     }
     popular_apis()

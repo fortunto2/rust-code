@@ -1,7 +1,7 @@
 [package]
 name = "solograph"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Code intelligence: tree-sitter scanning, project maps, dependency parsing"
 license = "MIT"
 repository = "https://github.com/fortunto2/rust-code"

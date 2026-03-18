@@ -7,10 +7,10 @@ use std::collections::HashMap;
 
 fn cloudflare_token() -> Option<String> {
     // Try env var first
-    if let Ok(token) = std::env::var("CLOUDFLARE_API_TOKEN") {
-        if !token.is_empty() {
-            return Some(token);
-        }
+    if let Ok(token) = std::env::var("CLOUDFLARE_API_TOKEN")
+        && !token.is_empty()
+    {
+        return Some(token);
     }
     // Fall back to wrangler OAuth token
     let home = std::env::var("HOME").ok()?;

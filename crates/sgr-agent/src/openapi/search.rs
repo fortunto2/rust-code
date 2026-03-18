@@ -129,7 +129,7 @@ pub fn format_results(results: &[SearchResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openapi::spec::{parse_spec, Endpoint, Param, ParamLocation};
+    use crate::openapi::spec::{Endpoint, Param, ParamLocation, parse_spec};
     use serde_json::json;
 
     fn test_endpoints() -> Vec<Endpoint> {

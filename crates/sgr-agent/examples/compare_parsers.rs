@@ -103,19 +103,20 @@ async fn call_codex_raw(system: &str, user: &str) -> Result<String, String> {
             }
             if let Ok(ev) = serde_json::from_str::<serde_json::Value>(data) {
                 let et = ev["type"].as_str().unwrap_or("");
-                if et == "response.output_text.done" {
-                    if let Some(t) = ev["text"].as_str() {
-                        output = t.to_string();
-                    }
+                if et == "response.output_text.done"
+                    && let Some(t) = ev["text"].as_str()
+                {
+                    output = t.to_string();
                 }
-                if et == "response.completed" && output.is_empty() {
-                    if let Some(outs) = ev["response"]["output"].as_array() {
-                        for o in outs {
-                            if let Some(cs) = o["content"].as_array() {
-                                for c in cs {
-                                    if let Some(t) = c["text"].as_str() {
-                                        output.push_str(t);
-                                    }
+                if et == "response.completed"
+                    && output.is_empty()
+                    && let Some(outs) = ev["response"]["output"].as_array()
+                {
+                    for o in outs {
+                        if let Some(cs) = o["content"].as_array() {
+                            for c in cs {
+                                if let Some(t) = c["text"].as_str() {
+                                    output.push_str(t);
                                 }
                             }
                         }

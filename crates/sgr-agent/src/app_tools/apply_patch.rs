@@ -1595,7 +1595,9 @@ mod tests {
         )
         .unwrap();
 
-        let patch = wrap("--- a/app.py\n+++ b/app.py\n@@ -3,3 +3,3 @@\n def main():\n-    print(\"hello\")\n+    print(\"world\")\n     return 0");
+        let patch = wrap(
+            "--- a/app.py\n+++ b/app.py\n@@ -3,3 +3,3 @@\n def main():\n-    print(\"hello\")\n+    print(\"world\")\n     return 0",
+        );
         apply_patch_to_files_sync(&patch, dir.path()).unwrap();
         let contents = fs::read_to_string(dir.path().join("app.py")).unwrap();
         assert!(contents.contains("world"));
@@ -1627,7 +1629,9 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("multi.py"), "a\nb\nc\nd\ne\nf\n").unwrap();
 
-        let patch = wrap("--- a/multi.py\n+++ b/multi.py\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -4,3 +4,3 @@\n d\n-e\n+E\n f");
+        let patch = wrap(
+            "--- a/multi.py\n+++ b/multi.py\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -4,3 +4,3 @@\n d\n-e\n+E\n f",
+        );
         apply_patch_to_files_sync(&patch, dir.path()).unwrap();
         let contents = fs::read_to_string(dir.path().join("multi.py")).unwrap();
         assert_eq!(contents, "a\nB\nc\nd\nE\nf\n");

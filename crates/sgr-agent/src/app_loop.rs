@@ -1,8 +1,8 @@
-use crate::loop_detect::{normalize_signature, LoopDetector, LoopStatus};
+use crate::loop_detect::{LoopDetector, LoopStatus, normalize_signature};
 use crate::session::{AgentMessage, MessageRole, Session};
 use std::fmt;
 use std::future::Future;
-use tracing::{info_span, Instrument};
+use tracing::{Instrument, info_span};
 
 /// Result of executing a single action.
 pub struct ActionResult {

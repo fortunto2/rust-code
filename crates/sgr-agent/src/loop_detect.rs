@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn category_catches_semantic_loop() {
         let mut d = LoopDetector::new(4); // warn at 2, abort at 4
-                                          // Different exact signatures, same normalized category
+        // Different exact signatures, same normalized category
         let sigs = [
             "bash:rg -n 'TODO' src/",
             "bash:rg 'TODO' src/",
@@ -543,7 +543,7 @@ mod tests {
         let mut d = LoopDetector::new(4);
         d.check_with_category("bash:rg 'A' src/", "bash-search:A src");
         d.check_with_category("bash:rg 'A' src/", "bash-search:A src"); // cat=2
-                                                                        // Different category resets
+        // Different category resets
         d.check_with_category("bash:cargo test", "bash:cargo:test");
         assert_eq!(d.category.count(), 1);
     }
