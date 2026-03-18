@@ -11,6 +11,7 @@ use genai::chat::{
     ContentPart, JsonSpec, MessageContent, Tool, ToolResponse,
 };
 use serde_json::Value;
+use tracing::Instrument;
 
 /// LlmClient adapter wrapping genai's multi-provider Client.
 /// Use `Llm` as the public facade — this type is an implementation detail.
@@ -238,11 +239,39 @@ impl GenaiClient {
     }
 
     /// Execute chat and return response.
+    /// Instrumented with GenAI span conventions for OTEL export (LangSmith, etc.).
     async fn exec(&self, req: ChatRequest) -> Result<ChatResponse, SgrError> {
-        self.client
-            .exec_chat(&self.model, req, self.build_options().as_ref())
-            .await
-            .map_err(map_genai_error)
+        let span = tracing::info_span!(
+            "gen_ai.chat",
+            model = %self.model,
+            prompt_tokens = tracing::field::Empty,
+            completion_tokens = tracing::field::Empty,
+            total_tokens = tracing::field::Empty,
+        );
+
+        async {
+            let response = self
+                .client
+                .exec_chat(&self.model, req, self.build_options().as_ref())
+                .await
+                .map_err(map_genai_error)?;
+
+            // Record token usage on the span (visible in OTLP export)
+            let current = tracing::Span::current();
+            if let Some(pt) = response.usage.prompt_tokens {
+                current.record("prompt_tokens", pt);
+            }
+            if let Some(ct) = response.usage.completion_tokens {
+                current.record("completion_tokens", ct);
+            }
+            if let Some(tt) = response.usage.total_tokens {
+                current.record("total_tokens", tt);
+            }
+
+            Ok(response)
+        }
+        .instrument(span)
+        .await
     }
 
     /// Extract tool calls from a ChatResponse.
@@ -273,32 +302,41 @@ impl GenaiClient {
     where
         F: FnMut(&str),
     {
-        let req = self.build_request(messages);
-        let opts = self.build_options();
-        let stream_resp = self
-            .client
-            .exec_chat_stream(&self.model, req, opts.as_ref())
-            .await
-            .map_err(map_genai_error)?;
+        let span = tracing::info_span!(
+            "gen_ai.stream",
+            model = %self.model,
+        );
 
-        let mut stream = stream_resp.stream;
-        let mut full_text = String::new();
+        async {
+            let req = self.build_request(messages);
+            let opts = self.build_options();
+            let stream_resp = self
+                .client
+                .exec_chat_stream(&self.model, req, opts.as_ref())
+                .await
+                .map_err(map_genai_error)?;
 
-        while let Some(event) = stream.next().await {
-            match event.map_err(map_genai_error)? {
-                ChatStreamEvent::Chunk(chunk) => {
-                    full_text.push_str(&chunk.content);
-                    on_token(&chunk.content);
+            let mut stream = stream_resp.stream;
+            let mut full_text = String::new();
+
+            while let Some(event) = stream.next().await {
+                match event.map_err(map_genai_error)? {
+                    ChatStreamEvent::Chunk(chunk) => {
+                        full_text.push_str(&chunk.content);
+                        on_token(&chunk.content);
+                    }
+                    ChatStreamEvent::End(_) => break,
+                    _ => {}
                 }
-                ChatStreamEvent::End(_) => break,
-                _ => {}
             }
-        }
 
-        if full_text.is_empty() {
-            return Err(SgrError::EmptyResponse);
+            if full_text.is_empty() {
+                return Err(SgrError::EmptyResponse);
+            }
+            Ok(full_text)
         }
-        Ok(full_text)
+        .instrument(span)
+        .await
     }
 
     /// Function calling with stateful session support (OpenAI Responses API).

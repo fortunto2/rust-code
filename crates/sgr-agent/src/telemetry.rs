@@ -1,31 +1,34 @@
-//! OpenTelemetry file telemetry for BAML agents.
+//! OpenTelemetry file telemetry + optional OTLP export for LLM agents.
 //!
-//! Single JSONL file per day with OTEL trace context (trace_id, span_id)
-//! in every line. Use `tracing::info_span!()` in agent code to create
-//! correlated traces across LLM calls, tool executions, and coaching turns.
+//! Always: JSONL file per day with OTEL trace context (trace_id, span_id).
+//! Optional: OTLP/HTTP batch exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 //!
-//! To switch from file to Jaeger/Grafana later: replace the JSON fmt layer
-//! with an OTLP exporter — no instrumentation changes needed.
+//! For LangSmith:
+//! ```bash
+//! OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel
+//! OTEL_EXPORTER_OTLP_HEADERS=x-api-key=lsv2_pt_...
+//! ```
+//!
+//! **IMPORTANT**: Call `TelemetryGuard::shutdown()` (or `drop(guard)`) before
+//! returning from `#[tokio::main]`. The OTLP batch exporter needs the tokio
+//! runtime alive to flush pending spans over HTTP.
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::prelude::*;
 
-/// Initialize OTEL-aware file telemetry.
+/// Initialize OTEL-aware file telemetry + optional OTLP export.
 ///
 /// Output: `{log_dir}/{prefix}-YYYY-MM-DD.jsonl`
 ///
-/// Each JSON line includes: timestamp, level, target, message, fields,
-/// span context (name, trace_id, span_id), and any custom attributes.
+/// When `OTEL_EXPORTER_OTLP_ENDPOINT` env var is set, also exports spans
+/// via OTLP/HTTP (protobuf) to the configured endpoint. Headers from
+/// `OTEL_EXPORTER_OTLP_HEADERS` are included automatically (standard OTEL SDK).
 ///
 /// ```ignore
-/// let _guard = sgr_agent::init_telemetry(".agent", "coach");
-///
-/// let span = tracing::info_span!("coaching_turn", turn = 3);
-/// let _enter = span.enter();
-/// tracing::info!(model = "gemini-flash", latency_ms = 420, "LLM response");
-/// // → {"timestamp":"...", "level":"INFO", "spans":[{"name":"coaching_turn","turn":3}],
-/// //    "fields":{"model":"gemini-flash","latency_ms":420}, "message":"LLM response"}
+/// let guard = sgr_agent::init_telemetry(".agent", "coach");
+/// // ... do work ...
+/// guard.shutdown(); // flush OTLP spans before tokio exits
 /// ```
 pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
     let _ = std::fs::create_dir_all(log_dir);
@@ -39,8 +42,34 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
         .open(&path)
         .unwrap_or_else(|e| panic!("Cannot open telemetry log {path}: {e}"));
 
-    // OTEL tracer for span context propagation (trace_id / span_id)
-    let tracer_provider = SdkTracerProvider::builder().build();
+    // Build tracer provider with resource identification
+    let resource = opentelemetry_sdk::Resource::builder()
+        .with_service_name(prefix.to_string())
+        .build();
+    let mut builder = SdkTracerProvider::builder().with_resource(resource);
+
+    // Optional: OTLP batch exporter (LangSmith, Jaeger, Grafana, etc.)
+    let otlp_enabled = if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
+        match opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .build()
+        {
+            Ok(exporter) => {
+                builder = builder.with_batch_exporter(exporter);
+                let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap();
+                eprintln!("[telemetry] OTLP exporter → {endpoint}");
+                true
+            }
+            Err(e) => {
+                eprintln!("[telemetry] OTLP exporter failed: {e}");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    let tracer_provider = builder.build();
     let tracer = tracer_provider.tracer(prefix.to_string());
 
     // Layer 1: OTEL context → attaches trace_id/span_id to tracing spans
@@ -78,17 +107,44 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
     // Bridge log crate → tracing (captures library log::info!/warn!/etc)
     let _ = tracing_log::LogTracer::init();
 
-    TelemetryGuard { tracer_provider }
+    TelemetryGuard {
+        tracer_provider,
+        otlp_enabled,
+    }
 }
 
 /// Must be held alive for the duration of the program.
 /// Flushes pending spans on drop.
+///
+/// **IMPORTANT**: For OTLP batch export, call `shutdown()` explicitly before
+/// the tokio runtime exits. The batch exporter needs tokio to flush HTTP requests.
+/// Dropping inside `#[tokio::main]` async fn (before `Ok(())`) is correct.
+/// Dropping after tokio shuts down will silently lose spans.
 pub struct TelemetryGuard {
     tracer_provider: SdkTracerProvider,
+    otlp_enabled: bool,
+}
+
+impl TelemetryGuard {
+    /// Whether OTLP export is active (endpoint was configured and exporter initialized).
+    pub fn otlp_enabled(&self) -> bool {
+        self.otlp_enabled
+    }
+
+    /// Explicitly flush and shutdown. Consumes self.
+    ///
+    /// Call this before returning from `#[tokio::main]` to ensure the batch
+    /// exporter flushes all pending spans while the tokio runtime is still alive.
+    pub fn shutdown(self) {
+        // Drop triggers tracer_provider.shutdown()
+        drop(self);
+    }
 }
 
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
-        let _ = self.tracer_provider.shutdown();
+        if let Err(e) = self.tracer_provider.shutdown() {
+            eprintln!("[telemetry] shutdown error: {e}");
+        }
     }
 }

@@ -16,7 +16,7 @@ agent = ["async-trait", "indexmap", "futures", "tokio-util"]
 session = ["agent", "dep:uuid"]
 app-tools = ["session", "dep:anyhow"]
 providers = ["dep:base64"]
-telemetry = ["dep:tracing-subscriber", "dep:tracing-log", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:chrono"]
+telemetry = ["dep:tracing-subscriber", "dep:tracing-log", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:chrono"]
 logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
 search = ["dep:nucleo-matcher"]
 genai = ["dep:genai", "agent", "futures"]
@@ -44,6 +44,7 @@ tracing-log = { version = "0.2", optional = true }
 tracing-opentelemetry = { version = "0.32", optional = true }
 opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", optional = true, default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 nucleo-matcher = { version = "0.3", optional = true }
 serde_yaml = "0.9"

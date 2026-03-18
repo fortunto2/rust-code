@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "genai"
-version = "0.6.0-beta.6-WIP"
+version = "0.6.0-beta.10-WIP"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "rust-code"
-version = "0.5.2"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arboard",
