@@ -50,8 +50,29 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
 
     // Optional: OTLP batch exporter (LangSmith, Jaeger, Grafana, etc.)
     let otlp_enabled = if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
+        use opentelemetry_otlp::WithHttpConfig;
+        use std::collections::HashMap;
+
+        // Build custom headers: auth + LangSmith project routing
+        let mut headers = HashMap::new();
+
+        // Parse OTEL_EXPORTER_OTLP_HEADERS (key=value,key=value)
+        if let Ok(raw) = std::env::var("OTEL_EXPORTER_OTLP_HEADERS") {
+            for pair in raw.split(',') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    headers.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+
+        // LANGSMITH_PROJECT env var → Langsmith-Project header
+        if let Ok(project) = std::env::var("LANGSMITH_PROJECT") {
+            headers.insert("Langsmith-Project".to_string(), project);
+        }
+
         match opentelemetry_otlp::SpanExporter::builder()
             .with_http()
+            .with_headers(headers)
             .build()
         {
             Ok(exporter) => {

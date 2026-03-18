@@ -246,32 +246,52 @@ impl GenaiClient {
             model = %self.model,
             prompt_tokens = tracing::field::Empty,
             completion_tokens = tracing::field::Empty,
-            total_tokens = tracing::field::Empty,
         );
 
-        async {
-            let response = self
+        #[cfg(feature = "telemetry")]
+        {
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+            span.set_attribute("langsmith.span.kind", "llm");
+            span.set_attribute("gen_ai.operation.name", "chat");
+            span.set_attribute("gen_ai.request.model", self.model.clone());
+        }
+
+        let response = async {
+            let resp = self
                 .client
                 .exec_chat(&self.model, req, self.build_options().as_ref())
                 .await
                 .map_err(map_genai_error)?;
 
-            // Record token usage on the span (visible in OTLP export)
+            // Set token usage on current span (multiple conventions for compatibility)
+            let pt = resp.usage.prompt_tokens.unwrap_or(0);
+            let ct = resp.usage.completion_tokens.unwrap_or(0);
             let current = tracing::Span::current();
-            if let Some(pt) = response.usage.prompt_tokens {
-                current.record("prompt_tokens", pt);
-            }
-            if let Some(ct) = response.usage.completion_tokens {
-                current.record("completion_tokens", ct);
-            }
-            if let Some(tt) = response.usage.total_tokens {
-                current.record("total_tokens", tt);
+            current.record("prompt_tokens", pt);
+            current.record("completion_tokens", ct);
+
+            #[cfg(feature = "telemetry")]
+            {
+                use tracing_opentelemetry::OpenTelemetrySpanExt;
+                // GenAI + OpenLLMetry conventions (for forward-compat with LangSmith mapping)
+                current.set_attribute("gen_ai.usage.input_tokens", i64::from(pt));
+                current.set_attribute("gen_ai.usage.output_tokens", i64::from(ct));
+                current.set_attribute("llm.token_count.prompt", i64::from(pt));
+                current.set_attribute("llm.token_count.completion", i64::from(ct));
+                current.set_attribute("llm.usage.total_tokens", i64::from(pt + ct));
+                // LangSmith metadata (visible in UI immediately)
+                current.set_attribute(
+                    "langsmith.metadata.token_usage",
+                    format!("in={pt},out={ct},total={}", pt + ct),
+                );
             }
 
-            Ok(response)
+            Ok::<_, SgrError>(resp)
         }
         .instrument(span)
-        .await
+        .await?;
+
+        Ok(response)
     }
 
     /// Extract tool calls from a ChatResponse.
@@ -306,6 +326,14 @@ impl GenaiClient {
             "gen_ai.stream",
             model = %self.model,
         );
+
+        #[cfg(feature = "telemetry")]
+        {
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+            span.set_attribute("langsmith.span.kind", "llm");
+            span.set_attribute("gen_ai.operation.name", "chat");
+            span.set_attribute("gen_ai.request.model", self.model.clone());
+        }
 
         async {
             let req = self.build_request(messages);
