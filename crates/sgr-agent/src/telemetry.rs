@@ -42,9 +42,18 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
         .open(&path)
         .unwrap_or_else(|e| panic!("Cannot open telemetry log {path}: {e}"));
 
+    // Environment: OTEL_ENV or SOUFFLEUR_ENV, default "dev"
+    let environment = std::env::var("OTEL_ENV")
+        .or_else(|_| std::env::var("SOUFFLEUR_ENV"))
+        .unwrap_or_else(|_| "dev".into());
+
     // Build tracer provider with resource identification
     let resource = opentelemetry_sdk::Resource::builder()
         .with_service_name(prefix.to_string())
+        .with_attribute(opentelemetry::KeyValue::new(
+            "deployment.environment",
+            environment.clone(),
+        ))
         .build();
     let mut builder = SdkTracerProvider::builder().with_resource(resource);
 
@@ -78,7 +87,10 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
             Ok(exporter) => {
                 builder = builder.with_batch_exporter(exporter);
                 let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap();
-                eprintln!("[telemetry] OTLP exporter → {endpoint}");
+                let project = std::env::var("LANGSMITH_PROJECT").unwrap_or_default();
+                eprintln!(
+                    "[telemetry] OTLP exporter → {endpoint} [{environment}] project={project}"
+                );
                 true
             }
             Err(e) => {
