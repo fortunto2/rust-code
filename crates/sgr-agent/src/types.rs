@@ -281,10 +281,31 @@ pub struct LlmConfig {
     /// OpenAI prompt cache key — caches system prompt prefix server-side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Vertex AI project ID (enables Vertex routing when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Vertex AI location (default: "global").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
 }
 
 fn default_temperature() -> f64 {
     0.7
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            api_key: None,
+            base_url: None,
+            temp: default_temperature(),
+            max_tokens: None,
+            prompt_cache_key: None,
+            project_id: None,
+            location: None,
+        }
+    }
 }
 
 impl LlmConfig {
@@ -292,11 +313,7 @@ impl LlmConfig {
     pub fn auto(model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
-            api_key: None,
-            base_url: None,
-            temp: default_temperature(),
-            max_tokens: None,
-            prompt_cache_key: None,
+            ..Default::default()
         }
     }
 
@@ -305,10 +322,7 @@ impl LlmConfig {
         Self {
             model: model.into(),
             api_key: Some(api_key.into()),
-            base_url: None,
-            temp: default_temperature(),
-            max_tokens: None,
-            prompt_cache_key: None,
+            ..Default::default()
         }
     }
 
@@ -322,10 +336,24 @@ impl LlmConfig {
             model: model.into(),
             api_key: Some(api_key.into()),
             base_url: Some(base_url.into()),
-            temp: default_temperature(),
-            max_tokens: None,
-            prompt_cache_key: None,
+            ..Default::default()
         }
+    }
+
+    /// Vertex AI — uses gcloud ADC for auth (no API key needed).
+    pub fn vertex(project_id: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            project_id: Some(project_id.into()),
+            location: Some("global".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Set Vertex AI location.
+    pub fn location(mut self, loc: impl Into<String>) -> Self {
+        self.location = Some(loc.into());
+        self
     }
 
     /// Set temperature.
@@ -344,6 +372,39 @@ impl LlmConfig {
     pub fn prompt_cache_key(mut self, key: impl Into<String>) -> Self {
         self.prompt_cache_key = Some(key.into());
         self
+    }
+
+    /// Human-readable label for display.
+    pub fn label(&self) -> String {
+        if self.project_id.is_some() {
+            format!("Vertex ({})", self.model)
+        } else if self.base_url.is_some() {
+            format!("Custom ({})", self.model)
+        } else {
+            self.model.clone()
+        }
+    }
+
+    /// Infer a cheap/fast model for compaction based on the primary model.
+    pub fn compaction_model(&self) -> String {
+        if self.model.starts_with("gemini") {
+            "gemini-2.0-flash-lite".into()
+        } else if self.model.starts_with("gpt") {
+            "gpt-4o-mini".into()
+        } else if self.model.starts_with("claude") {
+            "claude-3-haiku-20240307".into()
+        } else {
+            // Unknown provider — use the same model
+            self.model.clone()
+        }
+    }
+
+    /// Create a compaction config — cheap model, low max_tokens.
+    pub fn for_compaction(&self) -> Self {
+        let mut cfg = self.clone();
+        cfg.model = self.compaction_model();
+        cfg.max_tokens = Some(2048);
+        cfg
     }
 }
 

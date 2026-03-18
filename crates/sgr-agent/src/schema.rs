@@ -40,8 +40,14 @@ pub fn response_schema_for<T: JsonSchema>() -> Value {
 fn clean_schema(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
         obj.remove("$schema");
-        // Gemini doesn't support "title" at top level in some contexts
-        // but it's fine for readability — keep it
+
+        // OpenAI requires "properties" on object schemas (even if empty).
+        // schemars omits it for empty structs → {"type": "object"}.
+        if obj.get("type").and_then(|v| v.as_str()) == Some("object")
+            && !obj.contains_key("properties")
+        {
+            obj.insert("properties".into(), Value::Object(serde_json::Map::new()));
+        }
 
         // Recursively clean nested schemas
         if let Some(props) = obj.get_mut("properties") {

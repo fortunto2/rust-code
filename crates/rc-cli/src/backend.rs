@@ -6,6 +6,7 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sgr_agent::client::LlmClient;
 use sgr_agent::tool::tool;
 
 /// System prompt for native function calling mode (Gemini/Vertex).
@@ -48,34 +49,30 @@ The `apply_patch` tool uses a patch format:
 "#;
 
 // ---------------------------------------------------------------------------
-// Provider enum
+// Provider — wraps LlmConfig for unified LLM access
 // ---------------------------------------------------------------------------
 
-/// LLM provider configuration.
+/// LLM provider wrapping `LlmConfig`. Provider is auto-detected from model name
+/// by the genai crate. Auth comes from env vars or explicit api_key in config.
 #[derive(Debug, Clone)]
-pub enum SgrProvider {
-    Gemini {
-        api_key: String,
-        model: String,
-    },
-    OpenAI {
-        api_key: String,
-        model: String,
-        base_url: Option<String>,
-    },
-    /// Vertex AI — uses gcloud ADC (Application Default Credentials).
-    /// No API key needed, uses `gcloud auth application-default print-access-token`.
-    Vertex {
-        project_id: String,
-        model: String,
-        location: String,
-    },
-    /// Gemini CLI subprocess — direct `gemini -p` call, read stdout.
-    /// Uses CLI subscription (no API key needed).
-    GeminiCli {
-        model: Option<String>,
-        sandbox: bool,
-    },
+pub struct LlmProvider {
+    pub config: sgr_agent::LlmConfig,
+}
+
+impl LlmProvider {
+    pub fn new(config: sgr_agent::LlmConfig) -> Self {
+        Self { config }
+    }
+
+    /// Human-readable label for TUI/logs.
+    pub fn label(&self) -> String {
+        self.config.label()
+    }
+
+    /// Model name.
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -559,29 +556,15 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
 // SGR backend: call LLM and parse response
 // ---------------------------------------------------------------------------
 
-impl SgrProvider {
-    /// Call LLM and parse into SgrNextStep.
-    /// Gemini/Vertex use native function calling (structured plan + tool calls).
-    /// OpenAI/GeminiCli use flexible text parsing (legacy).
+impl LlmProvider {
+    /// Call LLM with native function calling via genai.
+    /// All providers (Gemini, OpenAI, Anthropic, Vertex) go through the same path.
     pub async fn call_flexible(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
-        match self {
-            SgrProvider::Gemini { .. } | SgrProvider::Vertex { .. } => {
-                self.call_native(messages).await
-            }
-            SgrProvider::OpenAI { .. } | SgrProvider::GeminiCli { .. } => {
-                self.call_flexible_legacy(messages).await
-            }
-        }
-    }
-
-    /// Native function calling with functionDeclarations.
-    /// Model returns text (situation analysis) + functionCall parts (tool invocations).
-    async fn call_native(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
-        let tools = sgr_tool_defs();
+        static TOOLS: std::sync::LazyLock<Vec<sgr_agent::tool::ToolDef>> =
+            std::sync::LazyLock::new(sgr_tool_defs);
+        let tools = &*TOOLS;
 
         // Replace JSON-only system prompt with function calling prompt.
-        // The original prompt tells model to respond with JSON, but with native
-        // function calling the model should write text analysis + call functions.
         let messages: Vec<sgr_agent::Message> = messages
             .iter()
             .map(|m| {
@@ -595,11 +578,11 @@ impl SgrProvider {
             })
             .collect();
 
-        let client = self.make_gemini_client().await?;
-        let tool_calls = client
+        let llm = self.make_llm_client();
+        let tool_calls = llm
             .tools_call(&messages, &tools)
             .await
-            .map_err(|e| anyhow::anyhow!("SGR native FC error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
 
         let actions: Vec<SgrAction> = tool_calls
             .iter()
@@ -607,8 +590,6 @@ impl SgrProvider {
             .collect();
 
         if actions.is_empty() {
-            // Model responded without tool calls — treat as implicit finish.
-            // This happens when the model thinks the task is done.
             return Ok(SgrNextStep {
                 situation: "Model completed without explicit tool call.".into(),
                 task: vec![],
@@ -618,7 +599,6 @@ impl SgrProvider {
             });
         }
 
-        // Extract situation from a finish tool if present, otherwise generic
         let situation = actions
             .iter()
             .find_map(|a| {
@@ -633,7 +613,7 @@ impl SgrProvider {
         tracing::info!(
             n = actions.len(),
             situation = situation.as_str(),
-            "SGR native function calling"
+            "LLM function calling"
         );
 
         Ok(SgrNextStep {
@@ -643,127 +623,18 @@ impl SgrProvider {
         })
     }
 
-    /// Create a GeminiClient for this provider.
-    pub async fn make_gemini_client(&self) -> Result<sgr_agent::gemini::GeminiClient> {
-        match self {
-            SgrProvider::Gemini { api_key, model } => {
-                let mut config = sgr_agent::ProviderConfig::gemini(api_key, model);
-                config.max_tokens = Some(4096);
-                Ok(sgr_agent::gemini::GeminiClient::new(config))
-            }
-            SgrProvider::Vertex {
-                project_id,
-                model,
-                location,
-            } => {
-                let access_token = get_gcloud_access_token().await?;
-                let mut config =
-                    sgr_agent::ProviderConfig::vertex(&access_token, project_id, model);
-                config.location = Some(location.clone());
-                config.max_tokens = Some(4096);
-                Ok(sgr_agent::gemini::GeminiClient::new(config))
-            }
-            _ => Err(anyhow::anyhow!(
-                "make_gemini_client: not a Gemini/Vertex provider"
-            )),
+    /// Create an LlmClient from this provider's config.
+    pub fn make_llm_client(&self) -> sgr_agent::Llm {
+        let mut cfg = self.config.clone();
+        if cfg.max_tokens.is_none() {
+            cfg.max_tokens = Some(4096);
         }
+        sgr_agent::Llm::new(&cfg)
     }
 
     /// Create a fast/cheap LlmClient for context compaction (summarization).
-    /// Uses Flash Lite model to keep costs low.
-    pub async fn make_compaction_client(&self) -> Result<Box<dyn sgr_agent::client::LlmClient>> {
-        match self {
-            SgrProvider::Gemini { api_key, .. } => {
-                let mut config =
-                    sgr_agent::ProviderConfig::gemini(api_key, "gemini-2.0-flash-lite");
-                config.max_tokens = Some(2048);
-                Ok(Box::new(sgr_agent::gemini::GeminiClient::new(config)))
-            }
-            SgrProvider::Vertex {
-                project_id,
-                location,
-                ..
-            } => {
-                let access_token = get_gcloud_access_token().await?;
-                let mut config = sgr_agent::ProviderConfig::vertex(
-                    &access_token,
-                    project_id,
-                    "gemini-2.0-flash-lite",
-                );
-                config.location = Some(location.clone());
-                config.max_tokens = Some(2048);
-                Ok(Box::new(sgr_agent::gemini::GeminiClient::new(config)))
-            }
-            SgrProvider::OpenAI {
-                api_key, base_url, ..
-            } => {
-                let mut config = sgr_agent::ProviderConfig::openai(api_key, "gpt-4o-mini");
-                if let Some(url) = base_url {
-                    config.base_url = Some(url.clone());
-                }
-                config.max_tokens = Some(2048);
-                Ok(Box::new(sgr_agent::openai::OpenAIClient::new(config)))
-            }
-            SgrProvider::GeminiCli { .. } => Err(anyhow::anyhow!(
-                "Compaction not supported with GeminiCli provider"
-            )),
-        }
-    }
-
-    /// Legacy flexible text parsing for OpenAI/GeminiCli.
-    async fn call_flexible_legacy(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
-        let resp = match self {
-            SgrProvider::OpenAI {
-                api_key,
-                model,
-                base_url,
-            } => {
-                let mut config = sgr_agent::ProviderConfig::openai(api_key, model);
-                config.base_url = base_url.clone();
-                config.max_tokens = Some(4096);
-                let client = sgr_agent::openai::OpenAIClient::new(config);
-                client
-                    .flexible::<SgrNextStep>(messages)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("SGR OpenAI error: {}", e))?
-            }
-            SgrProvider::GeminiCli { model, sandbox } => {
-                let raw_text = run_gemini_cli(messages, model.as_deref(), *sandbox).await?;
-                let normalized = normalize_cli_json(&raw_text);
-                let output =
-                    sgr_agent::flexible_parser::parse_flexible_coerced::<SgrNextStep>(&normalized)
-                        .map(|r| r.value)
-                        .ok();
-                sgr_agent::SgrResponse {
-                    output,
-                    tool_calls: vec![],
-                    raw_text,
-                    usage: None,
-                    rate_limit: None,
-                }
-            }
-            _ => unreachable!("call_flexible_legacy only for OpenAI/GeminiCli"),
-        };
-
-        // If structured parsing succeeded, return it
-        if let Some(step) = resp.output {
-            return Ok(step);
-        }
-
-        // Text fallback: model responded with prose instead of JSON.
-        let text = resp.raw_text.trim();
-        if !text.is_empty() {
-            tracing::warn!("SGR text fallback: model returned prose, wrapping in finish");
-            Ok(SgrNextStep {
-                situation: "Model responded with text instead of structured JSON.".into(),
-                task: vec!["Deliver the model's response to the user.".into()],
-                actions: vec![SgrAction::Finish {
-                    summary: text.to_string(),
-                }],
-            })
-        } else {
-            Err(anyhow::anyhow!("SGR: empty response from model"))
-        }
+    pub fn make_compaction_client(&self) -> Box<dyn sgr_agent::client::LlmClient> {
+        Box::new(sgr_agent::Llm::new(&self.config.for_compaction()))
     }
 }
 
@@ -878,225 +749,8 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini CLI subprocess
+// Helpers
 // ---------------------------------------------------------------------------
-
-/// Get a fresh access token from gcloud.
-/// Tries ADC first, falls back to user credentials.
-/// Token is short-lived (~1h), so we get a new one per LLM call.
-async fn get_gcloud_access_token() -> Result<String> {
-    // Try ADC first
-    let output = tokio::process::Command::new("gcloud")
-        .args(["auth", "application-default", "print-access-token"])
-        .output()
-        .await;
-
-    if let Ok(ref out) = output {
-        if out.status.success() {
-            let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !token.is_empty() {
-                return Ok(token);
-            }
-        }
-    }
-
-    // Fall back to user credentials
-    let output = tokio::process::Command::new("gcloud")
-        .args(["auth", "print-access-token"])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to run gcloud: {}. Is it installed?", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!(
-            "gcloud auth failed: {}. Run: gcloud auth login",
-            stderr.trim()
-        ));
-    }
-
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if token.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Empty gcloud token. Run: gcloud auth login"
-        ));
-    }
-    Ok(token)
-}
-
-/// Normalize LLM JSON output to match SgrNextStep schema.
-/// Handles common deviations:
-/// - "tool" → "tool_name"
-/// - "parameters": {...} → flatten into action object
-/// - "response"/"message"/"text"/"result" → "summary" (for finish tool)
-fn normalize_cli_json(raw: &str) -> String {
-    // Extract JSON from markdown blocks first
-    let json_str = if let Some(start) = raw.find("```") {
-        let after_ticks = &raw[start + 3..];
-        // Skip optional language tag
-        let content_start = after_ticks.find('\n').map(|i| i + 1).unwrap_or(0);
-        let content = &after_ticks[content_start..];
-        if let Some(end) = content.find("```") {
-            content[..end].trim()
-        } else {
-            content.trim()
-        }
-    } else {
-        raw.trim()
-    };
-
-    // Parse as JSON Value for manipulation
-    let mut val: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return raw.to_string(), // can't parse, return original for flexible parser
-    };
-
-    // Ensure required top-level fields exist
-    if !val.get("situation").is_some_and(|v| v.is_string()) {
-        val["situation"] = serde_json::json!("Executing...");
-    }
-    if !val.get("task").is_some_and(|v| v.is_array()) {
-        val["task"] = serde_json::json!(["Execute actions"]);
-    }
-
-    // Normalize actions array
-    if let Some(actions) = val.get_mut("actions").and_then(|a| a.as_array_mut()) {
-        for action in actions.iter_mut() {
-            if let Some(obj) = action.as_object_mut() {
-                // "tool" → "tool_name"
-                if obj.contains_key("tool") && !obj.contains_key("tool_name") {
-                    if let Some(tool_val) = obj.remove("tool") {
-                        obj.insert("tool_name".into(), tool_val);
-                    }
-                }
-                // Flatten "parameters" into action object
-                if let Some(params) = obj.remove("parameters") {
-                    if let Some(params_obj) = params.as_object() {
-                        for (k, v) in params_obj {
-                            if !obj.contains_key(k) {
-                                obj.insert(k.clone(), v.clone());
-                            }
-                        }
-                    }
-                }
-                // "file_path" → "path" (common LLM deviation)
-                if obj.contains_key("file_path") && !obj.contains_key("path") {
-                    if let Some(v) = obj.remove("file_path") {
-                        obj.insert("path".into(), v);
-                    }
-                }
-                // Normalize finish tool: "response"/"message"/"text"/"result" → "summary"
-                if obj.get("tool_name").and_then(|v| v.as_str()) == Some("finish") {
-                    if !obj.contains_key("summary") {
-                        for alt in &["response", "message", "text", "result", "content"] {
-                            if let Some(v) = obj.remove(*alt) {
-                                obj.insert("summary".into(), v);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    serde_json::to_string(&val).unwrap_or_else(|_| raw.to_string())
-}
-
-/// Run `gemini -p` subprocess and return raw stdout text.
-async fn run_gemini_cli(
-    messages: &[sgr_agent::Message],
-    model: Option<&str>,
-    sandbox: bool,
-) -> Result<String> {
-    use tokio::process::Command;
-
-    // Merge messages into a single prompt (system + user + assistant history)
-    let prompt = messages
-        .iter()
-        .map(|m| {
-            let prefix = match m.role {
-                sgr_agent::Role::System => "[System]",
-                sgr_agent::Role::User => "[User]",
-                sgr_agent::Role::Assistant => "[Assistant]",
-                sgr_agent::Role::Tool => "[Tool Result]",
-            };
-            format!("{}\n{}", prefix, m.content)
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let mut cmd = Command::new("gemini");
-    cmd.arg("-p").arg(&prompt);
-    cmd.arg("--output-format").arg("json"); // structured envelope with response + stats
-    cmd.arg("--yolo"); // auto-accept if tools present
-    cmd.arg("-e").arg(""); // no extensions = pure LLM proxy (no tools)
-
-    if let Some(m) = model {
-        cmd.arg("-m").arg(m);
-    }
-    if sandbox {
-        cmd.arg("--sandbox");
-    }
-
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    tracing::info!(
-        model = model.unwrap_or("default"),
-        sandbox,
-        prompt_len = prompt.len(),
-        "gemini_cli_start"
-    );
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to run `gemini`: {}. Is it installed?", e))?;
-
-    if !output.status.success() && output.stdout.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("gemini CLI error: {}", stderr.trim()));
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout).to_string();
-
-    // Parse JSON envelope: {"session_id": "...", "response": "...", "stats": {...}}
-    let response_text = if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(&text) {
-        if let Some(resp) = envelope.get("response").and_then(|r| r.as_str()) {
-            // Log token stats if available
-            if let Some(stats) = envelope.get("stats") {
-                if let Some(tokens) = stats.pointer("/models/gemini-2.5-flash/tokens") {
-                    tracing::info!(
-                        input = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0),
-                        output = tokens
-                            .get("candidates")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        "gemini_cli_tokens"
-                    );
-                }
-            }
-            resp.to_string()
-        } else {
-            text.clone()
-        }
-    } else {
-        // Not JSON envelope — clean up text output
-        text.lines()
-            .filter(|l| {
-                !l.contains("GOOGLE_API_KEY and GEMINI_API_KEY are set")
-                    && !l.starts_with("Loading extension:")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string()
-    };
-
-    tracing::info!(output_len = response_text.len(), "gemini_cli_done");
-    Ok(response_text)
-}
 
 /// Convert (role, content) pairs to sgr-agent Messages.
 pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> {

@@ -37,7 +37,18 @@ impl GenaiClient {
     }
 
     /// Create from LlmConfig — routes by api_key × base_url matrix.
+    /// Vertex AI: when `project_id` is set, uses gcloud ADC with AuthResolver.
     pub(crate) fn from_config(config: &crate::types::LlmConfig) -> Self {
+        // Vertex AI — needs per-request auth via gcloud
+        if let Some(ref project_id) = config.project_id {
+            let location = config.location.as_deref().unwrap_or("global").to_string();
+            let mut client = Self::vertex_ai(project_id, &location, &config.model);
+            client.temperature = Some(config.temp);
+            client.max_tokens = config.max_tokens;
+            client.prompt_cache_key = config.prompt_cache_key.clone();
+            return client;
+        }
+
         let mut client = match (&config.api_key, &config.base_url) {
             (Some(key), Some(url)) => Self::custom_endpoint(key, url, &config.model),
             (Some(key), None) => Self::with_api_key(key, &config.model),
@@ -51,6 +62,62 @@ impl GenaiClient {
         client.max_tokens = config.max_tokens;
         client.prompt_cache_key = config.prompt_cache_key.clone();
         client
+    }
+
+    /// Create for Vertex AI using gcloud ADC (Application Default Credentials).
+    /// Calls `gcloud auth print-access-token` per request for auth.
+    fn vertex_ai(project_id: &str, location: &str, model: impl Into<String>) -> Self {
+        use genai::resolver::{AuthData, AuthResolver};
+        use genai::{Headers, ModelIden};
+        use std::pin::Pin;
+        use std::sync::Arc;
+
+        let project_id: Arc<str> = project_id.into();
+        let location: Arc<str> = location.into();
+
+        let resolve_fn = move |model: ModelIden| -> Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Option<AuthData>, genai::resolver::Error>>
+                    + Send
+                    + 'static,
+            >,
+        > {
+            let project_id = project_id.clone();
+            let location = location.clone();
+            Box::pin(async move {
+                let output = tokio::process::Command::new("gcloud")
+                    .args(["auth", "print-access-token"])
+                    .output()
+                    .await
+                    .map_err(|e| genai::resolver::Error::Custom(format!("gcloud error: {e}")))?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(genai::resolver::Error::Custom(format!(
+                        "gcloud auth failed: {stderr}"
+                    )));
+                }
+
+                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let url = format!(
+                    "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/{}:generateContent",
+                    model.model_name
+                );
+
+                let auth_value = format!("Bearer {token}");
+                let auth_header = Headers::from(("Authorization", auth_value));
+                Ok(Some(AuthData::RequestOverride {
+                    headers: auth_header,
+                    url,
+                }))
+            })
+        };
+
+        let auth_resolver = AuthResolver::from_resolver_async_fn(resolve_fn);
+        let client = genai::Client::builder()
+            .with_auth_resolver(auth_resolver)
+            .build();
+        Self::new(client, model)
     }
 
     /// Create with default genai Client (uses env vars for auth).

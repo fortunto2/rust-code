@@ -137,66 +137,117 @@ impl Config {
             }
         }
 
-        // API key fallback chain
-        if self.api_key.is_none() {
-            if let Ok(v) = std::env::var("GEMINI_API_KEY") {
-                self.api_key = Some(v);
-            }
-        }
-        if self.api_key.is_none() {
-            if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-                self.api_key = Some(v);
-            }
-        }
-        if self.project_id.is_none() {
-            if let Ok(v) = std::env::var("GOOGLE_CLOUD_PROJECT") {
-                self.project_id = Some(v);
-            }
-        }
+        // Note: API keys and project IDs are NOT merged from env here.
+        // genai auto-detects the correct key from env based on model name.
+        // Vertex project ID is resolved by detect_gcloud_project() in to_llm_config().
     }
 
-    /// Resolve provider from config.
-    /// Returns SgrProvider suitable for the agent.
-    pub fn resolve_provider(&self) -> Option<crate::backend::SgrProvider> {
-        let provider = self.provider.as_deref().unwrap_or("gemini");
+    /// Build LlmConfig from config layers.
+    ///
+    /// Priority: `model_override` (--model flag) → config model → env auto-detect.
+    /// When `model` is set, genai auto-detects provider from name (gpt-* → OpenAI, etc.).
+    /// When `provider` is set explicitly, it determines the default model.
+    pub fn to_llm_config(&self, model_override: Option<String>) -> Option<sgr_agent::LlmConfig> {
+        use sgr_agent::LlmConfig;
 
-        match provider {
-            "gemini" => {
-                let api_key = self.api_key.clone()?;
-                let model = self
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| "gemini-2.5-flash".into());
-                Some(crate::backend::SgrProvider::Gemini { api_key, model })
+        let provider = self.provider.as_deref();
+
+        // Vertex needs special handling (project_id + location)
+        if provider == Some("vertex") {
+            let project_id = self
+                .project_id
+                .clone()
+                .or_else(|| detect_gcloud_project())?;
+            let model = model_override
+                .or_else(|| self.model.clone())
+                .unwrap_or_else(|| "gemini-3.1-pro-preview".into());
+            let location = self.location.clone().unwrap_or_else(|| "global".into());
+            return Some(LlmConfig::vertex(project_id, model).location(location));
+        }
+
+        // Determine model: --model flag → config → provider default → env auto-detect
+        let model = model_override.or_else(|| self.model.clone()).or_else(|| {
+            match provider {
+                Some("gemini" | "google") => Some("gemini-3.1-pro-preview".into()),
+                Some("openai") => Some("gpt-4o".into()),
+                Some("claude" | "anthropic") => Some("claude-sonnet-4-20250514".into()),
+                _ => {
+                    // No provider specified — detect from available env vars
+                    if std::env::var("GEMINI_API_KEY").is_ok() {
+                        Some("gemini-3.1-pro-preview".into())
+                    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+                        Some("gpt-4o".into())
+                    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                        Some("claude-sonnet-4-20250514".into())
+                    } else if std::env::var("OPENROUTER_API_KEY").is_ok() {
+                        Some("google/gemini-2.5-flash".into())
+                    } else {
+                        None
+                    }
+                }
             }
-            "vertex" => {
-                let project_id = self.project_id.clone()?;
-                let model = self
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| "gemini-2.5-flash".into());
-                let location = self.location.clone().unwrap_or_else(|| "global".into());
-                Some(crate::backend::SgrProvider::Vertex {
-                    project_id,
-                    model,
-                    location,
-                })
-            }
-            "openai" => {
-                let api_key = self.api_key.clone()?;
-                let model = self.model.clone().unwrap_or_else(|| "gpt-4o".into());
-                Some(crate::backend::SgrProvider::OpenAI {
-                    api_key,
-                    model,
-                    base_url: self.base_url.clone(),
-                })
-            }
-            _ => {
-                tracing::warn!("Unknown provider: {}", provider);
-                None
+        });
+
+        let model = model?;
+
+        // If explicit api_key in config file, use it
+        if let Some(ref key) = self.api_key {
+            let mut cfg = LlmConfig::with_key(key, &model);
+            cfg.base_url = self.base_url.clone();
+            return Some(cfg);
+        }
+
+        // Custom base_url from config
+        if let Some(ref url) = self.base_url {
+            return Some(LlmConfig::endpoint("", url, &model));
+        }
+
+        // OpenRouter — needs explicit base_url
+        if model.contains('/') {
+            // Slash in model name = OpenRouter format (e.g. "google/gemini-2.5-flash")
+            if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+                return Some(LlmConfig::endpoint(
+                    key,
+                    "https://openrouter.ai/api/v1",
+                    &model,
+                ));
             }
         }
+
+        // Pure auto — genai detects provider from model name, uses env vars
+        Some(LlmConfig::auto(&model))
     }
+}
+
+/// Detect GCP project from env or gcloud config.
+fn detect_gcloud_project() -> Option<String> {
+    if let Ok(p) = std::env::var("VERTEX_PROJECT") {
+        if !p.is_empty() {
+            return Some(p);
+        }
+    }
+    if let Ok(p) = std::env::var("GOOGLE_CLOUD_PROJECT") {
+        if !p.is_empty() {
+            return Some(p);
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    let adc_path =
+        std::path::PathBuf::from(&home).join(".config/gcloud/application_default_credentials.json");
+    if !adc_path.exists() {
+        return None;
+    }
+    let output = std::process::Command::new("gcloud")
+        .args(["config", "get-value", "project"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let project = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !project.is_empty() && !project.contains("unset") {
+            return Some(project);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

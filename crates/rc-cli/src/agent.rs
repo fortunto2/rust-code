@@ -1,4 +1,4 @@
-use crate::backend::{self, SgrAction, SgrNextStep, SgrProvider};
+use crate::backend::{self, LlmProvider, SgrAction, SgrNextStep};
 use crate::tools::{
     FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_diff, git_status,
     is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
@@ -77,8 +77,8 @@ pub struct Agent {
     mcp: Option<McpManager>,
     step_count: usize,
     last_input_chars: usize,
-    /// LLM provider (SGR pure Rust HTTP).
-    provider: Option<SgrProvider>,
+    /// LLM provider (via LlmConfig — auto-detects from model name).
+    provider: Option<LlmProvider>,
     /// Current user intent for action filtering.
     pub intent: Intent,
     /// Pluggable hint sources.
@@ -368,7 +368,9 @@ impl Agent {
         self.last_input_chars = input_chars;
 
         let provider = self.provider.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("No LLM provider configured. Use --sgr or set GEMINI_API_KEY.")
+            anyhow::anyhow!(
+                "No LLM provider configured. Set model in config.toml or use --model flag."
+            )
         })?;
 
         let mut sgr_msgs = backend::msgs_to_sgr_messages(&history);
@@ -417,13 +419,7 @@ impl Agent {
 
         tracing::info!("Context compaction triggered ({} messages)", msgs.len());
 
-        let client = match provider.make_compaction_client().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Compaction client error: {}, falling back to trim", e);
-                return;
-            }
-        };
+        let client = provider.make_compaction_client();
 
         let mut sgr_msgs = msgs;
         match compactor.compact(client.as_ref(), &mut sgr_msgs).await {
@@ -469,7 +465,7 @@ impl Agent {
     }
 
     /// Set LLM provider.
-    pub fn set_provider(&mut self, provider: SgrProvider) {
+    pub fn set_provider(&mut self, provider: LlmProvider) {
         self.provider = Some(provider);
     }
 
@@ -1147,15 +1143,7 @@ impl Agent {
                 };
 
                 // Create sub-agent's LLM client + agent + tools
-                let client = match provider.make_gemini_client().await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        return Ok(ActionResult {
-                            output: format!("Failed to create LLM client for sub-agent: {}", e),
-                            done: false,
-                        });
-                    }
-                };
+                let client = provider.make_llm_client();
 
                 let sub_prompt = format!(
                     "You are a {} sub-agent. Complete the task efficiently. Respond with JSON only.",

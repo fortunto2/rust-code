@@ -774,7 +774,7 @@ pub struct App<'a> {
     pub skills_search_seq: u64,
     pub context_map: ContextMap,
     pub tick_count: u32,
-    pub provider_override: Option<backend::SgrProvider>,
+    pub provider_override: Option<backend::LlmProvider>,
     /// Slash command autocomplete popup.
     pub command_palette: CommandPalette,
     /// Temporary output from slash commands (shown near input, not in chat).
@@ -954,7 +954,7 @@ impl<'a> App<'a> {
     }
 
     /// Set provider override (propagated to agent on run).
-    pub fn set_provider_override(&mut self, provider: backend::SgrProvider) {
+    pub fn set_provider_override(&mut self, provider: backend::LlmProvider) {
         self.provider_override = Some(provider);
     }
 
