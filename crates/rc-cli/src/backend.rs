@@ -233,7 +233,12 @@ pub enum SgrAction {
     #[serde(rename = "delegate_task")]
     DelegateTask {
         agent: String,
-        task: String,
+        /// Free-text task description. Optional if task_path is given.
+        #[serde(default)]
+        task: Option<String>,
+        /// Path to a task file (.tasks/005-fix-bug.md). Agent reads it, executes, updates status.
+        #[serde(default)]
+        task_path: Option<String>,
         #[serde(default)]
         cwd: Option<String>,
     },
@@ -498,10 +503,14 @@ struct ApiParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct DelegateTaskParams {
-    /// CLI agent to delegate to: "claude", "gemini", or "codex".
+    /// CLI agent: "claude", "gemini", "codex", "opencode", "rust-code".
     agent: String,
-    /// Task description for the delegate agent.
-    task: String,
+    /// Free-text task description. Optional if task_path is given.
+    #[serde(default)]
+    task: Option<String>,
+    /// Path to a .tasks/ file. Agent reads it, executes, updates status to done.
+    #[serde(default)]
+    task_path: Option<String>,
     /// Working directory (default: current cwd).
     #[serde(default)]
     cwd: Option<String>,
@@ -585,9 +594,10 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
         ),
         tool::<DelegateTaskParams>(
             "delegate_task",
-            "Delegate a complex task to a powerful CLI agent (claude/gemini/codex/opencode/rust-code). \
-             Runs as a full autonomous agent in tmux background. Returns delegate ID immediately. \
-             Use delegate_status to check progress, delegate_result to get output when done.",
+            "Delegate a task to a CLI agent (claude/gemini/codex/opencode/rust-code). \
+             Give either a free-text 'task' or a 'task_path' to a .tasks/ file. \
+             When task_path is used, the agent reads the file, executes, and updates status to done. \
+             Runs in tmux background. The agent inherits CLAUDE.md and project context automatically.",
         ),
         tool::<DelegateStatusParams>(
             "delegate_status",
@@ -795,7 +805,8 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
         }),
         "delegate_task" => Some(SgrAction::DelegateTask {
             agent: s("agent"),
-            task: s("task"),
+            task: s_opt("task"),
+            task_path: s_opt("task_path"),
             cwd: s_opt("cwd"),
         }),
         "delegate_status" => Some(SgrAction::DelegateStatus { id: s_opt("id") }),

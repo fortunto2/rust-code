@@ -138,7 +138,7 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - agent_status: {tool_name, agent_id?} — check sub-agent status
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
 - api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2"), "list". Use "api list" to see all available APIs with descriptions. For web search/research, try loading "searxng" API and calling its search endpoint.
-- delegate_task: {tool_name, agent, task, cwd?} — delegate complex task to a powerful CLI agent (claude/gemini/codex/opencode/rust-code). Runs full autonomous agent in tmux. Returns delegate ID.
+- delegate_task: {tool_name, agent, task?, task_path?, cwd?} — delegate to CLI agent (claude/gemini/codex/opencode/rust-code). Use task for free-text, or task_path for .tasks/ file (agent reads it, executes, updates status). Runs in tmux.
 - delegate_status: {tool_name, id?} — check delegate status (omit id for all)
 - delegate_result: {tool_name, id} — get output from completed delegate
 
@@ -1439,7 +1439,12 @@ impl Agent {
                     }),
                 }
             }
-            SgrAction::DelegateTask { agent, task, cwd } => {
+            SgrAction::DelegateTask {
+                agent,
+                task,
+                task_path,
+                cwd,
+            } => {
                 let delegate_agent = match DelegateAgent::from_name(agent) {
                     Some(a) => a,
                     None => {
@@ -1458,18 +1463,31 @@ impl Agent {
                     .unwrap_or_else(|| self.cwd.lock().unwrap().clone());
 
                 let mut mgr = self.delegate_mgr.lock().await;
-                match mgr.spawn(delegate_agent, task, &work_dir).await {
-                    Ok(id) => Ok(ActionResult {
-                        output: format!(
-                            "Delegated to {} (id: {})\nTask: {}\nCwd: {}\n\n\
-                             Use delegate_status to check progress, delegate_result to get output.",
-                            agent,
-                            id,
-                            task,
-                            work_dir.display()
-                        ),
-                        done: false,
-                    }),
+                match mgr
+                    .spawn(
+                        delegate_agent,
+                        task.as_deref(),
+                        task_path.as_deref(),
+                        &work_dir,
+                    )
+                    .await
+                {
+                    Ok(id) => {
+                        let label = task_path
+                            .as_deref()
+                            .unwrap_or(task.as_deref().unwrap_or("(no task)"));
+                        Ok(ActionResult {
+                            output: format!(
+                                "Delegated to {} (id: {})\nTask: {}\nCwd: {}\n\n\
+                                 Use delegate_status to check progress, delegate_result to get output.",
+                                agent,
+                                id,
+                                label,
+                                work_dir.display()
+                            ),
+                            done: false,
+                        })
+                    }
                     Err(e) => Ok(ActionResult {
                         output: format!("Failed to delegate: {}", e),
                         done: false,
@@ -1670,8 +1688,14 @@ impl SgrAgent for Agent {
             Action::Api {
                 action, api_name, ..
             } => format!("api:{}:{}", action, api_name.as_deref().unwrap_or("?")),
-            Action::DelegateTask { agent, task, .. } => {
-                format!("delegate:{}:{}", agent, &task[..task.len().min(40)])
+            Action::DelegateTask {
+                agent,
+                task,
+                task_path,
+                ..
+            } => {
+                let label = task_path.as_deref().or(task.as_deref()).unwrap_or("?");
+                format!("delegate:{}:{}", agent, &label[..label.len().min(40)])
             }
             Action::DelegateStatus { id } => format!("delegate_status:{:?}", id),
             Action::DelegateResult { id } => format!("delegate_result:{}", id),
