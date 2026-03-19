@@ -76,9 +76,10 @@ impl DelegateAgent {
 
         match self {
             Self::Claude => {
+                // text output so tmux shows live progress (results go to task file)
                 format!(
                     "{cd} && CLAUDECODE='' claude -p '{escaped_task}' \
-                     --output-format json --dangerously-skip-permissions --verbose"
+                     --dangerously-skip-permissions --verbose"
                 )
             }
             Self::Gemini => {
@@ -91,7 +92,7 @@ impl DelegateAgent {
                 )
             }
             Self::OpenCode => {
-                format!("{cd} && opencode run '{escaped_task}' --format json")
+                format!("{cd} && opencode run '{escaped_task}'")
             }
             Self::RustCode => {
                 format!("{cd} && rust-code -p '{escaped_task}' --loop 5")
@@ -411,7 +412,7 @@ mod tests {
     fn build_command_claude() {
         let cmd = DelegateAgent::Claude.build_command("fix the bug", Path::new("/tmp/project"));
         assert!(cmd.contains("claude -p"));
-        assert!(cmd.contains("--output-format json"));
+        assert!(cmd.contains("--dangerously-skip-permissions"));
         assert!(cmd.contains("CLAUDECODE=''"));
         assert!(cmd.contains("cd '/tmp/project'"));
     }
@@ -434,7 +435,7 @@ mod tests {
     fn build_command_opencode() {
         let cmd = DelegateAgent::OpenCode.build_command("analyze", Path::new("/tmp"));
         assert!(cmd.contains("opencode run"));
-        assert!(cmd.contains("--format json"));
+        assert!(cmd.contains("opencode run"));
     }
 
     #[test]
