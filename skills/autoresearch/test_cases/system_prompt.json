@@ -1,0 +1,102 @@
+[
+  {
+    "task": "Read the contents of src/main.rs and explain what it does",
+    "expected_tool": "read_file",
+    "expected_behavior": "Should read the file first, not try to explain without reading"
+  },
+  {
+    "task": "Fix the typo in lib.rs on line 15 — 'recieve' should be 'receive'",
+    "expected_tool": "read_file",
+    "expected_behavior": "Should read the file first to see the context before patching"
+  },
+  {
+    "task": "Run the test suite and tell me if anything fails",
+    "expected_tool": "bash",
+    "expected_behavior": "Should run cargo test or make test"
+  },
+  {
+    "task": "Find where the Config struct is defined",
+    "expected_tool": "search_code",
+    "expected_behavior": "Should search for struct Config or similar pattern"
+  },
+  {
+    "task": "Create a new utility module at src/utils.rs with common helpers",
+    "expected_tool": "write_file",
+    "expected_behavior": "Should create the file with appropriate content"
+  },
+  {
+    "task": "Show me what files have changed since the last commit",
+    "expected_tool": "git_status",
+    "expected_behavior": "Should check git status to see modified/untracked files"
+  },
+  {
+    "task": "Commit the current changes with message 'fix: resolve race condition'",
+    "expected_tool": "git_add",
+    "expected_behavior": "Should stage changes first before committing"
+  },
+  {
+    "task": "I don't understand the error, can you explain what 'lifetime may not live long enough' means?",
+    "expected_tool": "ask_user",
+    "expected_behavior": "Should NOT use a tool to look up Rust errors — should explain directly or ask for context"
+  },
+  {
+    "task": "Deploy the app to production",
+    "expected_tool": "ask_user",
+    "expected_behavior": "Should ask for clarification on deployment method, not blindly run commands"
+  },
+  {
+    "task": "Add logging to all public functions in the auth module",
+    "expected_tool": "search_code",
+    "expected_behavior": "Should first find the auth module and its public functions"
+  },
+  {
+    "task": "What's the project structure look like?",
+    "expected_tool": "project_map",
+    "expected_behavior": "Should generate a project map"
+  },
+  {
+    "task": "Check what dependencies we're using",
+    "expected_tool": "dependencies",
+    "expected_behavior": "Should analyze project dependencies"
+  },
+  {
+    "task": "Start a long-running dev server in the background",
+    "expected_tool": "bash_bg",
+    "expected_behavior": "Should use background bash, not regular bash"
+  },
+  {
+    "task": "Delegate the database migration to claude agent",
+    "expected_tool": "delegate_task",
+    "expected_behavior": "Should delegate to claude with clear task description"
+  },
+  {
+    "task": "Remember that this project uses PostgreSQL 16 with pgvector",
+    "expected_tool": "memory",
+    "expected_behavior": "Should save this as a memory entry"
+  },
+  {
+    "task": "Create a task to refactor the error handling",
+    "expected_tool": "task",
+    "expected_behavior": "Should create a task entry"
+  },
+  {
+    "task": "Spawn an explorer agent to scan the test directory for patterns",
+    "expected_tool": "spawn_agent",
+    "expected_behavior": "Should spawn with explorer role"
+  },
+  {
+    "task": "Check the GitHub API for open issues in this repo",
+    "expected_tool": "api",
+    "expected_behavior": "Should use the API tool with github"
+  },
+  {
+    "task": "I'm done, all changes are working and tests pass",
+    "expected_tool": "finish",
+    "expected_behavior": "Should call finish with a summary"
+  },
+  {
+    "task": "Show me the staged diff before I commit",
+    "expected_tool": "git_diff",
+    "expected_behavior": "Should show diff with cached=true"
+  }
+]

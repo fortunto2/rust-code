@@ -4,6 +4,7 @@ members = [
     "crates/solograph",
     "crates/sgr-agent",
     "crates/sgr-agent-tui",
+    "crates/autoresearch",
 ]
 default-members = ["crates/rc-cli"]
 resolver = "2"
