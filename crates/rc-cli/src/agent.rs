@@ -96,7 +96,7 @@ pub struct Agent {
     read_cache: std::sync::Mutex<std::collections::HashMap<String, (String, usize)>>,
     /// Multi-agent swarm manager for sub-agents.
     swarm: Arc<TokioMutex<SwarmManager>>,
-    /// Delegate manager for external CLI agents (claude/gemini/codex).
+    /// Delegate manager for external CLI agents (claude/gemini/codex/opencode/rust-code).
     delegate_mgr: TokioMutex<DelegateManager>,
     /// OpenAPI registry for the `api` tool.
     api_registry: TokioMutex<sgr_agent::openapi::ApiRegistry>,
@@ -138,7 +138,7 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - agent_status: {tool_name, agent_id?} — check sub-agent status
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
 - api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2"), "list". Use "api list" to see all available APIs with descriptions. For web search/research, try loading "searxng" API and calling its search endpoint.
-- delegate_task: {tool_name, agent, task, cwd?} — delegate complex task to a powerful CLI agent (claude/gemini/codex). Runs full autonomous agent in tmux. Returns delegate ID.
+- delegate_task: {tool_name, agent, task, cwd?} — delegate complex task to a powerful CLI agent (claude/gemini/codex/opencode/rust-code). Runs full autonomous agent in tmux. Returns delegate ID.
 - delegate_status: {tool_name, id?} — check delegate status (omit id for all)
 - delegate_result: {tool_name, id} — get output from completed delegate
 
@@ -1445,7 +1445,7 @@ impl Agent {
                     None => {
                         return Ok(ActionResult {
                             output: format!(
-                                "Unknown delegate agent: '{}'. Use: claude, gemini, codex",
+                                "Unknown delegate agent: '{}'. Use: claude, gemini, codex, opencode, rust-code",
                                 agent
                             ),
                             done: false,

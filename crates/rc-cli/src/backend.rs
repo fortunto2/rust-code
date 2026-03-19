@@ -585,7 +585,7 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
         ),
         tool::<DelegateTaskParams>(
             "delegate_task",
-            "Delegate a complex task to a powerful CLI agent (claude/gemini/codex). \
+            "Delegate a complex task to a powerful CLI agent (claude/gemini/codex/opencode/rust-code). \
              Runs as a full autonomous agent in tmux background. Returns delegate ID immediately. \
              Use delegate_status to check progress, delegate_result to get output when done.",
         ),

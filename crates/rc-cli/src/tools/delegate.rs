@@ -17,6 +17,7 @@ pub enum DelegateAgent {
     Claude,
     Gemini,
     Codex,
+    OpenCode,
     RustCode,
 }
 
@@ -26,6 +27,7 @@ impl DelegateAgent {
             "claude" | "claude-code" => Some(Self::Claude),
             "gemini" | "gemini-cli" => Some(Self::Gemini),
             "codex" | "codex-cli" => Some(Self::Codex),
+            "opencode" | "open-code" | "oc" => Some(Self::OpenCode),
             "rust-code" | "rustcode" | "rc" => Some(Self::RustCode),
             _ => None,
         }
@@ -36,8 +38,32 @@ impl DelegateAgent {
             Self::Claude => "claude",
             Self::Gemini => "gemini",
             Self::Codex => "codex",
+            Self::OpenCode => "opencode",
             Self::RustCode => "rust-code",
         }
+    }
+
+    /// Check if the agent CLI is installed and accessible.
+    pub async fn check_available(&self) -> Result<(), String> {
+        let (bin, check_args) = match self {
+            Self::Claude => ("claude", vec!["--version"]),
+            Self::Gemini => ("gemini", vec!["--version"]),
+            Self::Codex => ("codex", vec!["--version"]),
+            Self::OpenCode => ("opencode", vec!["--version"]),
+            Self::RustCode => ("rust-code", vec!["--version"]),
+        };
+
+        let output = tokio::process::Command::new(bin)
+            .args(&check_args)
+            .output()
+            .await
+            .map_err(|_| format!("{} not found. Is it installed?", bin))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("{} check failed: {}", bin, stderr.trim()));
+        }
+        Ok(())
     }
 
     /// Build the shell command for full autonomous headless mode.
@@ -60,6 +86,9 @@ impl DelegateAgent {
                     "{cd} && codex exec '{escaped_task}' \
                      --dangerously-bypass-approvals-and-sandbox"
                 )
+            }
+            Self::OpenCode => {
+                format!("{cd} && opencode run '{escaped_task}' --format json")
             }
             Self::RustCode => {
                 format!("{cd} && rust-code -p '{escaped_task}' --loop 5")
@@ -108,7 +137,13 @@ impl DelegateManager {
     }
 
     /// Spawn a delegate agent in tmux background.
+    /// Checks agent availability first.
     pub async fn spawn(&mut self, agent: DelegateAgent, task: &str, cwd: &Path) -> Result<String> {
+        agent
+            .check_available()
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
         self.counter += 1;
         let id = format!("del-{}", self.counter);
         let window_name = id.clone();
