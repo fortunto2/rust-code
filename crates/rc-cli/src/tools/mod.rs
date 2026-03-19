@@ -1,6 +1,7 @@
 pub mod bash;
 pub mod checkpoint;
 pub mod cost;
+pub mod delegate;
 pub mod editor;
 pub mod mcp;
 pub mod search;

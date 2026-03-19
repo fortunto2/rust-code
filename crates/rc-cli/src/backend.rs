@@ -230,6 +230,20 @@ pub enum SgrAction {
         #[serde(default)]
         body: Option<String>,
     },
+    #[serde(rename = "delegate_task")]
+    DelegateTask {
+        agent: String,
+        task: String,
+        #[serde(default)]
+        cwd: Option<String>,
+    },
+    #[serde(rename = "delegate_status")]
+    DelegateStatus {
+        #[serde(default)]
+        id: Option<String>,
+    },
+    #[serde(rename = "delegate_result")]
+    DelegateResult { id: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +496,30 @@ struct ApiParams {
     body: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct DelegateTaskParams {
+    /// CLI agent to delegate to: "claude", "gemini", or "codex".
+    agent: String,
+    /// Task description for the delegate agent.
+    task: String,
+    /// Working directory (default: current cwd).
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct DelegateStatusParams {
+    /// Delegate ID to check. If omitted, shows all delegates.
+    #[serde(default)]
+    id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct DelegateResultParams {
+    /// Delegate ID to get results from.
+    id: String,
+}
+
 /// Build Gemini functionDeclarations for all agent tools.
 pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
     vec![
@@ -544,6 +582,20 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
         tool::<ApiParams>(
             "api",
             "Call any REST API via OpenAPI spec. Actions: 'load' (api_name: github/stripe/cloudflare/...), 'search' (api_name + query), 'call' (api_name + endpoint + params + body), 'list' (show loaded APIs). Load an API first, search for the endpoint, then call it.",
+        ),
+        tool::<DelegateTaskParams>(
+            "delegate_task",
+            "Delegate a complex task to a powerful CLI agent (claude/gemini/codex). \
+             Runs as a full autonomous agent in tmux background. Returns delegate ID immediately. \
+             Use delegate_status to check progress, delegate_result to get output when done.",
+        ),
+        tool::<DelegateStatusParams>(
+            "delegate_status",
+            "Check status of delegated tasks (running/done). Omit id to see all.",
+        ),
+        tool::<DelegateResultParams>(
+            "delegate_result",
+            "Get the output from a completed delegate.",
         ),
     ]
 }
@@ -741,6 +793,13 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             params: s_opt("params"),
             body: s_opt("body"),
         }),
+        "delegate_task" => Some(SgrAction::DelegateTask {
+            agent: s("agent"),
+            task: s("task"),
+            cwd: s_opt("cwd"),
+        }),
+        "delegate_status" => Some(SgrAction::DelegateStatus { id: s_opt("id") }),
+        "delegate_result" => Some(SgrAction::DelegateResult { id: s("id") }),
         _ => {
             tracing::warn!(tool = %tc.name, "unknown native function call, skipping");
             None

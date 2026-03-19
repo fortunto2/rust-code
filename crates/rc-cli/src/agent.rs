@@ -1,7 +1,10 @@
 use crate::backend::{self, LlmProvider, SgrAction, SgrNextStep};
 use crate::tools::{
-    FuzzySearcher, build_skills_context, cost, create_checkpoint, git_add, git_diff, git_status,
-    is_mutating_action, mcp::McpManager, read_file, truncate_output, write_file,
+    FuzzySearcher, build_skills_context, cost, create_checkpoint,
+    delegate::{DelegateAgent, DelegateManager},
+    git_add, git_diff, git_status, is_mutating_action,
+    mcp::McpManager,
+    read_file, truncate_output, write_file,
 };
 use anyhow::Result;
 use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
@@ -93,6 +96,8 @@ pub struct Agent {
     read_cache: std::sync::Mutex<std::collections::HashMap<String, (String, usize)>>,
     /// Multi-agent swarm manager for sub-agents.
     swarm: Arc<TokioMutex<SwarmManager>>,
+    /// Delegate manager for external CLI agents (claude/gemini/codex).
+    delegate_mgr: TokioMutex<DelegateManager>,
     /// OpenAPI registry for the `api` tool.
     api_registry: TokioMutex<sgr_agent::openapi::ApiRegistry>,
 }
@@ -133,6 +138,9 @@ Every response must be: {"situation": "...", "task": ["..."], "actions": [{...}]
 - agent_status: {tool_name, agent_id?} — check sub-agent status
 - cancel_agent: {tool_name, agent_id} — cancel a sub-agent ("all" for all)
 - api: {tool_name, action, api_name?, query?, endpoint?, params?, body?} — REST API tool. Actions: "load" (api_name), "search" (api_name + query), "call" (api_name + endpoint + params="key=val,key2=val2"), "list". Use "api list" to see all available APIs with descriptions. For web search/research, try loading "searxng" API and calling its search endpoint.
+- delegate_task: {tool_name, agent, task, cwd?} — delegate complex task to a powerful CLI agent (claude/gemini/codex). Runs full autonomous agent in tmux. Returns delegate ID.
+- delegate_status: {tool_name, id?} — check delegate status (omit id for all)
+- delegate_result: {tool_name, id} — get output from completed delegate
 
 ## Self-Update
 If you patch your own source code and need to test the fix:
@@ -220,6 +228,7 @@ impl Agent {
             edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
             read_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
+            delegate_mgr: TokioMutex::new(DelegateManager::new()),
             api_registry: TokioMutex::new(sgr_agent::openapi::ApiRegistry::new()),
         }
     }
@@ -1430,6 +1439,90 @@ impl Agent {
                     }),
                 }
             }
+            SgrAction::DelegateTask { agent, task, cwd } => {
+                let delegate_agent = match DelegateAgent::from_name(agent) {
+                    Some(a) => a,
+                    None => {
+                        return Ok(ActionResult {
+                            output: format!(
+                                "Unknown delegate agent: '{}'. Use: claude, gemini, codex",
+                                agent
+                            ),
+                            done: false,
+                        });
+                    }
+                };
+                let work_dir = cwd
+                    .as_ref()
+                    .map(|p| std::path::PathBuf::from(self.resolve_path(p)))
+                    .unwrap_or_else(|| self.cwd.lock().unwrap().clone());
+
+                let mut mgr = self.delegate_mgr.lock().await;
+                match mgr.spawn(delegate_agent, task, &work_dir).await {
+                    Ok(id) => Ok(ActionResult {
+                        output: format!(
+                            "Delegated to {} (id: {})\nTask: {}\nCwd: {}\n\n\
+                             Use delegate_status to check progress, delegate_result to get output.",
+                            agent,
+                            id,
+                            task,
+                            work_dir.display()
+                        ),
+                        done: false,
+                    }),
+                    Err(e) => Ok(ActionResult {
+                        output: format!("Failed to delegate: {}", e),
+                        done: false,
+                    }),
+                }
+            }
+            SgrAction::DelegateStatus { id } => {
+                let mgr = self.delegate_mgr.lock().await;
+                if let Some(id) = id {
+                    match mgr.status(id).await {
+                        Some((status, elapsed)) => Ok(ActionResult {
+                            output: format!("[{}] {} ({}s elapsed)", id, status, elapsed.as_secs()),
+                            done: false,
+                        }),
+                        None => Ok(ActionResult {
+                            output: format!("Delegate '{}' not found", id),
+                            done: false,
+                        }),
+                    }
+                } else {
+                    let all = mgr.status_all().await;
+                    if all.is_empty() {
+                        return Ok(ActionResult {
+                            output: "No delegates running.".into(),
+                            done: false,
+                        });
+                    }
+                    let output = all
+                        .iter()
+                        .map(|(id, agent, status, elapsed)| {
+                            format!("[{}] {} — {} ({}s)", id, agent, status, elapsed.as_secs())
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(ActionResult {
+                        output,
+                        done: false,
+                    })
+                }
+            }
+            SgrAction::DelegateResult { id } => {
+                let mgr = self.delegate_mgr.lock().await;
+                match mgr.result(id).await {
+                    Ok(output) => Ok(ActionResult {
+                        output: truncate_output(&format!("[{}] result:\n{}", id, output)),
+                        done: false,
+                    }),
+                    Err(e) => Ok(ActionResult {
+                        output: format!("Error getting result for {}: {}", id, e),
+                        done: false,
+                    }),
+                }
+            }
         }
     }
 }
@@ -1577,6 +1670,11 @@ impl SgrAgent for Agent {
             Action::Api {
                 action, api_name, ..
             } => format!("api:{}:{}", action, api_name.as_deref().unwrap_or("?")),
+            Action::DelegateTask { agent, task, .. } => {
+                format!("delegate:{}:{}", agent, &task[..task.len().min(40)])
+            }
+            Action::DelegateStatus { id } => format!("delegate_status:{:?}", id),
+            Action::DelegateResult { id } => format!("delegate_result:{}", id),
         }
     }
 }
@@ -1606,6 +1704,8 @@ pub fn action_kind(action: &Action) -> ActionKind {
         | Action::AgentStatus { .. }
         | Action::CancelAgent { .. } => ActionKind::Execute,
         Action::Api { .. } => ActionKind::External,
+        Action::DelegateTask { .. } => ActionKind::Execute,
+        Action::DelegateStatus { .. } | Action::DelegateResult { .. } => ActionKind::Read,
     }
 }
 
