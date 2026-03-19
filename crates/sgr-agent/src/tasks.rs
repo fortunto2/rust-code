@@ -1,6 +1,6 @@
 //! Persistent task tracking — markdown files with YAML frontmatter.
 //!
-//! Each task is a `.tasks/NNN-slug.md` file:
+//! Each task is a `.tasks/YYYYMMDD-NNN-slug.md` file (date-scoped, max 30 char slug):
 //! ```markdown
 //! ---
 //! title: Implement auth
@@ -10,6 +10,8 @@
 //! ---
 //! Description here.
 //! ```
+//!
+//! Legacy format `NNN-slug.md` is also supported for backwards compatibility.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -128,13 +130,16 @@ pub fn load_tasks(project_root: &Path) -> Vec<Task> {
 }
 
 /// Parse a single task file into a Task.
+/// Supports both formats:
+/// - Legacy: `001-slug.md`
+/// - New: `YYYYMMDD-001-slug.md`
 fn parse_task_file(path: &Path) -> Option<Task> {
     let content = std::fs::read_to_string(path).ok()?;
     let filename = path.file_stem()?.to_str()?;
 
-    // Extract ID and slug from filename: "001-implement-auth"
-    let (id_str, slug) = filename.split_once('-')?;
-    let id: u16 = id_str.parse().ok()?;
+    // Try new format: YYYYMMDD-NNN-slug
+    // Try legacy format: NNN-slug
+    let (id, slug) = parse_task_filename(filename)?;
 
     // Parse YAML frontmatter
     let (frontmatter, body) = split_frontmatter(&content)?;
@@ -158,6 +163,24 @@ fn parse_task_file(path: &Path) -> Option<Task> {
         body: body.trim().to_string(),
         path: path.to_path_buf(),
     })
+}
+
+/// Parse task filename into (id, slug).
+/// Supports: `001-slug`, `YYYYMMDD-001-slug`, `1-slug`.
+fn parse_task_filename(filename: &str) -> Option<(u16, String)> {
+    let (first, rest) = filename.split_once('-')?;
+
+    // Check if first part is a YYYYMMDD date prefix
+    if first.len() == 8 && first.chars().all(|c| c.is_ascii_digit()) {
+        // New format: YYYYMMDD-NNN-slug
+        let (id_str, slug) = rest.split_once('-').unwrap_or((rest, ""));
+        let id: u16 = id_str.parse().ok()?;
+        Some((id, slug.to_string()))
+    } else {
+        // Legacy format: NNN-slug
+        let id: u16 = first.parse().ok()?;
+        Some((id, rest.to_string()))
+    }
 }
 
 /// Split content into (frontmatter, body). Frontmatter is between `---` markers.
@@ -210,9 +233,24 @@ fn extract_list(frontmatter: &str, key: &str) -> Vec<u16> {
 }
 
 /// Write a task to disk as a markdown file with YAML frontmatter.
+/// Format: `YYYYMMDD-NNN-slug.md` (date-scoped, deterministic).
 pub fn save_task(project_root: &Path, task: &Task) {
     let dir = tasks_dir(project_root);
-    let filename = format!("{:03}-{}.md", task.id, task.slug);
+    // Use date from existing path if available, otherwise today
+    let date = task
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|s| {
+            let first = s.split('-').next()?;
+            if first.len() == 8 && first.chars().all(|c| c.is_ascii_digit()) {
+                Some(first.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(today_stamp);
+    let filename = format!("{}-{:03}-{}.md", date, task.id, task.slug);
     let path = dir.join(&filename);
 
     let blocked = if task.blocked_by.is_empty() {
@@ -237,10 +275,13 @@ pub fn save_task(project_root: &Path, task: &Task) {
 }
 
 /// Create a new task with the next available ID.
+/// Filename format: `YYYYMMDD-NNN-slug.md` (date-scoped, max 30 char slug).
 pub fn create_task(project_root: &Path, title: &str, priority: Priority) -> Task {
     let tasks = load_tasks(project_root);
     let next_id = tasks.last().map(|t| t.id + 1).unwrap_or(1);
     let slug = slugify(title);
+    let date = today_stamp();
+    let filename = format!("{}-{:03}-{}.md", date, next_id, slug);
 
     let task = Task {
         id: next_id,
@@ -250,7 +291,7 @@ pub fn create_task(project_root: &Path, title: &str, priority: Priority) -> Task
         priority,
         blocked_by: vec![],
         body: String::new(),
-        path: tasks_dir(project_root).join(format!("{:03}-{}.md", next_id, slugify(title))),
+        path: tasks_dir(project_root).join(filename),
     };
 
     save_task(project_root, &task);
@@ -329,9 +370,12 @@ pub fn tasks_context(tasks: &[Task]) -> String {
     ctx
 }
 
-/// Convert a title to a kebab-case slug.
+/// Max slug length in task filenames.
+const MAX_SLUG_LEN: usize = 30;
+
+/// Convert a title to a kebab-case slug, truncated to MAX_SLUG_LEN chars.
 fn slugify(title: &str) -> String {
-    title
+    let full: String = title
         .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
@@ -339,7 +383,45 @@ fn slugify(title: &str) -> String {
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join("-")
+        .join("-");
+    // Truncate at word boundary
+    if full.len() <= MAX_SLUG_LEN {
+        return full;
+    }
+    let truncated = &full[..MAX_SLUG_LEN];
+    // Cut at last '-' to avoid partial words
+    match truncated.rfind('-') {
+        Some(pos) if pos > 5 => truncated[..pos].to_string(),
+        _ => truncated.to_string(),
+    }
+}
+
+/// Today's date as YYYYMMDD string.
+fn today_stamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Manual UTC date calc (no chrono dependency)
+    let days = now / 86400;
+    let (year, month, day) = days_to_ymd(days);
+    format!("{:04}{:02}{:02}", year, month, day)
+}
+
+/// Convert days since epoch to (year, month, day).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 #[cfg(test)]
@@ -363,6 +445,110 @@ mod tests {
         );
         assert_eq!(slugify("fix: bug #123"), "fix-bug-123");
         assert_eq!(slugify("  spaces  "), "spaces");
+    }
+
+    #[test]
+    fn slugify_truncates_long_titles() {
+        let long = "analysis: code quality lint dead code error handling test coverage smells";
+        let slug = slugify(long);
+        assert!(
+            slug.len() <= MAX_SLUG_LEN,
+            "slug too long: {} ({})",
+            slug,
+            slug.len()
+        );
+        // Should not end with a partial word
+        assert!(!slug.ends_with('-'));
+    }
+
+    #[test]
+    fn new_filename_format() {
+        let dir = temp_dir("newformat");
+        let task = create_task(&dir, "Fix auth bug", Priority::High);
+        let filename = task.path.file_name().unwrap().to_str().unwrap();
+        // Format: YYYYMMDD-001-fix-auth-bug.md
+        assert!(
+            filename.contains("-001-"),
+            "missing id in filename: {}",
+            filename
+        );
+        assert!(filename.ends_with(".md"));
+        // First 8 chars are date
+        let date_part: String = filename.chars().take(8).collect();
+        assert!(
+            date_part.chars().all(|c| c.is_ascii_digit()),
+            "no date prefix: {}",
+            filename
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_legacy_format() {
+        // Legacy: 002-blocked-task.md
+        let (id, slug) = parse_task_filename("002-blocked-task").unwrap();
+        assert_eq!(id, 2);
+        assert_eq!(slug, "blocked-task");
+    }
+
+    #[test]
+    fn parse_new_format() {
+        // New: 20260319-001-fix-auth.md
+        let (id, slug) = parse_task_filename("20260319-001-fix-auth").unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(slug, "fix-auth");
+    }
+
+    #[test]
+    fn parse_new_format_no_slug() {
+        let (id, slug) = parse_task_filename("20260319-005").unwrap();
+        assert_eq!(id, 5);
+        assert_eq!(slug, "");
+    }
+
+    #[test]
+    fn loads_both_formats() {
+        let dir = temp_dir("mixed");
+        let tasks_path = dir.join(TASKS_DIR);
+        fs::create_dir_all(&tasks_path).unwrap();
+
+        // Legacy format
+        let legacy = "---\ntitle: Legacy task\nstatus: todo\npriority: low\nblocked_by: []\n---\n";
+        fs::write(tasks_path.join("001-legacy-task.md"), legacy).unwrap();
+
+        // New format
+        let new = "---\ntitle: New task\nstatus: todo\npriority: high\nblocked_by: []\n---\n";
+        fs::write(tasks_path.join("20260319-002-new-task.md"), new).unwrap();
+
+        let tasks = load_tasks(&dir);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].id, 1);
+        assert_eq!(tasks[0].title, "Legacy task");
+        assert_eq!(tasks[1].id, 2);
+        assert_eq!(tasks[1].title, "New task");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn today_stamp_is_8_digits() {
+        let stamp = today_stamp();
+        assert_eq!(stamp.len(), 8);
+        assert!(stamp.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn days_to_ymd_epoch() {
+        // 1970-01-01 = day 0
+        assert_eq!(days_to_ymd(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn days_to_ymd_known_date() {
+        // 2026-03-19 = 20531 days since epoch
+        let (y, m, d) = days_to_ymd(20531);
+        assert_eq!((y, m, d), (2026, 3, 19));
     }
 
     #[test]
