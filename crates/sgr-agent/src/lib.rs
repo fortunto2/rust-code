@@ -21,6 +21,7 @@ pub mod baml_parser;
 pub mod codegen;
 pub mod coerce;
 pub mod flexible_parser;
+pub mod model_info;
 pub mod schema;
 pub mod tool;
 pub mod types;
@@ -150,8 +151,8 @@ pub use prompt_template::{BASE_SYSTEM_PROMPT, build_system_prompt};
 pub use session::search_sessions;
 #[cfg(feature = "session")]
 pub use session::{
-    AgentMessage, EntryType, MessageRole, Session, SessionHeader, SessionMeta,
-    import_claude_session, list_sessions,
+    AgentMessage, EntryType, MessageRole, Session, SessionHeader, SessionMeta, SimpleMsg,
+    SimpleRole, StatefulDelta, StatefulSession, import_claude_session, list_sessions,
 };
 #[cfg(feature = "session")]
 pub use tasks::{

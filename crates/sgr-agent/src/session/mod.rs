@@ -9,6 +9,8 @@
 
 pub(crate) mod format;
 mod meta;
+pub mod simple;
+mod stateful;
 mod store;
 pub(crate) mod time;
 pub mod traits;
@@ -16,6 +18,8 @@ pub mod traits;
 #[cfg(feature = "search")]
 pub use meta::search_sessions;
 pub use meta::{SessionMeta, import_claude_session, list_sessions};
+pub use simple::{SimpleMsg, SimpleRole};
+pub use stateful::{StatefulDelta, StatefulSession};
 pub use store::{Session, SessionHeader};
 pub use traits::{AgentMessage, EntryType, MessageRole};
 
