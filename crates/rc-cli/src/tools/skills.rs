@@ -15,7 +15,7 @@ const GLOBAL_SKILL_DIRS: &[&str] = &[
 ];
 
 /// Project-local skill directories (relative to CWD).
-const LOCAL_SKILL_DIRS: &[&str] = &[".agents/skills", ".claude/skills"];
+const LOCAL_SKILL_DIRS: &[&str] = &["skills", ".agents/skills", ".claude/skills"];
 
 #[derive(Debug, Clone)]
 pub struct InstalledSkill {
