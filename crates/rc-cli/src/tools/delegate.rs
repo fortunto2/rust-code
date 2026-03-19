@@ -48,14 +48,16 @@ impl DelegateAgent {
                 // CLAUDECODE="" prevents refusal inside another session
                 format!(
                     "{cd} && CLAUDECODE='' claude -p '{escaped_task}' \
-                     --output-format json --verbose"
+                     --output-format json --dangerously-skip-permissions --verbose"
                 )
             }
             Self::Gemini => {
                 format!("{cd} && gemini -p '{escaped_task}' --sandbox -y")
             }
             Self::Codex => {
-                format!("{cd} && codex exec '{escaped_task}' --dangerously-auto-approve")
+                format!(
+                    "{cd} && codex exec '{escaped_task}' --dangerously-bypass-approvals-and-sandbox"
+                )
             }
         }
     }
@@ -269,7 +271,7 @@ mod tests {
     fn build_command_codex() {
         let cmd = DelegateAgent::Codex.build_command("refactor", Path::new("/tmp"));
         assert!(cmd.contains("codex exec"));
-        assert!(cmd.contains("--dangerously-auto-approve"));
+        assert!(cmd.contains("--dangerously-bypass-approvals-and-sandbox"));
     }
 
     #[test]
