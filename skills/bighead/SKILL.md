@@ -1,61 +1,34 @@
 ---
 name: bighead
-description: BigHead autonomous loop — run a task repeatedly until done, like solo-dev.sh pipeline. Triggered by --loop flag.
+description: Autonomous task loop — iterate on a task until done, commit after each step, run tests. Use when "run in loop", "autonomous mode", "keep working", "don't stop", "bighead mode", "--loop". Do NOT use for one-shot tasks (just run normally) or self-improvement (use /self-evolve).
+allowed-tools: read_file, write_file, edit_file, apply_patch, bash, bash_bg, search_code, git_status, git_diff, git_add, git_commit, task, finish
+argument-hint: "<task description>"
 ---
 
 # BigHead — Autonomous Task Loop
 
-You are in **BigHead mode** (named after Nelson Bighetti from Silicon Valley). You run autonomously, iterating on a task until it's complete. The human may be asleep.
+Named after Nelson Bighetti from Silicon Valley. You run autonomously until the task is done. The human may be asleep.
 
-## Process
+## Core Loop
 
-Each iteration:
+Each iteration: assess → plan → execute → test → commit → continue or stop.
 
-1. **Assess state**: `git_status`, read relevant files, check what's done
-2. **Plan next step**: What's the smallest useful action?
-3. **Execute**: Make the change, run tests
-4. **Verify**: Did it work? Tests pass?
-5. **Commit**: `git_add` + `git_commit` (always commit working state)
-6. **Continue or stop**
+Use `.tasks/` for tracking progress across iterations. Read `Makefile` for available commands.
 
-## Signals (solo-dev.sh compatible)
+## Signals
 
-- When the task is **fully complete**: include `<solo:done/>` in your finish summary
-- When something needs to go back (e.g. tests found a regression): include `<solo:redo/>`
-- These signals control the outer loop — the process will stop or retry accordingly
+- Task complete → include `<solo:done/>` in finish summary
+- Needs retry → include `<solo:redo/>`
+- Control file: `echo stop > .rust-code/loop-control`
 
-## Rules
+## Gotchas
 
-- **NEVER STOP to ask the human**. The human might be sleeping. If you're stuck, try harder — read more code, try a different approach, search for patterns.
-- **Commit after every meaningful change**. Small, atomic commits. Don't accumulate a massive diff.
-- **Run tests after every change**. Use `make check` or the project's test command.
-- **Check Makefile** for available commands. `make help` shows targets.
-- **Use git log/diff for context**. Commit history is the source of truth for what was done.
-- **If you run out of ideas**: re-read the codebase, look at TODOs, check test coverage, try combining previous near-misses.
-- **Simplicity criterion**: All else being equal, simpler is better. Removing code and getting equal results is a win.
-
-## Progress Tracking
-
-Read and update `.tasks/` for persistent task tracking across iterations:
-```
-task: {operation: "list"}
-```
-
-Mark tasks as done when complete. Create sub-tasks if needed.
-
-## Error Handling
-
-- **Test failure**: Read the error, fix, retry. Don't skip.
-- **Commit failure**: Pre-commit hook failed. Run `make fmt`, fix lint, retry.
-- **Build failure**: Read compiler errors, fix, retry.
-- **Stuck in loop**: Try a completely different approach. Don't repeat the same failing action.
+1. **Commit before you forget** — if you accumulate a large diff and the next step fails, you lose everything. Commit after every meaningful change, even if incomplete.
+2. **Pre-commit hooks will bite you** — `make check` runs tests + clippy + fmt. If you skip it and commit directly, the hook will reject. Always `make fmt` before committing.
+3. **Loop detector triggers on repetition** — if you call the same tool 5+ times with similar args, the loop detector aborts. Vary your approach — don't retry the same failing command.
+4. **Don't ask the human** — you are autonomous. If stuck, try a different approach, read more code, check git log. Never call `ask_user`.
+5. **Test command varies by project** — don't assume `cargo test`. Read `Makefile` or `package.json` first. `make help` shows all targets.
 
 ## When to Stop
 
-Include `<solo:done/>` in your finish summary when:
-- All tasks from the prompt are complete
-- All tests pass
-- Code is committed
-- You've verified the result
-
-The outer loop handles iteration counting and timeouts. You focus on the work.
+Include `<solo:done/>` when: all tasks done + tests pass + code committed + result verified.

@@ -400,11 +400,25 @@ pub fn build_skills_context() -> Option<String> {
                 .map(|b| b.join(&skill.name).join("SKILL.md"))
                 .filter(|p| p.exists())
                 .unwrap_or_else(|| skill.path.clone());
+            // Check for references/ dir
+            let skill_dir = skill_path.parent().unwrap_or(std::path::Path::new("."));
+            let refs_count = skill_dir
+                .join("references")
+                .read_dir()
+                .map(|d| d.count())
+                .unwrap_or(0);
+            let refs_tag = if refs_count > 0 {
+                format!(" (+{} refs)", refs_count)
+            } else {
+                String::new()
+            };
+
             ctx.push_str(&format!(
-                "- **{}** [{}] `{}`",
+                "- **{}** [{}] `{}`{}",
                 skill.name,
                 scope,
-                skill_path.display()
+                skill_path.display(),
+                refs_tag
             ));
             if let Some(desc) = &skill.description {
                 ctx.push_str(&format!(": {}", desc));
@@ -429,10 +443,37 @@ pub fn get_skill(name: &str) -> Option<InstalledSkill> {
         .find(|s| s.name == name)
 }
 
-/// Read the full SKILL.md content for a skill.
+/// Read the full skill content — SKILL.md + references/ files.
 pub fn read_skill_content(name: &str) -> Result<String> {
     let skill = get_skill(name).ok_or_else(|| anyhow!("Skill '{}' not found", name))?;
-    let content = std::fs::read_to_string(&skill.path)?;
+    let mut content = std::fs::read_to_string(&skill.path)?;
+
+    // Auto-include references/ files
+    let skill_dir = skill.path.parent().unwrap_or(Path::new("."));
+    let refs_dir = skill_dir.join("references");
+    if refs_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&refs_dir) {
+            let mut ref_files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|ext| ext == "md" || ext == "txt")
+                })
+                .collect();
+            ref_files.sort_by_key(|e| e.file_name());
+
+            for entry in ref_files {
+                let ref_content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                content.push_str(&format!(
+                    "\n\n---\n## Reference: {}\n\n{}",
+                    entry.file_name().to_string_lossy(),
+                    ref_content
+                ));
+            }
+        }
+    }
+
     Ok(content)
 }
 
