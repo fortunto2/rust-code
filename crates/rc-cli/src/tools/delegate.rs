@@ -17,6 +17,7 @@ pub enum DelegateAgent {
     Claude,
     Gemini,
     Codex,
+    RustCode,
 }
 
 impl DelegateAgent {
@@ -25,6 +26,7 @@ impl DelegateAgent {
             "claude" | "claude-code" => Some(Self::Claude),
             "gemini" | "gemini-cli" => Some(Self::Gemini),
             "codex" | "codex-cli" => Some(Self::Codex),
+            "rust-code" | "rustcode" | "rc" => Some(Self::RustCode),
             _ => None,
         }
     }
@@ -34,6 +36,7 @@ impl DelegateAgent {
             Self::Claude => "claude",
             Self::Gemini => "gemini",
             Self::Codex => "codex",
+            Self::RustCode => "rust-code",
         }
     }
 
@@ -44,8 +47,6 @@ impl DelegateAgent {
 
         match self {
             Self::Claude => {
-                // Full agent mode: no --disallowed-tools, auto-approve
-                // CLAUDECODE="" prevents refusal inside another session
                 format!(
                     "{cd} && CLAUDECODE='' claude -p '{escaped_task}' \
                      --output-format json --dangerously-skip-permissions --verbose"
@@ -56,8 +57,12 @@ impl DelegateAgent {
             }
             Self::Codex => {
                 format!(
-                    "{cd} && codex exec '{escaped_task}' --dangerously-bypass-approvals-and-sandbox"
+                    "{cd} && codex exec '{escaped_task}' \
+                     --dangerously-bypass-approvals-and-sandbox"
                 )
+            }
+            Self::RustCode => {
+                format!("{cd} && rust-code -p '{escaped_task}' --loop 5")
             }
         }
     }
