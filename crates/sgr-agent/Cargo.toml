@@ -70,5 +70,9 @@ name = "agent_demo"
 required-features = ["agent", "gemini"]
 
 [[example]]
+name = "oxide_agent_test"
+required-features = ["oxide", "genai"]
+
+[[example]]
 name = "compare_oxide_genai"
 required-features = ["oxide", "genai", "async-openai-backend", "telemetry"]
