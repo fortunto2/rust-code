@@ -6,6 +6,16 @@
 Pure Rust LLM client and agent framework based on [Schema-Guided Reasoning (SGR)](https://abdullin.com/schema-guided-reasoning/) by [Rinat Abdullin](https://abdullin.com). No dlopen, no external binaries.
 Works on iOS, Android, WASM — anywhere `reqwest` + `rustls` compiles.
 
+## Three backends
+
+| Backend | Feature | API | Best for |
+|---------|---------|-----|----------|
+| **openai-oxide** | `oxide` | Responses API | OpenAI models (fastest, HTTP/2 keep-alive) |
+| **genai** | `genai` | Chat Completions / Responses | Multi-provider (Gemini, Anthropic, OpenRouter) |
+| **async-openai** | `async-openai-backend` | Responses API | Comparison / migration |
+
+`Llm::new()` auto-selects: OpenAI models (gpt-\*, o3\*, o4\*) use oxide, everything else uses genai. See [openai-oxide benchmarks](https://github.com/fortunto2/openai-rust#performance).
+
 ## Two layers
 
 **Layer 1 — LLM Client** (default features: `gemini`, `openai`):
