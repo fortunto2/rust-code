@@ -1,0 +1,400 @@
+//! OxideClient — LlmClient adapter for `openai-oxide` crate.
+//!
+//! Uses the **Responses API** (`POST /responses`) instead of Chat Completions.
+//! Supports: structured output (json_schema), function calling, multi-turn (previous_response_id).
+
+use crate::client::LlmClient;
+use crate::tool::ToolDef;
+use crate::types::{LlmConfig, Message, Role, SgrError, ToolCall};
+use openai_oxide::OpenAI;
+use openai_oxide::config::ClientConfig;
+use openai_oxide::types::responses::*;
+use serde_json::Value;
+
+/// Record OTEL attributes on the current span for Phoenix/OpenInference.
+#[cfg(feature = "telemetry")]
+fn record_otel_usage(response: &Response, model: &str) {
+    use opentelemetry::trace::{Span, TraceContextExt, Tracer, TracerProvider};
+
+    let provider = opentelemetry::global::tracer_provider();
+    let tracer = provider.tracer("sgr-agent");
+    let mut otel_span = tracer.start("oxide.responses.api");
+
+    let pt = response
+        .usage
+        .as_ref()
+        .and_then(|u| u.input_tokens)
+        .unwrap_or(0);
+    let ct = response
+        .usage
+        .as_ref()
+        .and_then(|u| u.output_tokens)
+        .unwrap_or(0);
+
+    // OpenInference conventions (Phoenix)
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "openinference.span.kind",
+        "LLM",
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.model_name",
+        model.to_string(),
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new("llm.token_count.prompt", pt));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.completion",
+        ct,
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.total",
+        pt + ct,
+    ));
+
+    // GenAI conventions (LangSmith)
+    otel_span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.request.model",
+        model.to_string(),
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.response.model",
+        response.model.clone(),
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.usage.prompt_tokens",
+        pt,
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.usage.completion_tokens",
+        ct,
+    ));
+
+    // Output text
+    let output = response.output_text();
+    if !output.is_empty() {
+        otel_span.set_attribute(opentelemetry::KeyValue::new(
+            "gen_ai.completion.0.content",
+            if output.len() > 4000 {
+                format!("{}...", &output[..4000])
+            } else {
+                output
+            },
+        ));
+    }
+
+    otel_span.end();
+}
+
+#[cfg(not(feature = "telemetry"))]
+fn record_otel_usage(_response: &Response, _model: &str) {}
+
+/// LlmClient backed by openai-oxide (Responses API).
+pub struct OxideClient {
+    client: OpenAI,
+    pub(crate) model: String,
+    pub(crate) temperature: Option<f64>,
+    pub(crate) max_tokens: Option<u32>,
+    /// Last response_id for multi-turn chaining.
+    last_response_id: std::sync::Mutex<Option<String>>,
+}
+
+impl OxideClient {
+    /// Create from LlmConfig.
+    pub fn from_config(config: &LlmConfig) -> Result<Self, SgrError> {
+        let api_key = config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| SgrError::Schema("No API key for oxide client".into()))?;
+
+        let mut client_config = ClientConfig::new(&api_key);
+        if let Some(ref url) = config.base_url {
+            client_config = client_config.base_url(url.clone());
+        }
+
+        Ok(Self {
+            client: OpenAI::with_config(client_config),
+            model: config.model.clone(),
+            temperature: Some(config.temp),
+            max_tokens: config.max_tokens,
+            last_response_id: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Build a ResponseCreateRequest from messages + optional schema.
+    fn build_request(&self, messages: &[Message], schema: Option<&Value>) -> ResponseCreateRequest {
+        // Separate system messages from conversation
+        let mut instructions = String::new();
+        let mut input_items = Vec::new();
+
+        for msg in messages {
+            match msg.role {
+                Role::System => {
+                    if !instructions.is_empty() {
+                        instructions.push_str("\n\n");
+                    }
+                    instructions.push_str(&msg.content);
+                }
+                Role::User => {
+                    input_items.push(ResponseInputItem {
+                        role: openai_oxide::types::common::Role::User,
+                        content: Value::String(msg.content.clone()),
+                    });
+                }
+                Role::Assistant => {
+                    input_items.push(ResponseInputItem {
+                        role: openai_oxide::types::common::Role::Assistant,
+                        content: Value::String(msg.content.clone()),
+                    });
+                }
+                Role::Tool => {
+                    // Tool results — append as user message with context
+                    let tool_result = if let Some(ref id) = msg.tool_call_id {
+                        format!("[Tool result for {}]: {}", id, msg.content)
+                    } else {
+                        msg.content.clone()
+                    };
+                    input_items.push(ResponseInputItem {
+                        role: openai_oxide::types::common::Role::User,
+                        content: Value::String(tool_result),
+                    });
+                }
+            }
+        }
+
+        let mut req = ResponseCreateRequest::new(&self.model);
+
+        // Set input
+        if input_items.len() == 1 && instructions.is_empty() {
+            // Simple text input
+            if let Some(text) = input_items[0].content.as_str() {
+                req = req.input(text);
+            }
+        } else if !input_items.is_empty() {
+            req.input = Some(ResponseInput::Messages(input_items));
+        }
+
+        // Instructions (system prompt)
+        if !instructions.is_empty() {
+            req = req.instructions(instructions);
+        }
+
+        // Temperature
+        if let Some(temp) = self.temperature {
+            req = req.temperature(temp);
+        }
+
+        // Max tokens
+        if let Some(max) = self.max_tokens {
+            req = req.max_output_tokens(max as i64);
+        }
+
+        // Structured output via json_schema
+        if let Some(schema_val) = schema {
+            req = req.text(ResponseTextConfig {
+                format: Some(ResponseTextFormat::JsonSchema {
+                    name: "sgr_response".into(),
+                    description: None,
+                    schema: Some(schema_val.clone()),
+                    strict: Some(true),
+                }),
+                verbosity: None,
+            });
+        }
+
+        // Store for multi-turn
+        req = req.store(true);
+
+        // Chain previous response if available
+        if let Ok(guard) = self.last_response_id.lock() {
+            if let Some(ref prev_id) = *guard {
+                req = req.previous_response_id(prev_id.clone());
+            }
+        }
+
+        req
+    }
+
+    /// Save response_id for multi-turn chaining.
+    fn save_response_id(&self, id: &str) {
+        if let Ok(mut guard) = self.last_response_id.lock() {
+            *guard = Some(id.to_string());
+        }
+    }
+
+    /// Extract tool calls from Responses API output items.
+    fn extract_tool_calls(response: &Response) -> Vec<ToolCall> {
+        response
+            .function_calls()
+            .into_iter()
+            .map(|fc| ToolCall {
+                id: fc.call_id,
+                name: fc.name,
+                arguments: fc.arguments,
+            })
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmClient for OxideClient {
+    async fn structured_call(
+        &self,
+        messages: &[Message],
+        schema: &Value,
+    ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
+        // Make schema OpenAI-strict
+        let mut strict_schema = schema.clone();
+        crate::schema::make_openai_strict(&mut strict_schema);
+
+        let req = self.build_request(messages, Some(&strict_schema));
+
+        let span = tracing::info_span!(
+            "oxide.responses.create",
+            model = %self.model,
+            method = "structured_call",
+        );
+        let _enter = span.enter();
+
+        let response = self
+            .client
+            .responses()
+            .create(req)
+            .await
+            .map_err(|e| SgrError::Api {
+                status: 0,
+                body: e.to_string(),
+            })?;
+
+        self.save_response_id(&response.id);
+        record_otel_usage(&response, &self.model);
+
+        let raw_text = response.output_text();
+        let tool_calls = Self::extract_tool_calls(&response);
+        let parsed = serde_json::from_str::<Value>(&raw_text).ok();
+
+        tracing::info!(
+            model = %response.model,
+            response_id = %response.id,
+            input_tokens = response.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+            output_tokens = response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+            "oxide.structured_call"
+        );
+
+        Ok((parsed, tool_calls, raw_text))
+    }
+
+    async fn tools_call(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<Vec<ToolCall>, SgrError> {
+        let mut req = self.build_request(messages, None);
+
+        // Convert ToolDefs to ResponseTools
+        let response_tools: Vec<ResponseTool> = tools
+            .iter()
+            .map(|t| ResponseTool::Function {
+                name: t.name.clone(),
+                description: if t.description.is_empty() {
+                    None
+                } else {
+                    Some(t.description.clone())
+                },
+                parameters: Some(t.parameters.clone()),
+                strict: Some(true),
+            })
+            .collect();
+        req = req.tools(response_tools);
+
+        let response = self
+            .client
+            .responses()
+            .create(req)
+            .await
+            .map_err(|e| SgrError::Api {
+                status: 0,
+                body: e.to_string(),
+            })?;
+
+        self.save_response_id(&response.id);
+        record_otel_usage(&response, &self.model);
+
+        tracing::info!(
+            model = %response.model,
+            response_id = %response.id,
+            "oxide.tools_call"
+        );
+
+        Ok(Self::extract_tool_calls(&response))
+    }
+
+    async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
+        let req = self.build_request(messages, None);
+
+        let response = self
+            .client
+            .responses()
+            .create(req)
+            .await
+            .map_err(|e| SgrError::Api {
+                status: 0,
+                body: e.to_string(),
+            })?;
+
+        self.save_response_id(&response.id);
+        record_otel_usage(&response, &self.model);
+
+        let text = response.output_text();
+        if text.is_empty() {
+            return Err(SgrError::EmptyResponse);
+        }
+
+        tracing::info!(
+            model = %response.model,
+            response_id = %response.id,
+            input_tokens = response.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+            output_tokens = response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+            "oxide.complete"
+        );
+
+        Ok(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oxide_client_from_config() {
+        // Just test construction doesn't panic
+        let config = LlmConfig::with_key("sk-test", "gpt-5.4");
+        let client = OxideClient::from_config(&config).unwrap();
+        assert_eq!(client.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn build_request_simple() {
+        let config = LlmConfig::with_key("sk-test", "gpt-5.4").temperature(0.5);
+        let client = OxideClient::from_config(&config).unwrap();
+        let messages = vec![Message::system("Be helpful."), Message::user("Hello")];
+        let req = client.build_request(&messages, None);
+        assert_eq!(req.model, "gpt-5.4");
+        assert_eq!(req.instructions.as_deref(), Some("Be helpful."));
+        assert_eq!(req.temperature, Some(0.5));
+    }
+
+    #[test]
+    fn build_request_with_schema() {
+        let config = LlmConfig::with_key("sk-test", "gpt-5.4");
+        let client = OxideClient::from_config(&config).unwrap();
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"]
+        });
+        let req = client.build_request(&[Message::user("Hi")], Some(&schema));
+        assert!(req.text.is_some());
+    }
+}

@@ -39,6 +39,16 @@ pub mod llm;
 #[cfg(feature = "genai")]
 pub use llm::Llm;
 
+#[cfg(feature = "oxide")]
+pub mod oxide_client;
+#[cfg(feature = "oxide")]
+pub use oxide_client::OxideClient;
+
+#[cfg(feature = "async-openai-backend")]
+pub mod async_openai_client;
+#[cfg(feature = "async-openai-backend")]
+pub use async_openai_client::AsyncOpenAIClient;
+
 // Agent framework (behind feature gate)
 #[cfg(feature = "agent")]
 pub mod agent;
