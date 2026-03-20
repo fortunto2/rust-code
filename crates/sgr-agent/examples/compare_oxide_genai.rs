@@ -1,7 +1,6 @@
-//! Compare openai-oxide vs genai vs async-openai on GPT-5.4.
+//! Compare openai-oxide vs genai vs async-openai vs Python on GPT-5.4.
 //!
-//! Sends identical prompts through all three backends, measures latency + tokens,
-//! exports traces to Phoenix (localhost:6006) for visual comparison.
+//! All backends use Responses API. Connection pre-warming for fair comparison.
 //!
 //! ```bash
 //! OPENAI_API_KEY=sk-... \
@@ -18,164 +17,93 @@ use sgr_agent::oxide_client::OxideClient;
 use sgr_agent::types::{LlmConfig, Message};
 use std::time::Instant;
 
-/// Structured output schema — same for all backends.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct CityInfo {
-    /// City name
     name: String,
-    /// Country
     country: String,
-    /// Population (approximate)
     population: u64,
-    /// Top 3 landmarks
     landmarks: Vec<String>,
+}
+
+/// Warm up a client — establishes TLS connection + HTTP/2 negotiation.
+async fn warmup(label: &str, client: &dyn LlmClient) {
+    let _ = client.complete(&[Message::user("ping")]).await;
+    eprintln!("[warmup] {label} ready");
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Init telemetry → Phoenix
     let guard = sgr_agent::init_telemetry("/tmp/compare-logs", "compare");
 
     let model = "gpt-5.4";
-    // All backends use Responses API for fair comparison
-    // genai: "openai_resp::" prefix routes to /responses instead of /chat/completions
     let genai_model = format!("openai_resp::{model}");
-    let config = LlmConfig::auto(&genai_model)
+    let genai_config = LlmConfig::auto(&genai_model)
         .temperature(0.3)
         .max_tokens(500);
     let oxide_config = LlmConfig::auto(model).temperature(0.3).max_tokens(500);
 
-    println!("=== Comparing oxide vs genai vs async-openai (all Responses API) ===");
+    let llm = Llm::new(&genai_config);
+    let oxide = OxideClient::from_config(&oxide_config)?;
+    let aoai = AsyncOpenAIClient::from_config(&oxide_config)?;
+
+    // ── Pre-warm all connections (TLS + HTTP/2) ──
+    println!("Warming up connections...");
+    warmup("genai", &llm).await;
+    warmup("oxide", &oxide).await;
+    warmup("async-openai", &aoai).await;
+
+    println!("\n=== Benchmark: oxide vs genai vs async-openai (all Responses API, warm) ===");
     println!("Model: {model}\n");
 
-    // ── Test 1: Plain text completion ──
+    // ── Test 1: Plain text ──
     println!("--- Test 1: Plain text ---");
-    let messages = vec![
+    let msgs = vec![
         Message::system("You are a helpful assistant. Be concise."),
         Message::user("What is the capital of Kazakhstan? One sentence."),
     ];
 
-    // genai
-    let llm = Llm::new(&config);
     let t0 = Instant::now();
-    let genai_result = llm.generate(&messages).await?;
-    let genai_ms = t0.elapsed().as_millis();
-    println!("  genai        ({genai_ms:>4}ms): {genai_result}");
-
-    // oxide
-    let oxide = OxideClient::from_config(&oxide_config)?;
-    let t0 = Instant::now();
-    let oxide_result = oxide.complete(&messages).await?;
+    let _ = oxide.complete(&msgs).await?;
     let oxide_ms = t0.elapsed().as_millis();
-    println!("  oxide        ({oxide_ms:>4}ms): {oxide_result}");
 
-    // async-openai
-    let aoai = AsyncOpenAIClient::from_config(&oxide_config)?;
     let t0 = Instant::now();
-    let aoai_result = aoai.complete(&messages).await?;
+    let _ = llm.generate(&msgs).await?;
+    let genai_ms = t0.elapsed().as_millis();
+
+    let t0 = Instant::now();
+    let _ = aoai.complete(&msgs).await?;
     let aoai_ms = t0.elapsed().as_millis();
-    println!("  async-openai ({aoai_ms:>4}ms): {aoai_result}");
+
+    println!("  oxide        ({oxide_ms:>4}ms)");
+    println!("  genai        ({genai_ms:>4}ms)");
+    println!("  async-openai ({aoai_ms:>4}ms)");
 
     // ── Test 2: Structured output ──
-    println!("\n--- Test 2: Structured output (CityInfo) ---");
-    let messages = vec![
+    println!("\n--- Test 2: Structured output ---");
+    let msgs = vec![
         Message::system("You are a geography expert."),
         Message::user("Tell me about Tokyo."),
     ];
     let schema = sgr_agent::response_schema_for::<CityInfo>();
 
-    // genai (structured_call via LlmClient trait)
     let t0 = Instant::now();
-    let (genai_parsed, _, genai_raw) = llm.structured_call(&messages, &schema).await?;
-    let genai_ms = t0.elapsed().as_millis();
-    if let Some(val) = &genai_parsed {
-        let city: CityInfo = serde_json::from_value(val.clone())?;
-        println!(
-            "  genai        ({genai_ms:>4}ms): {} — pop {}, landmarks: {:?}",
-            city.name, city.population, city.landmarks
-        );
-    } else {
-        println!("  genai        ({genai_ms:>4}ms): parse failed, raw: {genai_raw}");
-    }
-
-    // oxide (structured_call via LlmClient trait)
-    let t0 = Instant::now();
-    let (oxide_parsed, _, oxide_raw) = oxide.structured_call(&messages, &schema).await?;
+    let (_, _, _) = oxide.structured_call(&msgs, &schema).await?;
     let oxide_ms = t0.elapsed().as_millis();
-    if let Some(val) = &oxide_parsed {
-        let city: CityInfo = serde_json::from_value(val.clone())?;
-        println!(
-            "  oxide        ({oxide_ms:>4}ms): {} — pop {}, landmarks: {:?}",
-            city.name, city.population, city.landmarks
-        );
-    } else {
-        println!("  oxide        ({oxide_ms:>4}ms): parse failed, raw: {oxide_raw}");
-    }
 
-    // async-openai (structured_call via LlmClient trait)
     let t0 = Instant::now();
-    let (aoai_parsed, _, aoai_raw) = aoai.structured_call(&messages, &schema).await?;
-    let aoai_ms = t0.elapsed().as_millis();
-    if let Some(val) = &aoai_parsed {
-        let city: CityInfo = serde_json::from_value(val.clone())?;
-        println!(
-            "  async-openai ({aoai_ms:>4}ms): {} — pop {}, landmarks: {:?}",
-            city.name, city.population, city.landmarks
-        );
-    } else {
-        println!("  async-openai ({aoai_ms:>4}ms): parse failed, raw: {aoai_raw}");
-    }
-
-    // ── Test 3: Multi-turn via previous_response_id ──
-    println!("\n--- Test 3: Multi-turn via previous_response_id ---");
-
-    // genai (already on Responses API via openai_resp:: prefix)
-    let dummy_tool = sgr_agent::tool::ToolDef {
-        name: "noop".into(),
-        description: "No-op".into(),
-        parameters: serde_json::json!({"type": "object", "properties": {}, "required": [], "additionalProperties": false}),
-    };
-    let t0 = Instant::now();
-    let (_, genai_resp_id) = llm
-        .tools_call_stateful(
-            &[Message::user("My name is Rustam.")],
-            &[dummy_tool.clone()],
-            None,
-        )
-        .await?;
-    let (_, _) = llm
-        .tools_call_stateful(
-            &[Message::user("What is my name?")],
-            &[dummy_tool.clone()],
-            genai_resp_id.as_deref(),
-        )
-        .await?;
+    let (_, _, _) = llm.structured_call(&msgs, &schema).await?;
     let genai_ms = t0.elapsed().as_millis();
-    println!(
-        "  genai        ({genai_ms:>4}ms): response_id={:?}",
-        genai_resp_id.as_deref().unwrap_or("none")
-    );
 
-    // oxide
     let t0 = Instant::now();
-    let r1 = oxide
-        .complete(&[Message::user("My name is Rustam.")])
-        .await?;
-    let r2 = oxide.complete(&[Message::user("What is my name?")]).await?;
-    let oxide_ms = t0.elapsed().as_millis();
-    println!("  oxide        ({oxide_ms:>4}ms): Turn 1: {r1} | Turn 2: {r2}");
-
-    // async-openai
-    let t0 = Instant::now();
-    let r1 = aoai
-        .complete(&[Message::user("My name is Rustam.")])
-        .await?;
-    let r2 = aoai.complete(&[Message::user("What is my name?")]).await?;
+    let (_, _, _) = aoai.structured_call(&msgs, &schema).await?;
     let aoai_ms = t0.elapsed().as_millis();
-    println!("  async-openai ({aoai_ms:>4}ms): Turn 1: {r1} | Turn 2: {r2}");
 
-    // ── Test 4: Function calling ──
-    println!("\n--- Test 4: Function calling ---");
+    println!("  oxide        ({oxide_ms:>4}ms)");
+    println!("  genai        ({genai_ms:>4}ms)");
+    println!("  async-openai ({aoai_ms:>4}ms)");
+
+    // ── Test 3: Function calling ──
+    println!("\n--- Test 3: Function calling ---");
     let weather_tool = sgr_agent::tool::ToolDef {
         name: "get_weather".into(),
         description: "Get current weather for a city".into(),
@@ -189,50 +117,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "additionalProperties": false
         }),
     };
-    let messages = vec![
+    let msgs = vec![
         Message::system("Use tools when needed."),
         Message::user("What's the weather in Moscow?"),
     ];
 
-    // genai
     let t0 = Instant::now();
-    let genai_calls = llm.tools_call(&messages, &[weather_tool.clone()]).await?;
-    let genai_ms = t0.elapsed().as_millis();
-    println!(
-        "  genai        ({genai_ms:>4}ms): {} tool call(s)",
-        genai_calls.len()
-    );
-    for tc in &genai_calls {
-        println!("    -> {}({})", tc.name, tc.arguments);
-    }
-
-    // oxide
-    let t0 = Instant::now();
-    let oxide_calls = oxide.tools_call(&messages, &[weather_tool.clone()]).await?;
+    let _ = oxide.tools_call(&msgs, &[weather_tool.clone()]).await?;
     let oxide_ms = t0.elapsed().as_millis();
-    println!(
-        "  oxide        ({oxide_ms:>4}ms): {} tool call(s)",
-        oxide_calls.len()
-    );
-    for tc in &oxide_calls {
-        println!("    -> {}({})", tc.name, tc.arguments);
-    }
 
-    // async-openai
     let t0 = Instant::now();
-    let aoai_calls = aoai.tools_call(&messages, &[weather_tool]).await?;
+    let _ = llm.tools_call(&msgs, &[weather_tool.clone()]).await?;
+    let genai_ms = t0.elapsed().as_millis();
+
+    let t0 = Instant::now();
+    let _ = aoai.tools_call(&msgs, &[weather_tool]).await?;
     let aoai_ms = t0.elapsed().as_millis();
-    println!(
-        "  async-openai ({aoai_ms:>4}ms): {} tool call(s)",
-        aoai_calls.len()
-    );
-    for tc in &aoai_calls {
-        println!("    -> {}({})", tc.name, tc.arguments);
-    }
 
-    println!("\n=== Done. Check Phoenix at http://localhost:6006 ===");
+    println!("  oxide        ({oxide_ms:>4}ms)");
+    println!("  genai        ({genai_ms:>4}ms)");
+    println!("  async-openai ({aoai_ms:>4}ms)");
 
-    // Flush traces
+    // ── Test 4: Multi-turn (2 requests) ──
+    println!("\n--- Test 4: Multi-turn (2 requests) ---");
+
+    // Fresh oxide for clean multi-turn (no stale previous_response_id)
+    let oxide2 = OxideClient::from_config(&oxide_config)?;
+    warmup("oxide2", &oxide2).await;
+
+    let t0 = Instant::now();
+    let _ = oxide2
+        .complete(&[Message::user("My name is Rustam.")])
+        .await?;
+    let _ = oxide2
+        .complete(&[Message::user("What is my name?")])
+        .await?;
+    let oxide_ms = t0.elapsed().as_millis();
+
+    let dummy_tool = sgr_agent::tool::ToolDef {
+        name: "noop".into(),
+        description: "No-op".into(),
+        parameters: serde_json::json!({"type": "object", "properties": {}, "required": [], "additionalProperties": false}),
+    };
+    let t0 = Instant::now();
+    let (_, rid) = llm
+        .tools_call_stateful(
+            &[Message::user("My name is Rustam.")],
+            &[dummy_tool.clone()],
+            None,
+        )
+        .await?;
+    let _ = llm
+        .tools_call_stateful(
+            &[Message::user("What is my name?")],
+            &[dummy_tool],
+            rid.as_deref(),
+        )
+        .await?;
+    let genai_ms = t0.elapsed().as_millis();
+
+    let aoai2 = AsyncOpenAIClient::from_config(&oxide_config)?;
+    warmup("aoai2", &aoai2).await;
+    let t0 = Instant::now();
+    let _ = aoai2
+        .complete(&[Message::user("My name is Rustam.")])
+        .await?;
+    let _ = aoai2.complete(&[Message::user("What is my name?")]).await?;
+    let aoai_ms = t0.elapsed().as_millis();
+
+    println!("  oxide        ({oxide_ms:>4}ms)");
+    println!("  genai        ({genai_ms:>4}ms)");
+    println!("  async-openai ({aoai_ms:>4}ms)");
+
+    println!("\n=== Done. Phoenix: http://localhost:6006 ===");
     guard.shutdown();
     Ok(())
 }

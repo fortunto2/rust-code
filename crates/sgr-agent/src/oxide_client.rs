@@ -123,17 +123,15 @@ impl OxideClient {
 
     /// Build a ResponseCreateRequest from messages + optional schema.
     fn build_request(&self, messages: &[Message], schema: Option<&Value>) -> ResponseCreateRequest {
-        // Separate system messages from conversation
-        let mut instructions = String::new();
         let mut input_items = Vec::new();
 
         for msg in messages {
             match msg.role {
                 Role::System => {
-                    if !instructions.is_empty() {
-                        instructions.push_str("\n\n");
-                    }
-                    instructions.push_str(&msg.content);
+                    input_items.push(ResponseInputItem {
+                        role: openai_oxide::types::common::Role::System,
+                        content: Value::String(msg.content.clone()),
+                    });
                 }
                 Role::User => {
                     input_items.push(ResponseInputItem {
@@ -148,7 +146,6 @@ impl OxideClient {
                     });
                 }
                 Role::Tool => {
-                    // Tool results — append as user message with context
                     let tool_result = if let Some(ref id) = msg.tool_call_id {
                         format!("[Tool result for {}]: {}", id, msg.content)
                     } else {
@@ -164,24 +161,23 @@ impl OxideClient {
 
         let mut req = ResponseCreateRequest::new(&self.model);
 
-        // Set input
-        if input_items.len() == 1 && instructions.is_empty() {
-            // Simple text input
+        // Set input — prefer simple text when single user message (fewer tokens)
+        if input_items.len() == 1 && input_items[0].role == openai_oxide::types::common::Role::User
+        {
             if let Some(text) = input_items[0].content.as_str() {
                 req = req.input(text);
+            } else {
+                req.input = Some(ResponseInput::Messages(input_items));
             }
         } else if !input_items.is_empty() {
             req.input = Some(ResponseInput::Messages(input_items));
         }
 
-        // Instructions (system prompt)
-        if !instructions.is_empty() {
-            req = req.instructions(instructions);
-        }
-
-        // Temperature
+        // Temperature — skip default to reduce payload
         if let Some(temp) = self.temperature {
-            req = req.temperature(temp);
+            if (temp - 1.0).abs() > f64::EPSILON {
+                req = req.temperature(temp);
+            }
         }
 
         // Max tokens
@@ -202,14 +198,9 @@ impl OxideClient {
             });
         }
 
-        // Store for multi-turn
-        req = req.store(true);
-
-        // Chain previous response if available
-        if let Ok(guard) = self.last_response_id.lock() {
-            if let Some(ref prev_id) = *guard {
-                req = req.previous_response_id(prev_id.clone());
-            }
+        // Chain previous response if available — only store when chaining
+        if let Some(prev_id) = self.last_response_id.lock().ok().and_then(|g| g.clone()) {
+            req = req.previous_response_id(prev_id).store(true);
         }
 
         req
@@ -291,7 +282,7 @@ impl LlmClient for OxideClient {
     ) -> Result<Vec<ToolCall>, SgrError> {
         let mut req = self.build_request(messages, None);
 
-        // Convert ToolDefs to ResponseTools
+        // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
             .iter()
             .map(|t| ResponseTool::Function {
@@ -302,7 +293,7 @@ impl LlmClient for OxideClient {
                     Some(t.description.clone())
                 },
                 parameters: Some(t.parameters.clone()),
-                strict: Some(true),
+                strict: None,
             })
             .collect();
         req = req.tools(response_tools);
