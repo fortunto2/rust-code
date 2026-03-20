@@ -10,11 +10,28 @@ Works on iOS, Android, WASM — anywhere `reqwest` + `rustls` compiles.
 
 | Backend | Feature | API | Best for |
 |---------|---------|-----|----------|
-| **openai-oxide** | `oxide` | Responses API | OpenAI models (fastest, HTTP/2 keep-alive) |
-| **genai** | `genai` | Chat Completions / Responses | Multi-provider (Gemini, Anthropic, OpenRouter) |
-| **async-openai** | `async-openai-backend` | Responses API | Comparison / migration |
+| **[openai-oxide](https://github.com/fortunto2/openai-rust)** | `oxide` | Responses API | OpenAI models (fastest — HTTP/2 keep-alive, WebSocket, hedged requests) |
+| **genai** | `genai` | Chat Completions / Responses | Multi-provider (Gemini, Anthropic, OpenRouter, Ollama) |
+| **async-openai** | `async-openai-backend` | Responses API | Migration from async-openai |
 
-`Llm::new()` auto-selects: OpenAI models (gpt-\*, o3\*, o4\*) use oxide, everything else uses genai. See [openai-oxide benchmarks](https://github.com/fortunto2/openai-rust#performance).
+`Llm::new()` **auto-selects** backend by model name:
+- `gpt-*`, `o3*`, `o4*`, `chatgpt-*` → **oxide** (Responses API, gzip, HTTP/2 keep-alive)
+- Everything else → **genai** (multi-provider)
+- Custom `base_url` / Vertex AI → always **genai**
+
+```rust
+let llm = Llm::new(&LlmConfig::auto("gpt-5.4"));        // → oxide
+let llm = Llm::new(&LlmConfig::auto("gemini-2.0-flash")); // → genai
+println!("{}", llm.backend_name()); // "oxide" or "genai"
+```
+
+With `oxide-ws` feature, upgrade to WebSocket for -20% latency in agent loops:
+```rust
+let oxide = OxideClient::from_config(&config)?;
+oxide.connect_ws().await?;  // all calls now go through wss://
+```
+
+See [openai-oxide benchmarks](https://github.com/fortunto2/openai-rust#performance) — wins 10/13 vs Python.
 
 ## Two layers
 
@@ -31,7 +48,7 @@ Build autonomous agents that reason and act.
 # Cargo.toml
 
 # Client only (structured output + function calling)
-sgr-agent = "0.2"
+sgr-agent = "0.4"
 
 # Full agent framework
 sgr-agent = { version = "0.2", features = ["agent"] }
@@ -160,11 +177,15 @@ async fn main() {
 |---------|---------|------|
 | `gemini` | yes | Google AI + Vertex AI backend |
 | `openai` | yes | OpenAI + OpenRouter + Ollama backend |
+| `oxide` | no | **openai-oxide backend — fastest for OpenAI models** (Responses API, HTTP/2, gzip) |
+| `oxide-ws` | no | WebSocket mode for oxide (-20% latency on agent loops) |
+| `genai` | no | Multi-provider via genai crate (Gemini, Anthropic, OpenRouter, Ollama) |
+| `async-openai-backend` | no | async-openai backend for comparison/migration |
 | `agent` | no | Full agent framework (traits, loop, registry, routing) |
 | `session` | no | Session persistence, 4-tier loop detection, memory context, hints, tasks, intent guard |
 | `app-tools` | no | Shared tools: bash, fs (read/write/edit), git, apply_patch |
 | `providers` | no | Provider config (TOML), auth, CLI proxy, Codex proxy |
-| `telemetry` | no | OTEL-aware JSONL file telemetry with trace/span context |
+| `telemetry` | no | OTEL telemetry → Phoenix / LangSmith (OpenInference conventions) |
 | `logging` | no | File-based JSONL logging |
 | `search` | no | Fuzzy session search (nucleo-matcher) |
 
