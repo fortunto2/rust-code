@@ -401,7 +401,9 @@ mod tests {
         let messages = vec![Message::system("Be helpful."), Message::user("Hello")];
         let req = client.build_request(&messages, None);
         assert_eq!(req.model, "gpt-5.4");
-        assert_eq!(req.instructions.as_deref(), Some("Be helpful."));
+        // System prompt goes as input message (not instructions) for fewer tokens
+        assert!(req.instructions.is_none());
+        assert!(req.input.is_some()); // system + user as messages
         assert_eq!(req.temperature, Some(0.5));
     }
 
