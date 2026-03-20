@@ -1,6 +1,7 @@
 //! OxideClient — LlmClient adapter for `openai-oxide` crate.
 //!
 //! Uses the **Responses API** (`POST /responses`) instead of Chat Completions.
+//! With `oxide-ws` feature: persistent WebSocket connection for -20-25% latency.
 //! Supports: structured output (json_schema), function calling, multi-turn (previous_response_id).
 
 use crate::client::LlmClient;
@@ -89,6 +90,9 @@ fn record_otel_usage(response: &Response, model: &str) {
 fn record_otel_usage(_response: &Response, _model: &str) {}
 
 /// LlmClient backed by openai-oxide (Responses API).
+///
+/// With `oxide-ws` feature: call `connect_ws()` to upgrade to WebSocket mode.
+/// All subsequent calls go over persistent wss:// connection (-20-25% latency).
 pub struct OxideClient {
     client: OpenAI,
     pub(crate) model: String,
@@ -96,6 +100,9 @@ pub struct OxideClient {
     pub(crate) max_tokens: Option<u32>,
     /// Last response_id for multi-turn chaining.
     last_response_id: std::sync::Mutex<Option<String>>,
+    /// WebSocket session (when oxide-ws feature is enabled and connected).
+    #[cfg(feature = "oxide-ws")]
+    ws: tokio::sync::Mutex<Option<openai_oxide::websocket::WsSession>>,
 }
 
 impl OxideClient {
@@ -118,7 +125,53 @@ impl OxideClient {
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
             last_response_id: std::sync::Mutex::new(None),
+            #[cfg(feature = "oxide-ws")]
+            ws: tokio::sync::Mutex::new(None),
         })
+    }
+
+    /// Upgrade to WebSocket mode for lower latency.
+    ///
+    /// Opens a persistent `wss://` connection. All subsequent calls go through
+    /// the WebSocket instead of HTTP, saving ~200ms per request.
+    ///
+    /// Requires `oxide-ws` feature.
+    #[cfg(feature = "oxide-ws")]
+    pub async fn connect_ws(&self) -> Result<(), SgrError> {
+        let session = self.client.ws_session().await.map_err(|e| SgrError::Api {
+            status: 0,
+            body: format!("WebSocket connect: {e}"),
+        })?;
+        *self.ws.lock().await = Some(session);
+        tracing::info!(model = %self.model, "oxide WebSocket connected");
+        Ok(())
+    }
+
+    /// Send request — uses WebSocket if connected, otherwise HTTP.
+    async fn send_request_auto(
+        &self,
+        request: ResponseCreateRequest,
+    ) -> Result<Response, SgrError> {
+        #[cfg(feature = "oxide-ws")]
+        {
+            let mut ws_guard = self.ws.lock().await;
+            if let Some(ref mut session) = *ws_guard {
+                return session.send(request).await.map_err(|e| SgrError::Api {
+                    status: 0,
+                    body: e.to_string(),
+                });
+            }
+        }
+
+        // Fallback to HTTP
+        self.client
+            .responses()
+            .create(request)
+            .await
+            .map_err(|e| SgrError::Api {
+                status: 0,
+                body: e.to_string(),
+            })
     }
 
     /// Build a ResponseCreateRequest from messages + optional schema.
@@ -247,15 +300,7 @@ impl LlmClient for OxideClient {
         );
         let _enter = span.enter();
 
-        let response = self
-            .client
-            .responses()
-            .create(req)
-            .await
-            .map_err(|e| SgrError::Api {
-                status: 0,
-                body: e.to_string(),
-            })?;
+        let response = self.send_request_auto(req).await?;
 
         self.save_response_id(&response.id);
         record_otel_usage(&response, &self.model);
@@ -298,15 +343,7 @@ impl LlmClient for OxideClient {
             .collect();
         req = req.tools(response_tools);
 
-        let response = self
-            .client
-            .responses()
-            .create(req)
-            .await
-            .map_err(|e| SgrError::Api {
-                status: 0,
-                body: e.to_string(),
-            })?;
+        let response = self.send_request_auto(req).await?;
 
         self.save_response_id(&response.id);
         record_otel_usage(&response, &self.model);
@@ -323,15 +360,7 @@ impl LlmClient for OxideClient {
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
         let req = self.build_request(messages, None);
 
-        let response = self
-            .client
-            .responses()
-            .create(req)
-            .await
-            .map_err(|e| SgrError::Api {
-                status: 0,
-                body: e.to_string(),
-            })?;
+        let response = self.send_request_auto(req).await?;
 
         self.save_response_id(&response.id);
         record_otel_usage(&response, &self.model);

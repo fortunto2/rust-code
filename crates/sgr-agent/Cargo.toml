@@ -21,6 +21,7 @@ logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
 search = ["dep:nucleo-matcher"]
 genai = ["dep:genai", "agent", "futures"]
 oxide = ["dep:openai-oxide", "agent", "futures"]
+oxide-ws = ["oxide", "openai-oxide/websocket"]
 async-openai-backend = ["dep:async-openai", "agent", "futures"]
 
 [dependencies]
