@@ -49,11 +49,8 @@ impl Llm {
     pub fn new(config: &LlmConfig) -> Self {
         #[cfg(feature = "oxide")]
         {
-            // Use oxide for native OpenAI models without custom endpoint
-            if config.base_url.is_none()
-                && config.project_id.is_none()
-                && is_openai_model(&config.model)
-            {
+            // Use oxide for native OpenAI models or compatible endpoints
+            if config.project_id.is_none() && is_openai_model(&config.model) {
                 if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
                     tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
                     return Self {

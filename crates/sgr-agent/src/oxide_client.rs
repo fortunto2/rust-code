@@ -112,7 +112,11 @@ impl OxideClient {
             .api_key
             .clone()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .ok_or_else(|| SgrError::Schema("No API key for oxide client".into()))?;
+            .unwrap_or_else(|| if config.base_url.is_some() { "dummy_key".into() } else { "".into() });
+
+        if api_key.is_empty() {
+            return Err(SgrError::Schema("No API key for oxide client".into()));
+        }
 
         let mut client_config = ClientConfig::new(&api_key);
         if let Some(ref url) = config.base_url {
