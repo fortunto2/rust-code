@@ -13,3 +13,4 @@ dist/
 *.tar.gz
 *.tar.gz.sha256
 *.py
+skills/autoresearch/data/

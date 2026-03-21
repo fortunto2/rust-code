@@ -21,9 +21,9 @@
 //! // ar.run(10).await; // 10 cycles
 //! ```
 
+use serde::{Deserialize, Serialize};
 use sgr_agent::types::{Message, SgrError};
 use sgr_agent::{Llm, LlmConfig};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -195,11 +195,26 @@ fn load_test_cases(target: &Target) -> Vec<TestCase> {
         Target::Skill { .. } => {
             // Default test inputs for skill optimization
             return vec![
-                TestCase { task: "Improve error handling in this Rust project".into(), ..tc_empty() },
-                TestCase { task: "Add tests for the auth module".into(), ..tc_empty() },
-                TestCase { task: "Refactor database layer to use connection pooling".into(), ..tc_empty() },
-                TestCase { task: "Set up CI/CD pipeline".into(), ..tc_empty() },
-                TestCase { task: "Review codebase for security issues".into(), ..tc_empty() },
+                TestCase {
+                    task: "Improve error handling in this Rust project".into(),
+                    ..tc_empty()
+                },
+                TestCase {
+                    task: "Add tests for the auth module".into(),
+                    ..tc_empty()
+                },
+                TestCase {
+                    task: "Refactor database layer to use connection pooling".into(),
+                    ..tc_empty()
+                },
+                TestCase {
+                    task: "Set up CI/CD pipeline".into(),
+                    ..tc_empty()
+                },
+                TestCase {
+                    task: "Review codebase for security issues".into(),
+                    ..tc_empty()
+                },
             ];
         }
     };
@@ -357,7 +372,9 @@ fn eval_prompt(target: &Target, output: &str, case: &TestCase) -> String {
              4. no_hallucination: No references to files/state not in the task?\n\n\
              Respond with JSON only:\n\
              {{\"correct_tool\": true, \"coherent_situation\": true, \"clear_task\": true, \"no_hallucination\": true, \"failures\": []}}",
-            case.input(), case.expected_tool, case.expected_behavior,
+            case.input(),
+            case.expected_tool,
+            case.expected_behavior,
         ),
         Target::Skill { .. } => format!(
             "Evaluate this AI agent output against criteria.\n\n\
@@ -406,7 +423,12 @@ fn mutation_prompt(
     let failures_text = if failures.is_empty() {
         "- None".to_string()
     } else {
-        failures.iter().take(15).map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
+        failures
+            .iter()
+            .take(15)
+            .map(|f| format!("- {f}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let score: usize = criteria_scores.values().sum();
 
@@ -615,12 +637,7 @@ impl AutoResearch {
 
             // Tool selection: simple string match, no LLM eval needed
             if matches!(self.config.target, Target::ToolSelection) {
-                let picked = output
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_lowercase();
+                let picked = output.lines().next().unwrap_or("").trim().to_lowercase();
                 let picked = picked.split_whitespace().next().unwrap_or("");
                 let correct = picked == case.expected;
                 if !correct {
@@ -647,7 +664,12 @@ impl AutoResearch {
             if matches!(self.config.target, Target::DecisionParser) {
                 let valid = try_parse_decision_json(output);
                 if !valid {
-                    info!("  [{}/{}] FAIL (invalid JSON) | {}", i + 1, outputs.len(), case.input());
+                    info!(
+                        "  [{}/{}] FAIL (invalid JSON) | {}",
+                        i + 1,
+                        outputs.len(),
+                        case.input()
+                    );
                     eval_results.push(self.criteria.iter().map(|c| (c.clone(), false)).collect());
                     all_failures.push(format!("Invalid JSON for: {}", case.input()));
                     continue;
@@ -669,13 +691,20 @@ impl AutoResearch {
                         } else {
                             failures.join("; ")
                         };
-                        info!("  [{}/{}] {}/{} | {tag}", i + 1, outputs.len(), passes, self.criteria.len());
+                        info!(
+                            "  [{}/{}] {}/{} | {tag}",
+                            i + 1,
+                            outputs.len(),
+                            passes,
+                            self.criteria.len()
+                        );
                         all_failures.extend(failures);
                         eval_results.push(result);
                     }
                     Err(e) => {
                         warn!("  [{}/{}] PARSE ERROR: {e}", i + 1, outputs.len());
-                        eval_results.push(self.criteria.iter().map(|c| (c.clone(), false)).collect());
+                        eval_results
+                            .push(self.criteria.iter().map(|c| (c.clone(), false)).collect());
                     }
                 },
                 Err(e) => {
@@ -740,8 +769,8 @@ impl AutoResearch {
         // ── Mutate ───────────────────────────────────────────────
         if score < mx {
             info!("Mutating prompt...");
-            let base = std::fs::read_to_string(self.best_prompt_file())
-                .unwrap_or_else(|_| prompt.clone());
+            let base =
+                std::fs::read_to_string(self.best_prompt_file()).unwrap_or_else(|_| prompt.clone());
             let mp = mutation_prompt(
                 &self.config.target,
                 &base,
@@ -847,7 +876,10 @@ fn parse_eval_json(
     let obj = value.as_object().ok_or("Expected JSON object")?;
     let mut result = HashMap::new();
     for c in criteria {
-        result.insert(c.clone(), obj.get(c).and_then(|v| v.as_bool()).unwrap_or(false));
+        result.insert(
+            c.clone(),
+            obj.get(c).and_then(|v| v.as_bool()).unwrap_or(false),
+        );
     }
 
     let failures: Vec<String> = obj
@@ -889,7 +921,11 @@ mod tests {
     #[test]
     fn test_load_tool_selection_cases() {
         let cases = load_test_cases(&Target::ToolSelection);
-        assert!(cases.len() >= 60, "Expected 60+ tool selection tests, got {}", cases.len());
+        assert!(
+            cases.len() >= 60,
+            "Expected 60+ tool selection tests, got {}",
+            cases.len()
+        );
         assert!(!cases[0].task.is_empty());
         assert!(!cases[0].expected.is_empty());
     }
@@ -897,14 +933,22 @@ mod tests {
     #[test]
     fn test_load_system_prompt_cases() {
         let cases = load_test_cases(&Target::SystemPrompt);
-        assert!(cases.len() >= 15, "Expected 15+ system prompt tests, got {}", cases.len());
+        assert!(
+            cases.len() >= 15,
+            "Expected 15+ system prompt tests, got {}",
+            cases.len()
+        );
         assert!(!cases[0].expected_tool.is_empty());
     }
 
     #[test]
     fn test_load_decision_parser_cases() {
         let cases = load_test_cases(&Target::DecisionParser);
-        assert!(cases.len() >= 25, "Expected 25+ decision parser tests, got {}", cases.len());
+        assert!(
+            cases.len() >= 25,
+            "Expected 25+ decision parser tests, got {}",
+            cases.len()
+        );
         assert!(!cases[0].message.is_empty());
     }
 
@@ -966,7 +1010,9 @@ mod tests {
 
     #[test]
     fn test_try_parse_decision_json() {
-        assert!(try_parse_decision_json(r#"{"situation": "x", "task": "y", "tool_calls": []}"#));
+        assert!(try_parse_decision_json(
+            r#"{"situation": "x", "task": "y", "tool_calls": []}"#
+        ));
         assert!(!try_parse_decision_json("not json"));
         assert!(try_parse_decision_json("```json\n{\"a\": 1}\n```"));
     }

@@ -30,7 +30,9 @@ async fn main() {
         },
         other => {
             eprintln!("Unknown target: {other}");
-            eprintln!("Usage: autoresearch <tool-selection|system-prompt|decision-parser|skill-NAME> [--cycles N] [--batch N]");
+            eprintln!(
+                "Usage: autoresearch <tool-selection|system-prompt|decision-parser|skill-NAME> [--cycles N] [--batch N]"
+            );
             std::process::exit(1);
         }
     };
