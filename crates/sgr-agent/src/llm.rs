@@ -36,12 +36,6 @@ pub struct Llm {
     inner: Backend,
 }
 
-/// Check if model name looks like an OpenAI model (gpt-*, o3*, o4*, chatgpt-*).
-fn is_openai_model(model: &str) -> bool {
-    let m = model.to_lowercase();
-    m.starts_with("gpt-") || m.starts_with("o3") || m.starts_with("o4") || m.starts_with("chatgpt")
-}
-
 impl Llm {
     /// Create from config. Backend auto-selected:
     /// - oxide for all models (Responses API works with OpenAI + OpenRouter + compatible)
@@ -197,18 +191,6 @@ impl LlmClient for Llm {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_openai_model_detection() {
-        assert!(is_openai_model("gpt-5.4"));
-        assert!(is_openai_model("gpt-4o"));
-        assert!(is_openai_model("o3-mini"));
-        assert!(is_openai_model("o4-mini"));
-        assert!(is_openai_model("chatgpt-4o-latest"));
-        assert!(!is_openai_model("gemini-2.0-flash"));
-        assert!(!is_openai_model("claude-sonnet-4.6"));
-        assert!(!is_openai_model("openai_resp::gpt-5.4")); // genai namespace prefix
-    }
 
     #[test]
     fn llm_from_auto_config() {
