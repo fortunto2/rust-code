@@ -193,6 +193,31 @@ pub fn make_openai_strict(value: &mut Value) {
         let is_object = obj.get("type").and_then(|v| v.as_str()) == Some("object");
         if is_object {
             obj.insert("additionalProperties".into(), Value::Bool(false));
+
+            // Convert nullable properties: "nullable":true + "type":"T"
+            // → {"anyOf": [{"type":"T"}, {"type":"null"}]}
+            // OpenAI strict mode doesn't support "nullable" keyword.
+            if let Some(props) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
+                for (_key, prop) in props.iter_mut() {
+                    if let Some(prop_obj) = prop.as_object_mut()
+                        && prop_obj.remove("nullable").and_then(|v| v.as_bool()) == Some(true)
+                        && let Some(type_val) = prop_obj.remove("type")
+                    {
+                        let desc = prop_obj.remove("description");
+                        let any_of = vec![
+                            serde_json::json!({"type": type_val}),
+                            serde_json::json!({"type": "null"}),
+                        ];
+                        let mut wrapper = serde_json::Map::new();
+                        wrapper.insert("anyOf".into(), Value::Array(any_of));
+                        if let Some(d) = desc {
+                            wrapper.insert("description".into(), d);
+                        }
+                        *prop = Value::Object(wrapper);
+                    }
+                }
+            }
+
             // All properties must be in required
             if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
                 let all_keys: Vec<Value> = props.keys().map(|k| Value::String(k.clone())).collect();
@@ -203,7 +228,21 @@ pub fn make_openai_strict(value: &mut Value) {
         if let Some(one_of) = obj.remove("oneOf") {
             obj.insert("anyOf".into(), one_of);
         }
-        // Recurse
+        // OpenAI strict mode: allOf not supported, inline single-item allOf
+        if let Some(all_of) = obj.remove("allOf")
+            && let Some(arr) = all_of.as_array()
+        {
+            if arr.len() == 1 {
+                if let Some(inner) = arr[0].as_object() {
+                    for (k, v) in inner {
+                        obj.entry(k.clone()).or_insert(v.clone());
+                    }
+                }
+            } else {
+                obj.insert("anyOf".into(), all_of);
+            }
+        }
+        // Recurse into all children
         for key in obj.keys().cloned().collect::<Vec<_>>() {
             if let Some(child) = obj.get_mut(&key) {
                 make_openai_strict(child);
@@ -237,6 +276,27 @@ mod tests {
         let props = schema["properties"].as_object().unwrap();
         assert!(props.contains_key("input_path"));
         assert!(props.contains_key("overwrite"));
+    }
+
+    #[test]
+    fn strict_makes_all_required_and_nullable() {
+        let mut schema = to_gemini_parameters::<TestTool>();
+        eprintln!(
+            "BEFORE strict: {}",
+            serde_json::to_string_pretty(&schema).unwrap()
+        );
+        make_openai_strict(&mut schema);
+        eprintln!(
+            "AFTER strict: {}",
+            serde_json::to_string_pretty(&schema).unwrap()
+        );
+
+        // All properties must be in required
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.contains(&Value::String("input_path".into())));
+        assert!(required.contains(&Value::String("overwrite".into())));
+        // Must have additionalProperties: false
+        assert_eq!(schema["additionalProperties"], false);
     }
 
     #[test]

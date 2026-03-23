@@ -404,21 +404,25 @@ impl OxideClient {
         // Always store so next call can chain via previous_response_id
         req = req.store(true);
 
-        // Convert ToolDefs to ResponseTools.
-        // AI-NOTE: strict: true requires all fields required + additionalProperties: false
-        // on every nested object. Our schemas from schemars have optional fields,
-        // so strict mode causes parse errors. Use None (non-strict) for now.
+        // Convert ToolDefs to ResponseTools with strict mode.
+        // strict: true guarantees LLM output matches schema exactly (no parse errors).
+        // oxide ensure_strict() handles: additionalProperties, all-required,
+        // nullable→anyOf, allOf inlining, oneOf→anyOf.
         let response_tools: Vec<ResponseTool> = tools
             .iter()
-            .map(|t| ResponseTool::Function {
-                name: t.name.clone(),
-                description: if t.description.is_empty() {
-                    None
-                } else {
-                    Some(t.description.clone())
-                },
-                parameters: Some(t.parameters.clone()),
-                strict: None,
+            .map(|t| {
+                let mut params = t.parameters.clone();
+                openai_oxide::parsing::ensure_strict(&mut params);
+                ResponseTool::Function {
+                    name: t.name.clone(),
+                    description: if t.description.is_empty() {
+                        None
+                    } else {
+                        Some(t.description.clone())
+                    },
+                    parameters: Some(params),
+                    strict: Some(true),
+                }
             })
             .collect();
         req = req.tools(response_tools);
@@ -474,9 +478,9 @@ impl LlmClient for OxideClient {
         messages: &[Message],
         schema: &Value,
     ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
-        // Make schema OpenAI-strict
+        // Make schema OpenAI-strict (oxide handles nullable, allOf, etc.)
         let mut strict_schema = schema.clone();
-        crate::schema::make_openai_strict(&mut strict_schema);
+        openai_oxide::parsing::ensure_strict(&mut strict_schema);
 
         let req = self.build_request(messages, Some(&strict_schema));
 
