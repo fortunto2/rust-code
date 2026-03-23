@@ -103,6 +103,9 @@ pub struct OxideClient {
     /// WebSocket session (when oxide-ws feature is enabled and connected).
     #[cfg(feature = "oxide-ws")]
     ws: tokio::sync::Mutex<Option<openai_oxide::websocket::WsSession>>,
+    /// Lazy WS: true = connect on first request, false = HTTP only.
+    #[cfg(feature = "oxide-ws")]
+    ws_enabled: std::sync::atomic::AtomicBool,
 }
 
 impl OxideClient {
@@ -112,7 +115,13 @@ impl OxideClient {
             .api_key
             .clone()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .unwrap_or_else(|| if config.base_url.is_some() { "dummy_key".into() } else { "".into() });
+            .unwrap_or_else(|| {
+                if config.base_url.is_some() {
+                    "dummy_key".into()
+                } else {
+                    "".into()
+                }
+            });
 
         if api_key.is_empty() {
             return Err(SgrError::Schema("No API key for oxide client".into()));
@@ -131,43 +140,62 @@ impl OxideClient {
             last_response_id: std::sync::Mutex::new(None),
             #[cfg(feature = "oxide-ws")]
             ws: tokio::sync::Mutex::new(None),
+            #[cfg(feature = "oxide-ws")]
+            ws_enabled: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
-    /// Upgrade to WebSocket mode for lower latency.
+    /// Enable WebSocket mode — lazy connect on first request.
     ///
-    /// Opens a persistent `wss://` connection. All subsequent calls go through
-    /// the WebSocket instead of HTTP, saving ~200ms per request.
+    /// Does NOT open a connection immediately. The WS connection is established
+    /// on the first `send_request_auto()` call, eliminating idle timeout issues.
+    /// Falls back to HTTP automatically if WS fails.
     ///
     /// Requires `oxide-ws` feature.
     #[cfg(feature = "oxide-ws")]
     pub async fn connect_ws(&self) -> Result<(), SgrError> {
-        let session = self.client.ws_session().await.map_err(|e| SgrError::Api {
-            status: 0,
-            body: format!("WebSocket connect: {e}"),
-        })?;
-        *self.ws.lock().await = Some(session);
-        tracing::info!(model = %self.model, "oxide WebSocket connected");
+        self.ws_enabled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(model = %self.model, "oxide WebSocket enabled (lazy connect)");
         Ok(())
     }
 
-    /// Send request — uses WebSocket if connected, otherwise HTTP.
+    /// Send request — lazy WS connect + send, falls back to HTTP on any WS error.
     async fn send_request_auto(
         &self,
         request: ResponseCreateRequest,
     ) -> Result<Response, SgrError> {
         #[cfg(feature = "oxide-ws")]
-        {
+        if self.ws_enabled.load(std::sync::atomic::Ordering::Relaxed) {
             let mut ws_guard = self.ws.lock().await;
+
+            // Lazy connect
+            if ws_guard.is_none() {
+                match self.client.ws_session().await {
+                    Ok(session) => {
+                        tracing::info!(model = %self.model, "oxide WS connected (lazy)");
+                        *ws_guard = Some(session);
+                    }
+                    Err(e) => {
+                        tracing::warn!("oxide WS connect failed, using HTTP: {e}");
+                        self.ws_enabled
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+
             if let Some(ref mut session) = *ws_guard {
-                return session.send(request).await.map_err(|e| SgrError::Api {
-                    status: 0,
-                    body: e.to_string(),
-                });
+                match session.send(request.clone()).await {
+                    Ok(response) => return Ok(response),
+                    Err(e) => {
+                        tracing::warn!("oxide WS send failed, falling back to HTTP: {e}");
+                        *ws_guard = None;
+                    }
+                }
             }
         }
 
-        // Fallback to HTTP
+        // HTTP fallback
         self.client
             .responses()
             .create(request)
@@ -176,6 +204,71 @@ impl OxideClient {
                 status: 0,
                 body: e.to_string(),
             })
+    }
+
+    /// Build request with mixed input: regular messages + function_call_output items.
+    /// Required when chaining with previous_response_id after a function call response.
+    fn build_request_with_tool_outputs(&self, messages: &[Message]) -> ResponseCreateRequest {
+        use openai_oxide::types::responses::ResponseInput;
+
+        let mut items: Vec<Value> = Vec::new();
+
+        for msg in messages {
+            match msg.role {
+                Role::Tool => {
+                    if let Some(ref call_id) = msg.tool_call_id {
+                        // Responses API function_call_output item
+                        items.push(serde_json::json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": msg.content
+                        }));
+                    }
+                }
+                Role::System => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "system",
+                        "content": msg.content
+                    }));
+                }
+                Role::User => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "user",
+                        "content": msg.content
+                    }));
+                }
+                Role::Assistant => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": msg.content
+                    }));
+                }
+            }
+        }
+
+        let mut req = ResponseCreateRequest::new(&self.model);
+        if !items.is_empty() {
+            req.input = Some(ResponseInput::Items(items));
+        }
+
+        if let Some(temp) = self.temperature {
+            if (temp - 1.0).abs() > f64::EPSILON {
+                req = req.temperature(temp);
+            }
+        }
+        if let Some(max) = self.max_tokens {
+            req = req.max_output_tokens(max as i64);
+        }
+
+        // Chain previous response if available
+        if let Some(prev_id) = self.last_response_id.lock().ok().and_then(|g| g.clone()) {
+            req = req.previous_response_id(prev_id);
+        }
+
+        req
     }
 
     /// Build a ResponseCreateRequest from messages + optional schema.
@@ -255,9 +348,9 @@ impl OxideClient {
             });
         }
 
-        // Chain previous response if available — only store when chaining
+        // Chain previous response if available
         if let Some(prev_id) = self.last_response_id.lock().ok().and_then(|g| g.clone()) {
-            req = req.previous_response_id(prev_id).store(true);
+            req = req.previous_response_id(prev_id);
         }
 
         req
@@ -268,6 +361,91 @@ impl OxideClient {
         if let Ok(mut guard) = self.last_response_id.lock() {
             *guard = Some(id.to_string());
         }
+    }
+
+    /// Set response_id externally (for stateful session coordination with coach).
+    pub fn set_response_id(&self, id: Option<&str>) {
+        if let Ok(mut guard) = self.last_response_id.lock() {
+            *guard = id.map(String::from);
+        }
+    }
+
+    /// Get current response_id.
+    pub fn response_id(&self) -> Option<String> {
+        self.last_response_id.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Function calling with explicit previous_response_id.
+    /// Returns tool calls + new response_id for chaining.
+    ///
+    /// Always sets `store(true)` so responses can be referenced by subsequent calls.
+    /// When `previous_response_id` is provided, only delta messages need to be sent
+    /// (server has full history from previous stored response).
+    ///
+    /// Tool messages (role=Tool with tool_call_id) are converted to Responses API
+    /// `function_call_output` items — required for chaining with previous_response_id.
+    pub async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        // Set external response_id for chaining
+        if let Some(pid) = previous_response_id {
+            self.set_response_id(Some(pid));
+        }
+
+        // Always use Items format (with "type":"message" on each item).
+        // HTTP API accepts Messages format (without type), but WS API requires it.
+        // Using Items consistently ensures both HTTP and WS work.
+        let mut req = self.build_request_with_tool_outputs(messages);
+        // Always store so next call can chain via previous_response_id
+        req = req.store(true);
+
+        // Convert ToolDefs to ResponseTools
+        let response_tools: Vec<ResponseTool> = tools
+            .iter()
+            .map(|t| ResponseTool::Function {
+                name: t.name.clone(),
+                description: if t.description.is_empty() {
+                    None
+                } else {
+                    Some(t.description.clone())
+                },
+                parameters: Some(t.parameters.clone()),
+                strict: None,
+            })
+            .collect();
+        req = req.tools(response_tools);
+
+        let response = self.send_request_auto(req).await?;
+
+        let response_id = response.id.clone();
+        self.save_response_id(&response_id);
+        record_otel_usage(&response, &self.model);
+
+        let input_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens)
+            .unwrap_or(0);
+        let cached_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0);
+
+        tracing::info!(
+            model = %response.model,
+            response_id = %response_id,
+            input_tokens,
+            cached_tokens,
+            chained = previous_response_id.is_some(),
+            "oxide.tools_call_stateful"
+        );
+
+        Ok((Self::extract_tool_calls(&response), Some(response_id)))
     }
 
     /// Extract tool calls from Responses API output items.

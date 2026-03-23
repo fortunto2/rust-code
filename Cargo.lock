@@ -1993,14 +1993,16 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
+ "async-trait",
  "bytes",
  "futures-core",
  "futures-util",
  "gloo-timers",
  "pin-project-lite",
  "reqwest 0.13.2",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

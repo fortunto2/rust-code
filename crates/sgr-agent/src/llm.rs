@@ -44,13 +44,13 @@ fn is_openai_model(model: &str) -> bool {
 
 impl Llm {
     /// Create from config. Backend auto-selected:
-    /// - oxide for OpenAI models (when feature enabled, no custom base_url)
-    /// - genai for everything else
+    /// - oxide for all models (Responses API works with OpenAI + OpenRouter + compatible)
+    /// - genai only for Vertex AI (project_id) or when oxide feature is disabled
     pub fn new(config: &LlmConfig) -> Self {
         #[cfg(feature = "oxide")]
         {
-            // Use oxide for native OpenAI models or compatible endpoints
-            if config.project_id.is_none() && is_openai_model(&config.model) {
+            // Vertex AI needs genai (gcloud ADC auth)
+            if config.project_id.is_none() {
                 if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
                     tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
                     return Self {
@@ -82,6 +82,16 @@ impl Llm {
             #[cfg(feature = "oxide")]
             Backend::Oxide(c) => c,
         }
+    }
+
+    /// Upgrade to WebSocket mode for lower latency (oxide backend only).
+    /// No-op for genai or when oxide-ws feature is not enabled.
+    pub async fn connect_ws(&self) -> Result<(), SgrError> {
+        #[cfg(feature = "oxide-ws")]
+        if let Backend::Oxide(c) = &self.inner {
+            return c.connect_ws().await;
+        }
+        Ok(())
     }
 
     /// Stream text completion, calling `on_token` for each chunk.
@@ -127,10 +137,9 @@ impl Llm {
                     .await
             }
             #[cfg(feature = "oxide")]
-            Backend::Oxide(_c) => {
-                // OxideClient handles previous_response_id internally via Mutex
-                let calls = self.client().tools_call(messages, tools).await?;
-                Ok((calls, None)) // TODO: expose response_id from OxideClient
+            Backend::Oxide(c) => {
+                c.tools_call_stateful(messages, tools, previous_response_id)
+                    .await
             }
         }
     }
@@ -218,11 +227,11 @@ mod tests {
     }
 
     #[test]
-    fn llm_custom_endpoint_uses_genai() {
-        // Custom base_url → always genai (could be OpenRouter, Ollama, etc.)
+    fn llm_custom_endpoint_uses_oxide() {
+        // Custom base_url → oxide (OpenRouter supports Responses API)
         let config = LlmConfig::endpoint("sk-test", "https://openrouter.ai/api/v1", "gpt-5.4");
         let llm = Llm::new(&config);
-        assert_eq!(llm.backend_name(), "genai");
+        assert_eq!(llm.backend_name(), "oxide");
     }
 
     #[test]
