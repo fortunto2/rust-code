@@ -404,7 +404,10 @@ impl OxideClient {
         // Always store so next call can chain via previous_response_id
         req = req.store(true);
 
-        // Convert ToolDefs to ResponseTools
+        // Convert ToolDefs to ResponseTools.
+        // AI-NOTE: strict: true requires all fields required + additionalProperties: false
+        // on every nested object. Our schemas from schemars have optional fields,
+        // so strict mode causes parse errors. Use None (non-strict) for now.
         let response_tools: Vec<ResponseTool> = tools
             .iter()
             .map(|t| ResponseTool::Function {
