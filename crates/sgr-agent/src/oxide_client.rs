@@ -254,12 +254,13 @@ impl OxideClient {
             req.input = Some(ResponseInput::Items(items));
         }
 
-        // AI-NOTE: OpenAI WS bug — decimal temperature (e.g. 0.7, 1.2) causes
-        // immediate close=1000 with no error event. Integer values (0, 1, 2) work fine.
-        // Workaround: omit temperature for WS requests (API uses model default ~1.0).
-        // HTTP build_request() still sends temperature normally.
-        // Bug report: https://community.openai.com/t/1375536
-        // TODO: re-enable when OpenAI fixes decimal temperature on WS.
+        // Temperature: send normally. openai-oxide WS layer auto-strips decimal values
+        // (OpenAI WS bug: https://community.openai.com/t/1375536).
+        if let Some(temp) = self.temperature {
+            if (temp - 1.0).abs() > f64::EPSILON {
+                req = req.temperature(temp);
+            }
+        }
         if let Some(max) = self.max_tokens {
             req = req.max_output_tokens(max as i64);
         }
