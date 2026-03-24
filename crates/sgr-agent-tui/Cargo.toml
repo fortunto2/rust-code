@@ -9,7 +9,7 @@ keywords = ["sgr", "agent", "tui", "ratatui", "llm"]
 categories = ["command-line-interface"]
 
 [dependencies]
-sgr-agent = { version = "0.4.0", path = "../sgr-agent", features = ["session", "telemetry"] }
+sgr-agent = { version = "0.5.0", path = "../sgr-agent", features = ["session", "telemetry"] }
 ratatui = "0.29.0"
 crossterm = "0.27"
 nucleo-matcher = "0.3"
