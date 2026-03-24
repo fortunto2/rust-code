@@ -1,6 +1,6 @@
 [package]
 name = "sgr-agent-tui"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "Shared TUI shell for SGR agents: chat panel, streaming, agent loop integration"
 license = "MIT"
