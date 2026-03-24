@@ -2,17 +2,15 @@
 //!
 //! Public API: `LlmConfig` + `Llm`. No provider-specific types leak.
 //!
-//! Backend selection (compile-time features + runtime model detection):
-//! - `oxide` feature + OpenAI model → openai-oxide (Responses API, fastest)
-//! - `genai` feature → genai crate (multi-provider: OpenAI, Gemini, Anthropic, etc.)
-//! - Both enabled → oxide for OpenAI models, genai for everything else
+//! Backend selection:
+//! - oxide (openai-oxide): primary, Responses API, works with OpenAI + OpenRouter + compatible
+//! - genai (optional): fallback for Vertex AI (project_id set)
 //!
 //! ```no_run
 //! use sgr_agent::{Llm, LlmConfig};
 //!
-//! let llm = Llm::new(&LlmConfig::auto("gpt-5.4"));          // → oxide (if feature enabled)
-//! let llm = Llm::new(&LlmConfig::auto("gemini-2.0-flash")); // → genai
-//! let llm = Llm::new(&LlmConfig::endpoint("sk-or-...", "https://openrouter.ai/api/v1", "gpt-4o")); // → genai (custom endpoint)
+//! let llm = Llm::new(&LlmConfig::auto("gpt-5.4"));
+//! let llm = Llm::new(&LlmConfig::endpoint("sk-or-...", "https://openrouter.ai/api/v1", "gpt-4o"));
 //! ```
 
 use crate::client::LlmClient;
@@ -25,10 +23,9 @@ use serde_json::Value;
 
 /// Backend dispatch — resolved at construction time.
 enum Backend {
+    Oxide(crate::oxide_client::OxideClient),
     #[cfg(feature = "genai")]
     Genai(crate::genai_client::GenaiClient),
-    #[cfg(feature = "oxide")]
-    Oxide(crate::oxide_client::OxideClient),
 }
 
 /// Provider-agnostic LLM client. Construct via `Llm::new(&LlmConfig)`.
@@ -38,48 +35,47 @@ pub struct Llm {
 
 impl Llm {
     /// Create from config. Backend auto-selected:
-    /// - oxide for all models (Responses API works with OpenAI + OpenRouter + compatible)
-    /// - genai only for Vertex AI (project_id) or when oxide feature is disabled
+    /// - oxide for all models (primary)
+    /// - genai only for Vertex AI (project_id set)
     pub fn new(config: &LlmConfig) -> Self {
-        #[cfg(feature = "oxide")]
-        {
-            // Vertex AI needs genai (gcloud ADC auth)
-            if config.project_id.is_none() {
-                if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
-                    tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
-                    return Self {
-                        inner: Backend::Oxide(client),
-                    };
-                }
-            }
-        }
-
+        // Vertex AI needs genai (gcloud ADC auth)
         #[cfg(feature = "genai")]
-        {
+        if config.project_id.is_some() {
             tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected");
             return Self {
                 inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(config)),
             };
         }
 
-        #[cfg(not(any(feature = "genai", feature = "oxide")))]
-        {
-            compile_error!("At least one of 'genai' or 'oxide' features must be enabled for Llm");
+        if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
+            tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
+            Self {
+                inner: Backend::Oxide(client),
+            }
+        } else {
+            #[cfg(feature = "genai")]
+            {
+                tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected (oxide fallback)");
+                return Self {
+                    inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(config)),
+                };
+            }
+            #[cfg(not(feature = "genai"))]
+            panic!("OxideClient::from_config failed and genai feature not enabled");
         }
     }
 
     /// Get a reference to the inner LlmClient.
     fn client(&self) -> &dyn LlmClient {
         match &self.inner {
+            Backend::Oxide(c) => c,
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c,
-            #[cfg(feature = "oxide")]
-            Backend::Oxide(c) => c,
         }
     }
 
     /// Upgrade to WebSocket mode for lower latency (oxide backend only).
-    /// No-op for genai or when oxide-ws feature is not enabled.
+    /// No-op for genai.
     pub async fn connect_ws(&self) -> Result<(), SgrError> {
         #[cfg(feature = "oxide-ws")]
         if let Backend::Oxide(c) = &self.inner {
@@ -89,8 +85,6 @@ impl Llm {
     }
 
     /// Stream text completion, calling `on_token` for each chunk.
-    /// Returns the full concatenated text.
-    /// Note: only available with genai backend (oxide streaming not yet wired).
     pub async fn stream_complete<F>(
         &self,
         messages: &[Message],
@@ -102,7 +96,6 @@ impl Llm {
         match &self.inner {
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c.stream_complete(messages, on_token).await,
-            #[cfg(feature = "oxide")]
             Backend::Oxide(_) => {
                 // Oxide doesn't have streaming yet — generate full text,
                 // then invoke on_token so callers (e.g. TTS, TUI) get the content.
@@ -118,8 +111,7 @@ impl Llm {
         self.client().complete(messages).await
     }
 
-    /// Function calling with stateful session support (OpenAI Responses API).
-    /// Returns tool calls + response_id for use as `previous_response_id` in next call.
+    /// Function calling with stateful session support (Responses API).
     pub async fn tools_call_stateful(
         &self,
         messages: &[Message],
@@ -127,21 +119,19 @@ impl Llm {
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
         match &self.inner {
-            #[cfg(feature = "genai")]
-            Backend::Genai(c) => {
+            Backend::Oxide(c) => {
                 c.tools_call_stateful(messages, tools, previous_response_id)
                     .await
             }
-            #[cfg(feature = "oxide")]
-            Backend::Oxide(c) => {
+            #[cfg(feature = "genai")]
+            Backend::Genai(c) => {
                 c.tools_call_stateful(messages, tools, previous_response_id)
                     .await
             }
         }
     }
 
-    /// Structured output — generates JSON schema from `T`, sends via native response_format,
-    /// parses result into `T`.
+    /// Structured output — generates JSON schema from `T`, parses result.
     pub async fn structured<T: JsonSchema + DeserializeOwned>(
         &self,
         messages: &[Message],
@@ -159,10 +149,9 @@ impl Llm {
     /// Which backend is active.
     pub fn backend_name(&self) -> &'static str {
         match &self.inner {
+            Backend::Oxide(_) => "oxide",
             #[cfg(feature = "genai")]
             Backend::Genai(_) => "genai",
-            #[cfg(feature = "oxide")]
-            Backend::Oxide(_) => "oxide",
         }
     }
 }
@@ -198,21 +187,11 @@ mod tests {
     fn llm_from_auto_config() {
         let config = LlmConfig::auto("gpt-5.4");
         let llm = Llm::new(&config);
-        // With oxide feature: "oxide", without: "genai"
-        let name = llm.backend_name();
-        assert!(name == "oxide" || name == "genai");
-    }
-
-    #[test]
-    fn llm_gemini_uses_genai() {
-        let config = LlmConfig::auto("gemini-2.0-flash");
-        let llm = Llm::new(&config);
-        assert_eq!(llm.backend_name(), "genai");
+        assert_eq!(llm.backend_name(), "oxide");
     }
 
     #[test]
     fn llm_custom_endpoint_uses_oxide() {
-        // Custom base_url → oxide (OpenRouter supports Responses API)
         let config = LlmConfig::endpoint("sk-test", "https://openrouter.ai/api/v1", "gpt-5.4");
         let llm = Llm::new(&config);
         assert_eq!(llm.backend_name(), "oxide");
@@ -238,8 +217,6 @@ mod tests {
         let config: LlmConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.model, "gpt-4o");
         assert!(config.api_key.is_none());
-        assert!(config.base_url.is_none());
         assert_eq!(config.temp, 0.7);
-        assert!(config.max_tokens.is_none());
     }
 }

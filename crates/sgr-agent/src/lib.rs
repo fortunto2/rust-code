@@ -34,20 +34,14 @@ pub mod openai;
 
 #[cfg(feature = "genai")]
 pub(crate) mod genai_client;
-#[cfg(feature = "genai")]
-pub mod llm;
-#[cfg(feature = "genai")]
-pub use llm::Llm;
 
-#[cfg(feature = "oxide")]
+// Oxide is the primary LLM backend (always compiled)
 pub mod oxide_client;
-#[cfg(feature = "oxide")]
 pub use oxide_client::OxideClient;
 
-#[cfg(feature = "async-openai-backend")]
-pub mod async_openai_client;
-#[cfg(feature = "async-openai-backend")]
-pub use async_openai_client::AsyncOpenAIClient;
+// Llm facade — routes to oxide (primary) or genai (Vertex AI fallback)
+pub mod llm;
+pub use llm::Llm;
 
 // Agent framework (behind feature gate)
 #[cfg(feature = "agent")]
