@@ -94,7 +94,7 @@ impl Llm {
     pub async fn stream_complete<F>(
         &self,
         messages: &[Message],
-        on_token: F,
+        mut on_token: F,
     ) -> Result<String, SgrError>
     where
         F: FnMut(&str),
@@ -104,8 +104,10 @@ impl Llm {
             Backend::Genai(c) => c.stream_complete(messages, on_token).await,
             #[cfg(feature = "oxide")]
             Backend::Oxide(_) => {
-                // Fallback: non-streaming complete
+                // Oxide doesn't have streaming yet — generate full text,
+                // then invoke on_token so callers (e.g. TTS, TUI) get the content.
                 let text = self.generate(messages).await?;
+                on_token(&text);
                 Ok(text)
             }
         }
