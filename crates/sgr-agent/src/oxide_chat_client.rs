@@ -175,6 +175,9 @@ impl LlmClient for OxideChatClient {
             })
             .collect();
         req.tools = Some(chat_tools);
+        req.tool_choice = Some(openai_oxide::types::chat::ToolChoice::Mode(
+            "required".into(),
+        ));
 
         let response = self
             .client
@@ -189,17 +192,8 @@ impl LlmClient for OxideChatClient {
 
         tracing::info!(model = %response.model, "oxide_chat.tools_call");
 
-        let mut calls = Self::extract_tool_calls(&response);
-
-        // If model responded with text content instead of tool calls,
-        // synthesize a "finish" tool call so the agent loop gets the answer.
-        let content = response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default();
-        crate::client::synthesize_finish_if_empty(&mut calls, &content);
-
+        let calls = Self::extract_tool_calls(&response);
+        // Don't synthesize finish — empty tool_calls signals completion to ToolCallingAgent.
         Ok(calls)
     }
 
