@@ -138,7 +138,29 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
             "Now execute the next step from your plan using the available tools.",
         ));
 
-        let defs = tools.to_defs();
+        // Progressive tool discovery: filter tools by reasoning context.
+        // Send only tools mentioned in situation/plan + answer/finish (always needed).
+        let context_lower = format!("{} {}", situation, plan.join(" ")).to_lowercase();
+        let filtered: Vec<_> = tools
+            .to_defs()
+            .into_iter()
+            .filter(|t| {
+                // Always include answer/finish tools
+                t.name == "answer"
+                    || t.name == "finish_task"
+                    || t.name.contains("answer")
+                    // Include if tool name appears in reasoning context
+                    || context_lower.contains(&t.name.to_lowercase())
+                    // Include read/write/search as core tools (almost always needed)
+                    || matches!(t.name.as_str(), "read" | "write" | "search")
+            })
+            .collect();
+        let defs = if filtered.is_empty() {
+            tools.to_defs()
+        } else {
+            filtered
+        };
+
         let (tool_calls, new_response_id) = self
             .client
             .tools_call_stateful(&action_msgs, &defs, previous_response_id)
