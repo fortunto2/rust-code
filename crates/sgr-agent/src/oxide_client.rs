@@ -516,7 +516,14 @@ impl LlmClient for OxideClient {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
-        let mut req = self.build_request(messages, None);
+        // Use proper function_call_output format when messages contain tool results,
+        // required for Responses API with previous_response_id chaining
+        let has_tool_messages = messages.iter().any(|m| m.role == Role::Tool);
+        let mut req = if has_tool_messages {
+            self.build_request_with_tool_outputs(messages)
+        } else {
+            self.build_request(messages, None)
+        };
 
         // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
@@ -534,6 +541,12 @@ impl LlmClient for OxideClient {
             .collect();
         req = req.tools(response_tools);
 
+        // Force model to always call a tool — prevents text-only responses
+        // that lose answer content (tools_call only returns Vec<ToolCall>).
+        req = req.tool_choice(openai_oxide::types::responses::ResponseToolChoice::Mode(
+            "required".into(),
+        ));
+
         let response = self.send_request_auto(req).await?;
 
         self.save_response_id(&response.id);
@@ -545,8 +558,7 @@ impl LlmClient for OxideClient {
             "oxide.tools_call"
         );
 
-        let mut calls = Self::extract_tool_calls(&response);
-        crate::client::synthesize_finish_if_empty(&mut calls, &response.output_text());
+        let calls = Self::extract_tool_calls(&response);
         Ok(calls)
     }
 
