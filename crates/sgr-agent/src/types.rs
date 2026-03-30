@@ -507,6 +507,13 @@ pub enum SgrError {
     Schema(String),
     #[error("No content in response")]
     EmptyResponse,
+    /// Model response was truncated due to max_output_tokens limit.
+    /// Contains the partial content that was generated before truncation.
+    #[error("Response truncated (max_output_tokens): {partial_content}")]
+    MaxOutputTokens { partial_content: String },
+    /// Prompt too long — context exceeds model's input limit.
+    #[error("Prompt too long: {0}")]
+    PromptTooLong(String),
 }
 
 impl SgrError {

@@ -40,6 +40,9 @@ pub fn is_retryable(err: &SgrError) -> bool {
         SgrError::Api { status, .. } => *status >= 500 || *status == 408 || *status == 429,
         // Empty response wrapped as Schema error — transient model behavior
         SgrError::Schema(msg) => msg.contains("Empty response"),
+        // MaxOutputTokens and PromptTooLong are NOT retryable at this level —
+        // they are handled by the agent loop with special recovery logic
+        SgrError::MaxOutputTokens { .. } | SgrError::PromptTooLong(_) => false,
         _ => false,
     }
 }

@@ -1,12 +1,16 @@
 //! Generic agent loop — drives agent + tools until completion or limit.
 //!
 //! Includes 3-tier loop detection (exact signature, tool name frequency, output stagnation).
+//! Features from Claude Code (HitCC analysis):
+//! - Tool result pairing repair — ensures every tool_use has a matching tool_result
+//! - Context modifiers — tools can adjust runtime behavior via ToolOutput::modifier
+//! - Max output tokens recovery — auto-continuation when response is truncated
 
 use crate::agent::{Agent, AgentError, Decision};
 use crate::context::{AgentContext, AgentState};
 use crate::registry::ToolRegistry;
 use crate::retry::{RetryConfig, delay_for_attempt, is_retryable};
-use crate::types::{Message, SgrError};
+use crate::types::{Message, Role, SgrError};
 use futures::future::join_all;
 use std::collections::HashMap;
 
@@ -15,6 +19,9 @@ const MAX_PARSE_RETRIES: usize = 3;
 
 /// Max retries for transient LLM errors (rate limit, timeout, 5xx).
 const MAX_TRANSIENT_RETRIES: usize = 3;
+
+/// Max auto-continuation attempts when response is truncated (max_output_tokens).
+const MAX_OUTPUT_TOKENS_RECOVERIES: usize = 3;
 
 /// Check if an agent error is recoverable (parsing/empty response).
 fn is_recoverable_error(e: &AgentError) -> bool {
@@ -69,6 +76,126 @@ async fn decide_with_retry(
         .await
 }
 
+/// Ensure every tool_use in messages has a matching tool_result, and vice versa.
+///
+/// Repairs the transcript before sending to the API — prevents crashes from:
+/// - Tool panics/timeouts leaving orphaned tool_use without tool_result
+/// - Duplicate tool_results for the same tool_use_id
+/// - Orphaned tool_results without a preceding tool_use
+///
+/// This is called before each `agent.decide()` call to keep the transcript valid.
+pub fn ensure_tool_result_pairing(messages: &mut Vec<Message>) {
+    // Collect all tool_use IDs from assistant messages
+    let mut expected_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for msg in messages.iter() {
+        if msg.role == Role::Assistant {
+            for tc in &msg.tool_calls {
+                expected_ids.insert(tc.id.clone());
+            }
+        }
+    }
+
+    // Collect all tool_result IDs already present
+    let mut seen_result_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Track indices of duplicate tool_results to remove
+    let mut to_remove: Vec<usize> = Vec::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.role == Role::Tool
+            && let Some(ref id) = msg.tool_call_id
+        {
+            if !seen_result_ids.insert(id.clone()) {
+                // Duplicate tool_result — mark for removal
+                to_remove.push(i);
+            } else if !expected_ids.contains(id) {
+                // Orphaned tool_result (no matching tool_use) — mark for removal
+                to_remove.push(i);
+            }
+        }
+    }
+
+    // Remove duplicates/orphans in reverse order to preserve indices
+    for i in to_remove.into_iter().rev() {
+        tracing::debug!(
+            tool_call_id = messages[i].tool_call_id.as_deref().unwrap_or("?"),
+            "Removing orphaned/duplicate tool_result"
+        );
+        messages.remove(i);
+    }
+
+    // Add synthetic tool_results for missing pairs
+    // Walk through messages and insert after each assistant+tool_calls block
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].role == Role::Assistant && !messages[i].tool_calls.is_empty() {
+            let tool_call_ids: Vec<String> = messages[i]
+                .tool_calls
+                .iter()
+                .map(|tc| tc.id.clone())
+                .collect();
+
+            // Check which IDs have results in the subsequent Tool messages
+            let mut insert_pos = i + 1;
+            let mut found_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+            while insert_pos < messages.len() && messages[insert_pos].role == Role::Tool {
+                if let Some(ref id) = messages[insert_pos].tool_call_id {
+                    found_ids.insert(id.clone());
+                }
+                insert_pos += 1;
+            }
+
+            // Insert synthetic results for missing IDs
+            for id in &tool_call_ids {
+                if !found_ids.contains(id) {
+                    tracing::debug!(
+                        tool_call_id = id.as_str(),
+                        "Inserting synthetic tool_result for orphaned tool_use"
+                    );
+                    messages.insert(
+                        insert_pos,
+                        Message::tool(id, "[Tool result missing due to internal error]"),
+                    );
+                    insert_pos += 1;
+                }
+            }
+            i = insert_pos;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Apply a context modifier from a tool output to the agent context and loop config.
+fn apply_context_modifier(
+    modifier: &crate::agent_tool::ContextModifier,
+    ctx: &mut AgentContext,
+    messages: &mut Vec<Message>,
+    effective_max_steps: &mut usize,
+) {
+    if let Some(ref injection) = modifier.system_injection {
+        // Use Role::User, not Role::System — mid-conversation system messages
+        // are unsupported by Gemini and silently dropped by some providers.
+        messages.push(Message::user(format!("[Context update]: {injection}")));
+    }
+    for (key, value) in &modifier.custom_context {
+        ctx.set(key.clone(), value.clone());
+    }
+    if let Some(delta) = modifier.max_steps_delta {
+        if delta > 0 {
+            *effective_max_steps = effective_max_steps.saturating_add(delta as usize);
+        } else {
+            *effective_max_steps =
+                effective_max_steps.saturating_sub(delta.unsigned_abs() as usize);
+        }
+    }
+    if let Some(tokens) = modifier.max_tokens_override {
+        ctx.set(
+            crate::agent_tool::MAX_TOKENS_OVERRIDE_KEY.to_string(),
+            serde_json::Value::Number(tokens.into()),
+        );
+    }
+}
+
 /// Loop configuration.
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
@@ -117,273 +244,52 @@ pub enum LoopEvent {
         question: String,
         tool_call_id: String,
     },
+    /// Response was truncated, requesting auto-continuation.
+    MaxOutputTokensRecovery {
+        attempt: usize,
+    },
+    /// Prompt exceeded model's context limit.
+    PromptTooLong {
+        message: String,
+    },
+    /// A tool returned a context modifier that was applied.
+    ContextModified {
+        tool_name: String,
+    },
 }
 
 /// Run the agent loop: decide → execute tools → feed results → repeat.
 ///
 /// Returns the number of steps taken.
+/// Non-interactive: when a tool returns `ToolOutput::waiting`, emits a
+/// `WaitingForInput` event and uses `"[waiting for user input]"` as placeholder.
+/// For interactive use (actual user input), use `run_loop_interactive`.
 pub async fn run_loop(
     agent: &dyn Agent,
     tools: &ToolRegistry,
     ctx: &mut AgentContext,
     messages: &mut Vec<Message>,
     config: &LoopConfig,
-    mut on_event: impl FnMut(LoopEvent),
+    on_event: impl FnMut(LoopEvent),
 ) -> Result<usize, AgentError> {
-    let mut detector = LoopDetector::new(config.loop_abort_threshold);
-    let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
-    let mut parse_retries: usize = 0;
-    let mut response_id: Option<String> = None;
-
-    for step in 1..=config.max_steps {
-        // Sliding window: trim messages if over limit
-        if config.max_messages > 0 && messages.len() > config.max_messages {
-            trim_messages(messages, config.max_messages);
-        }
-        ctx.iteration = step;
-        on_event(LoopEvent::StepStart { step });
-
-        // Lifecycle hook: prepare context
-        agent.prepare_context(ctx, messages);
-
-        // Lifecycle hook: prepare tools (filter/reorder)
-        let active_tool_names = agent.prepare_tools(ctx, tools);
-        let filtered_tools = if active_tool_names.len() == tools.list().len() {
-            None // no filtering needed
-        } else {
-            Some(active_tool_names)
-        };
-
-        // Use filtered registry if hooks modified the tool set
-        let effective_tools = if let Some(ref names) = filtered_tools {
-            &tools.filter(names)
-        } else {
-            tools
-        };
-
-        let decision = match decide_with_retry(
-            agent,
-            messages,
-            effective_tools,
-            response_id.as_deref(),
-        )
-        .await
-        {
-            Ok((d, new_rid)) => {
-                parse_retries = 0;
-                response_id = new_rid;
-                d
-            }
-            Err(e) if is_recoverable_error(&e) => {
-                parse_retries += 1;
-                if parse_retries > MAX_PARSE_RETRIES {
-                    return Err(e);
-                }
-                let err_msg = format!(
-                    "Parse error (attempt {}/{}): {}. Please respond with valid JSON matching the schema.",
-                    parse_retries, MAX_PARSE_RETRIES, e
-                );
-                on_event(LoopEvent::Error(AgentError::Llm(SgrError::Schema(
-                    err_msg.clone(),
-                ))));
-                messages.push(Message::user(&err_msg));
-                continue;
-            }
-            Err(e) => return Err(e),
-        };
-        on_event(LoopEvent::Decision(decision.clone()));
-
-        // Auto-completion: detect when agent is done but forgot to call finish_task
-        if completion_detector.check(&decision) {
-            ctx.state = AgentState::Completed;
-            if !decision.situation.is_empty() {
-                messages.push(Message::assistant(&decision.situation));
-            }
-            on_event(LoopEvent::Completed { steps: step });
-            return Ok(step);
-        }
-
-        if decision.completed || decision.tool_calls.is_empty() {
-            ctx.state = AgentState::Completed;
-            // Add assistant message with situation
-            if !decision.situation.is_empty() {
-                messages.push(Message::assistant(&decision.situation));
-            }
-            on_event(LoopEvent::Completed { steps: step });
-            return Ok(step);
-        }
-
-        // Loop detection
-        let sig: Vec<String> = decision
-            .tool_calls
-            .iter()
-            .map(|tc| tc.name.clone())
-            .collect();
-        match detector.check(&sig) {
-            LoopCheckResult::Abort => {
-                ctx.state = AgentState::Failed;
-                on_event(LoopEvent::LoopDetected {
-                    count: detector.consecutive,
-                });
-                return Err(AgentError::LoopDetected(detector.consecutive));
-            }
-            LoopCheckResult::Tier2Warning(dominant_tool) => {
-                // Inject a system hint: give the agent one more chance to change approach
-                let hint = format!(
-                    "LOOP WARNING: You are repeatedly using '{}' without making progress. \
-                     Try a different approach: re-read the file with read_file to see current contents, \
-                     use write_file instead of edit_file, or break the problem into smaller steps.",
-                    dominant_tool
-                );
-                messages.push(Message::system(&hint));
-            }
-            LoopCheckResult::Ok => {}
-        }
-
-        // Add assistant message with tool calls (Gemini requires model turn before function responses)
-        messages.push(Message::assistant_with_tool_calls(
-            &decision.situation,
-            decision.tool_calls.clone(),
-        ));
-
-        // Execute tool calls: read-only in parallel, write sequentially
-        let mut step_outputs: Vec<String> = Vec::new();
-        let mut early_done = false;
-
-        // Partition into read-only (parallel) and write (sequential) tool calls
-        let (ro_calls, rw_calls): (Vec<_>, Vec<_>) = decision
-            .tool_calls
-            .iter()
-            .partition(|tc| tools.get(&tc.name).is_some_and(|t| t.is_read_only()));
-
-        // Phase 1: read-only tools in parallel
-        if !ro_calls.is_empty() {
-            let futs: Vec<_> = ro_calls
-                .iter()
-                .map(|tc| {
-                    let tool = tools.get(&tc.name).unwrap();
-                    let args = tc.arguments.clone();
-                    let name = tc.name.clone();
-                    let id = tc.id.clone();
-                    async move { (id, name, tool.execute_readonly(args).await) }
-                })
-                .collect();
-
-            for (id, name, result) in join_all(futs).await {
-                match result {
-                    Ok(output) => {
-                        on_event(LoopEvent::ToolResult {
-                            name: name.clone(),
-                            output: output.content.clone(),
-                        });
-                        step_outputs.push(output.content.clone());
-                        agent.after_action(ctx, &name, &output.content);
-                        if output.waiting {
-                            ctx.state = AgentState::WaitingInput;
-                            on_event(LoopEvent::WaitingForInput {
-                                question: output.content.clone(),
-                                tool_call_id: id.clone(),
-                            });
-                            messages.push(Message::tool(&id, "[waiting for user input]"));
-                            ctx.state = AgentState::Running;
-                        } else {
-                            messages.push(Message::tool(&id, &output.content));
-                        }
-                        if output.done {
-                            early_done = true;
-                        }
-                    }
-                    Err(e) => {
-                        let err_msg = format!("Tool error: {}", e);
-                        step_outputs.push(err_msg.clone());
-                        messages.push(Message::tool(&id, &err_msg));
-                        agent.after_action(ctx, &name, &err_msg);
-                        on_event(LoopEvent::ToolResult {
-                            name,
-                            output: err_msg,
-                        });
-                    }
-                }
-            }
-            if early_done && rw_calls.is_empty() {
-                // Only honor early done from read-only tools if no write tools pending
-                ctx.state = AgentState::Completed;
-                on_event(LoopEvent::Completed { steps: step });
-                return Ok(step);
-            }
-        }
-
-        // Phase 2: write tools sequentially (need &mut ctx)
-        for tc in &rw_calls {
-            if let Some(tool) = tools.get(&tc.name) {
-                match tool.execute(tc.arguments.clone(), ctx).await {
-                    Ok(output) => {
-                        on_event(LoopEvent::ToolResult {
-                            name: tc.name.clone(),
-                            output: output.content.clone(),
-                        });
-                        step_outputs.push(output.content.clone());
-                        agent.after_action(ctx, &tc.name, &output.content);
-                        if output.waiting {
-                            ctx.state = AgentState::WaitingInput;
-                            on_event(LoopEvent::WaitingForInput {
-                                question: output.content.clone(),
-                                tool_call_id: tc.id.clone(),
-                            });
-                            messages.push(Message::tool(&tc.id, "[waiting for user input]"));
-                            ctx.state = AgentState::Running;
-                        } else {
-                            messages.push(Message::tool(&tc.id, &output.content));
-                        }
-                        if output.done {
-                            ctx.state = AgentState::Completed;
-                            on_event(LoopEvent::Completed { steps: step });
-                            return Ok(step);
-                        }
-                    }
-                    Err(e) => {
-                        let err_msg = format!("Tool error: {}", e);
-                        step_outputs.push(err_msg.clone());
-                        messages.push(Message::tool(&tc.id, &err_msg));
-                        agent.after_action(ctx, &tc.name, &err_msg);
-                        on_event(LoopEvent::ToolResult {
-                            name: tc.name.clone(),
-                            output: err_msg,
-                        });
-                    }
-                }
-            } else {
-                let err_msg = format!("Unknown tool: {}", tc.name);
-                step_outputs.push(err_msg.clone());
-                messages.push(Message::tool(&tc.id, &err_msg));
-                on_event(LoopEvent::ToolResult {
-                    name: tc.name.clone(),
-                    output: err_msg,
-                });
-            }
-        }
-
-        // Tier 3: output stagnation
-        if detector.check_outputs(&step_outputs) {
-            ctx.state = AgentState::Failed;
-            on_event(LoopEvent::LoopDetected {
-                count: detector.output_repeat_count,
-            });
-            return Err(AgentError::LoopDetected(detector.output_repeat_count));
-        }
-    }
-
-    ctx.state = AgentState::Failed;
-    Err(AgentError::MaxSteps(config.max_steps))
+    // Delegate to the unified interactive loop with a passive input handler.
+    // When a tool needs input, it gets the placeholder string instead of blocking.
+    run_loop_interactive(
+        agent,
+        tools,
+        ctx,
+        messages,
+        config,
+        on_event,
+        |_question: String| async { "[waiting for user input]".to_string() },
+    )
+    .await
 }
 
-/// Run the agent loop with interactive input support.
+/// Core agent loop — single implementation for both interactive and non-interactive modes.
 ///
-/// When a tool returns `ToolOutput::waiting`, the loop pauses and calls `on_input`
-/// with the question. The returned string is injected as the tool result, then the loop continues.
-///
-/// This is the interactive version of `run_loop` — use it when the agent may need
-/// to ask the user questions (via ClarificationTool or similar).
+/// When a tool returns `ToolOutput::waiting`, calls `on_input` with the question.
+/// `run_loop` delegates here with a passive handler that returns a placeholder.
 pub async fn run_loop_interactive<F, Fut>(
     agent: &dyn Agent,
     tools: &ToolRegistry,
@@ -401,11 +307,21 @@ where
     let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
     let mut parse_retries: usize = 0;
     let mut response_id: Option<String> = None;
+    let mut max_output_tokens_recoveries: usize = 0;
+    let mut effective_max_steps = config.max_steps;
 
-    for step in 1..=config.max_steps {
+    let mut step = 0;
+    while {
+        step += 1;
+        step <= effective_max_steps
+    } {
         if config.max_messages > 0 && messages.len() > config.max_messages {
             trim_messages(messages, config.max_messages);
         }
+
+        // Tool result pairing repair
+        ensure_tool_result_pairing(messages);
+
         ctx.iteration = step;
         on_event(LoopEvent::StepStart { step });
 
@@ -433,8 +349,34 @@ where
         {
             Ok((d, new_rid)) => {
                 parse_retries = 0;
+                max_output_tokens_recoveries = 0;
                 response_id = new_rid;
                 d
+            }
+            Err(AgentError::Llm(SgrError::MaxOutputTokens { partial_content })) => {
+                max_output_tokens_recoveries += 1;
+                if max_output_tokens_recoveries > MAX_OUTPUT_TOKENS_RECOVERIES {
+                    return Err(AgentError::Llm(SgrError::MaxOutputTokens {
+                        partial_content,
+                    }));
+                }
+                if !partial_content.is_empty() {
+                    messages.push(Message::assistant(&partial_content));
+                }
+                messages.push(Message::user(
+                    "Your response was cut off. Resume directly from where you stopped. \
+                     No apology, no recap — pick up mid-thought.",
+                ));
+                on_event(LoopEvent::MaxOutputTokensRecovery {
+                    attempt: max_output_tokens_recoveries,
+                });
+                continue;
+            }
+            Err(AgentError::Llm(SgrError::PromptTooLong(msg))) => {
+                on_event(LoopEvent::PromptTooLong {
+                    message: msg.clone(),
+                });
+                return Err(AgentError::Llm(SgrError::PromptTooLong(msg)));
             }
             Err(e) if is_recoverable_error(&e) => {
                 parse_retries += 1;
@@ -526,6 +468,9 @@ where
                 })
                 .collect();
 
+            let mut pending_modifiers: Vec<(String, crate::agent_tool::ContextModifier)> =
+                Vec::new();
+
             for (id, name, result) in join_all(futs).await {
                 match result {
                     Ok(output) => {
@@ -535,6 +480,11 @@ where
                         });
                         step_outputs.push(output.content.clone());
                         agent.after_action(ctx, &name, &output.content);
+                        if let Some(modifier) = output.modifier.clone()
+                            && !modifier.is_empty()
+                        {
+                            pending_modifiers.push((name.clone(), modifier));
+                        }
                         if output.waiting {
                             ctx.state = AgentState::WaitingInput;
                             on_event(LoopEvent::WaitingForInput {
@@ -563,8 +513,13 @@ where
                     }
                 }
             }
+
+            for (name, modifier) in pending_modifiers {
+                apply_context_modifier(&modifier, ctx, messages, &mut effective_max_steps);
+                on_event(LoopEvent::ContextModified { tool_name: name });
+            }
+
             if early_done && rw_calls.is_empty() {
-                // Only honor early done from read-only tools if no write tools pending
                 ctx.state = AgentState::Completed;
                 on_event(LoopEvent::Completed { steps: step });
                 return Ok(step);
@@ -582,6 +537,19 @@ where
                         });
                         step_outputs.push(output.content.clone());
                         agent.after_action(ctx, &tc.name, &output.content);
+                        if let Some(ref modifier) = output.modifier
+                            && !modifier.is_empty()
+                        {
+                            apply_context_modifier(
+                                modifier,
+                                ctx,
+                                messages,
+                                &mut effective_max_steps,
+                            );
+                            on_event(LoopEvent::ContextModified {
+                                tool_name: tc.name.clone(),
+                            });
+                        }
                         if output.waiting {
                             ctx.state = AgentState::WaitingInput;
                             on_event(LoopEvent::WaitingForInput {
@@ -632,7 +600,7 @@ where
     }
 
     ctx.state = AgentState::Failed;
-    Err(AgentError::MaxSteps(config.max_steps))
+    Err(AgentError::MaxSteps(effective_max_steps))
 }
 
 /// Result of loop detection check.
@@ -796,8 +764,6 @@ impl CompletionDetector {
 /// Trim messages to fit within max_messages limit.
 /// Keeps: first 2 messages (system + initial user) + last (max - 2) messages.
 fn trim_messages(messages: &mut Vec<Message>, max: usize) {
-    use crate::types::Role;
-
     if messages.len() <= max || max < 4 {
         return;
     }
@@ -1587,5 +1553,172 @@ mod tests {
         assert_eq!(tool_msg.role, crate::types::Role::Tool);
         assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_0"));
         assert_eq!(tool_msg.content, "echoed");
+    }
+
+    // --- Tool result pairing repair tests ---
+
+    #[test]
+    fn pairing_adds_missing_tool_result() {
+        let mut msgs = vec![
+            Message::user("go"),
+            Message::assistant_with_tool_calls(
+                "calling",
+                vec![
+                    ToolCall {
+                        id: "c1".into(),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                    ToolCall {
+                        id: "c2".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({}),
+                    },
+                ],
+            ),
+            // Only c1 has a result — c2 is missing
+            Message::tool("c1", "ok"),
+        ];
+        ensure_tool_result_pairing(&mut msgs);
+
+        // c2 should now have a synthetic result
+        let c2_result = msgs
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("c2"));
+        assert!(c2_result.is_some(), "Should have synthetic result for c2");
+        assert!(c2_result.unwrap().content.contains("missing"));
+    }
+
+    #[test]
+    fn pairing_removes_duplicate_tool_result() {
+        let mut msgs = vec![
+            Message::user("go"),
+            Message::assistant_with_tool_calls(
+                "calling",
+                vec![ToolCall {
+                    id: "c1".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({}),
+                }],
+            ),
+            Message::tool("c1", "first"),
+            Message::tool("c1", "duplicate"), // duplicate
+        ];
+        ensure_tool_result_pairing(&mut msgs);
+
+        let c1_count = msgs
+            .iter()
+            .filter(|m| m.tool_call_id.as_deref() == Some("c1"))
+            .count();
+        assert_eq!(c1_count, 1, "Should remove duplicate tool_result");
+    }
+
+    #[test]
+    fn pairing_removes_orphaned_tool_result() {
+        let mut msgs = vec![
+            Message::user("go"),
+            Message::tool("orphan_id", "orphaned result"), // no matching tool_use
+            Message::assistant("done"),
+        ];
+        ensure_tool_result_pairing(&mut msgs);
+
+        let orphan = msgs
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("orphan_id"));
+        assert!(orphan.is_none(), "Should remove orphaned tool_result");
+    }
+
+    #[test]
+    fn pairing_noop_for_valid_transcript() {
+        let mut msgs = vec![
+            Message::user("go"),
+            Message::assistant_with_tool_calls(
+                "calling",
+                vec![ToolCall {
+                    id: "c1".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({}),
+                }],
+            ),
+            Message::tool("c1", "result"),
+            Message::assistant("done"),
+        ];
+        let len_before = msgs.len();
+        ensure_tool_result_pairing(&mut msgs);
+        assert_eq!(msgs.len(), len_before, "Valid transcript should not change");
+    }
+
+    // --- Context modifier tests ---
+
+    #[test]
+    fn context_modifier_system_injection() {
+        use crate::agent_tool::ContextModifier;
+
+        let modifier = ContextModifier::system("Extra instructions for next step");
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let mut max_steps = 50;
+
+        apply_context_modifier(&modifier, &mut ctx, &mut messages, &mut max_steps);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].role, Role::User); // User, not System — Gemini compat
+        assert!(messages[1].content.contains("Extra instructions"));
+    }
+
+    #[test]
+    fn context_modifier_extra_steps() {
+        use crate::agent_tool::ContextModifier;
+
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![];
+        let mut max_steps = 50;
+
+        let modifier = ContextModifier::extra_steps(20);
+        apply_context_modifier(&modifier, &mut ctx, &mut messages, &mut max_steps);
+        assert_eq!(max_steps, 70);
+
+        let modifier = ContextModifier::extra_steps(-10);
+        apply_context_modifier(&modifier, &mut ctx, &mut messages, &mut max_steps);
+        assert_eq!(max_steps, 60);
+    }
+
+    #[test]
+    fn context_modifier_custom_context() {
+        use crate::agent_tool::ContextModifier;
+
+        let modifier = ContextModifier::custom("my_key", serde_json::json!("my_value"));
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![];
+        let mut max_steps = 50;
+
+        apply_context_modifier(&modifier, &mut ctx, &mut messages, &mut max_steps);
+
+        assert_eq!(ctx.get("my_key").unwrap(), "my_value");
+    }
+
+    #[test]
+    fn context_modifier_is_empty() {
+        use crate::agent_tool::ContextModifier;
+
+        assert!(ContextModifier::default().is_empty());
+        assert!(!ContextModifier::system("hi").is_empty());
+        assert!(!ContextModifier::max_tokens(100).is_empty());
+        assert!(!ContextModifier::extra_steps(5).is_empty());
+        assert!(!ContextModifier::custom("k", serde_json::json!("v")).is_empty());
+    }
+
+    #[test]
+    fn context_modifier_max_tokens_stored_in_context() {
+        use crate::agent_tool::ContextModifier;
+
+        let modifier = ContextModifier::max_tokens(4096);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![];
+        let mut max_steps = 50;
+
+        apply_context_modifier(&modifier, &mut ctx, &mut messages, &mut max_steps);
+
+        assert_eq!(ctx.max_tokens_override(), Some(4096));
     }
 }

@@ -480,7 +480,29 @@ impl OxideClient {
             );
         }
 
+        Self::check_truncation(&response)?;
         Ok((Self::extract_tool_calls(&response), Some(response_id)))
+    }
+
+    /// Check if response was truncated due to max_output_tokens.
+    /// Returns Err(MaxOutputTokens) if truncated, Ok(()) otherwise.
+    fn check_truncation(response: &Response) -> Result<(), SgrError> {
+        let is_incomplete = response
+            .status
+            .as_deref()
+            .is_some_and(|s| s == "incomplete");
+        let is_max_tokens = response
+            .incomplete_details
+            .as_ref()
+            .and_then(|d| d.reason.as_deref())
+            .is_some_and(|r| r == "max_output_tokens");
+
+        if is_incomplete && is_max_tokens {
+            return Err(SgrError::MaxOutputTokens {
+                partial_content: response.output_text(),
+            });
+        }
+        Ok(())
     }
 
     /// Extract tool calls from Responses API output items.
@@ -541,6 +563,8 @@ impl LlmClient for OxideClient {
         // No Mutex save — structured_call is stateless
         record_otel_usage(&response, &self.model);
 
+        Self::check_truncation(&response)?;
+
         let raw_text = response.output_text();
         if std::env::var("SGR_DEBUG").is_ok() {
             eprintln!(
@@ -596,6 +620,7 @@ impl LlmClient for OxideClient {
 
         // No Mutex save — tools_call is stateless
         record_otel_usage(&response, &self.model);
+        Self::check_truncation(&response)?;
 
         tracing::info!(
             model = %response.model,
@@ -624,6 +649,7 @@ impl LlmClient for OxideClient {
 
         // No Mutex save — complete is stateless
         record_otel_usage(&response, &self.model);
+        Self::check_truncation(&response)?;
 
         let text = response.output_text();
         if text.is_empty() {

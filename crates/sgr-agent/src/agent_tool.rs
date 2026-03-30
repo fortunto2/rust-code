@@ -7,6 +7,65 @@ use crate::tool::ToolDef;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+/// Modifier that a tool can return to change agent runtime behavior.
+///
+/// Inspired by Claude Code's contextModifier pattern — tools don't just return text,
+/// they can instruct the runtime to adjust its behavior for subsequent steps.
+/// Well-known key in `AgentContext.custom` for max_tokens override.
+/// Agents can read this in `prepare_context` to adjust LLM max_tokens.
+pub const MAX_TOKENS_OVERRIDE_KEY: &str = "_max_tokens_override";
+
+#[derive(Debug, Clone, Default)]
+pub struct ContextModifier {
+    /// Inject a context message for the next step (sent as Role::User for provider compat).
+    pub system_injection: Option<String>,
+    /// Override max_tokens for subsequent model calls.
+    /// Stored in `AgentContext.custom[MAX_TOKENS_OVERRIDE_KEY]` — agents read it
+    /// in `prepare_context` and pass to LlmConfig.
+    pub max_tokens_override: Option<u32>,
+    /// Add extra context to AgentContext.custom (key → value).
+    pub custom_context: Vec<(String, serde_json::Value)>,
+    /// Adjust max_steps by this delta (positive = more steps allowed).
+    pub max_steps_delta: Option<i32>,
+}
+
+impl ContextModifier {
+    pub fn system(msg: impl Into<String>) -> Self {
+        Self {
+            system_injection: Some(msg.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn max_tokens(tokens: u32) -> Self {
+        Self {
+            max_tokens_override: Some(tokens),
+            ..Default::default()
+        }
+    }
+
+    pub fn custom(key: impl Into<String>, value: serde_json::Value) -> Self {
+        Self {
+            custom_context: vec![(key.into(), value)],
+            ..Default::default()
+        }
+    }
+
+    pub fn extra_steps(delta: i32) -> Self {
+        Self {
+            max_steps_delta: Some(delta),
+            ..Default::default()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.system_injection.is_none()
+            && self.max_tokens_override.is_none()
+            && self.custom_context.is_empty()
+            && self.max_steps_delta.is_none()
+    }
+}
+
 /// Output from a tool execution.
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
@@ -17,6 +76,8 @@ pub struct ToolOutput {
     /// If true, the loop should pause and wait for user input.
     /// Content contains the question to ask.
     pub waiting: bool,
+    /// Optional modifier to adjust agent runtime behavior.
+    pub modifier: Option<ContextModifier>,
 }
 
 impl ToolOutput {
@@ -25,6 +86,7 @@ impl ToolOutput {
             content: content.into(),
             done: false,
             waiting: false,
+            modifier: None,
         }
     }
 
@@ -33,6 +95,7 @@ impl ToolOutput {
             content: content.into(),
             done: true,
             waiting: false,
+            modifier: None,
         }
     }
 
@@ -43,7 +106,15 @@ impl ToolOutput {
             content: question.into(),
             done: false,
             waiting: true,
+            modifier: None,
         }
+    }
+
+    /// Attach a context modifier to this output.
+    /// The modifier will be applied to the agent context after tool execution.
+    pub fn with_modifier(mut self, modifier: ContextModifier) -> Self {
+        self.modifier = Some(modifier);
+        self
     }
 }
 

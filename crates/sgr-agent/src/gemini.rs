@@ -142,6 +142,20 @@ impl GeminiClient {
         let response_body: Value = response.json().await?;
         let rate_limit = RateLimitInfo::from_headers(&headers);
 
+        // Check for max_output_tokens truncation before parsing
+        if let Some(candidate) = response_body.get("candidates").and_then(|c| c.get(0)) {
+            let finish_reason = candidate
+                .get("finishReason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("");
+            if finish_reason == "MAX_TOKENS" {
+                let partial = self.extract_raw_text(&response_body);
+                return Err(SgrError::MaxOutputTokens {
+                    partial_content: partial,
+                });
+            }
+        }
+
         // Extract raw text
         let raw_text = self.extract_raw_text(&response_body);
         if raw_text.trim().is_empty() {
@@ -257,6 +271,21 @@ impl GeminiClient {
         }
 
         let response_body: Value = response.json().await?;
+
+        // Check for max_output_tokens truncation
+        if let Some(candidate) = response_body.get("candidates").and_then(|c| c.get(0)) {
+            let finish_reason = candidate
+                .get("finishReason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("");
+            if finish_reason == "MAX_TOKENS" {
+                let partial = self.extract_raw_text(&response_body);
+                return Err(SgrError::MaxOutputTokens {
+                    partial_content: partial,
+                });
+            }
+        }
+
         Ok(self.extract_tool_calls(&response_body))
     }
 

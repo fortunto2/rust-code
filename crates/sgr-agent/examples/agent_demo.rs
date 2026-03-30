@@ -1072,6 +1072,18 @@ async fn main() {
             LoopEvent::WaitingForInput { question, .. } => {
                 println!("  ?? {}", question);
             }
+            LoopEvent::MaxOutputTokensRecovery { attempt } => {
+                println!(
+                    "  ↻ Response truncated, auto-continuing (attempt {})",
+                    attempt
+                );
+            }
+            LoopEvent::PromptTooLong { message } => {
+                println!("  ⚠ Prompt too long: {}", message);
+            }
+            LoopEvent::ContextModified { tool_name } => {
+                println!("  ⚙ Context modified by {}", tool_name);
+            }
         },
     )
     .await;

@@ -96,6 +96,16 @@ impl AgentContext {
         self.custom.get(key)
     }
 
+    /// Get max_tokens override set by a tool's ContextModifier.
+    /// Returns None if no override is set. Agents can call this in `prepare_context`
+    /// to adjust LlmConfig.max_tokens before the next model call.
+    pub fn max_tokens_override(&self) -> Option<u32> {
+        self.custom
+            .get(crate::agent_tool::MAX_TOKENS_OVERRIDE_KEY)
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+    }
+
     /// Set per-tool config.
     pub fn set_tool_config(&mut self, tool_name: impl Into<String>, config: Value) {
         self.tool_configs.insert(tool_name.into(), config);
