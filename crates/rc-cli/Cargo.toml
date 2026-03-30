@@ -32,8 +32,8 @@ nucleo.workspace = true
 nucleo-matcher.workspace = true
 rmcp.workspace = true
 solograph = { version = "0.1.0", path = "../solograph" }
-sgr-agent = { version = "0.5.1", path = "../sgr-agent", features = ["agent", "session", "app-tools", "providers", "telemetry", "search", "genai", "oxide"] }
-sgr-agent-tui = { version = "0.4.1", path = "../sgr-agent-tui" }
+sgr-agent = { version = "0.6.0", path = "../sgr-agent", features = ["agent", "session", "app-tools", "providers", "telemetry", "search", "genai", "oxide"] }
+sgr-agent-tui = { version = "0.4.3", path = "../sgr-agent-tui" }
 schemars = "0.8"
 dirs = "5"
 toml = "0.8"
