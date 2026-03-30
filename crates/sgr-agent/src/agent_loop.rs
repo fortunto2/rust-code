@@ -26,13 +26,14 @@ fn is_recoverable_error(e: &AgentError) -> bool {
     )
 }
 
-/// Wrap `agent.decide()` with retry for transient LLM errors (rate limit, timeout, 5xx).
+/// Wrap `agent.decide_stateful()` with retry for transient LLM errors (rate limit, timeout, 5xx).
 /// Parse errors and tool errors are NOT retried here (handled by the caller).
 async fn decide_with_retry(
     agent: &dyn Agent,
     messages: &[Message],
     tools: &ToolRegistry,
-) -> Result<Decision, AgentError> {
+    previous_response_id: Option<&str>,
+) -> Result<(Decision, Option<String>), AgentError> {
     let retry_config = RetryConfig {
         max_retries: MAX_TRANSIENT_RETRIES,
         base_delay_ms: 500,
@@ -40,7 +41,10 @@ async fn decide_with_retry(
     };
 
     for attempt in 0..=retry_config.max_retries {
-        match agent.decide(messages, tools).await {
+        match agent
+            .decide_stateful(messages, tools, previous_response_id)
+            .await
+        {
             Ok(d) => return Ok(d),
             Err(AgentError::Llm(sgr_err))
                 if is_retryable(&sgr_err) && attempt < retry_config.max_retries =>
@@ -60,7 +64,9 @@ async fn decide_with_retry(
         }
     }
     // If we exhausted all retries, do one final attempt and return its result directly
-    agent.decide(messages, tools).await
+    agent
+        .decide_stateful(messages, tools, previous_response_id)
+        .await
 }
 
 /// Loop configuration.
@@ -127,6 +133,7 @@ pub async fn run_loop(
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
     let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
     let mut parse_retries: usize = 0;
+    let mut response_id: Option<String> = None;
 
     for step in 1..=config.max_steps {
         // Sliding window: trim messages if over limit
@@ -154,9 +161,17 @@ pub async fn run_loop(
             tools
         };
 
-        let decision = match decide_with_retry(agent, messages, effective_tools).await {
-            Ok(d) => {
+        let decision = match decide_with_retry(
+            agent,
+            messages,
+            effective_tools,
+            response_id.as_deref(),
+        )
+        .await
+        {
+            Ok((d, new_rid)) => {
                 parse_retries = 0;
+                response_id = new_rid;
                 d
             }
             Err(e) if is_recoverable_error(&e) => {
@@ -385,6 +400,7 @@ where
     let mut detector = LoopDetector::new(config.loop_abort_threshold);
     let mut completion_detector = CompletionDetector::new(config.auto_complete_threshold);
     let mut parse_retries: usize = 0;
+    let mut response_id: Option<String> = None;
 
     for step in 1..=config.max_steps {
         if config.max_messages > 0 && messages.len() > config.max_messages {
@@ -407,9 +423,17 @@ where
             tools
         };
 
-        let decision = match decide_with_retry(agent, messages, effective_tools).await {
-            Ok(d) => {
+        let decision = match decide_with_retry(
+            agent,
+            messages,
+            effective_tools,
+            response_id.as_deref(),
+        )
+        .await
+        {
+            Ok((d, new_rid)) => {
                 parse_retries = 0;
+                response_id = new_rid;
                 d
             }
             Err(e) if is_recoverable_error(&e) => {

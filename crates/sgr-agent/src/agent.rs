@@ -45,6 +45,23 @@ pub trait Agent: Send + Sync {
         tools: &crate::registry::ToolRegistry,
     ) -> Result<Decision, AgentError>;
 
+    /// Stateful decide — returns response_id for multi-turn chaining.
+    ///
+    /// The agent loop tracks `response_id` across steps and passes it here.
+    /// Agents that support stateful sessions (e.g., HybridAgent with
+    /// `tools_call_stateful`) can use it for delta-only requests.
+    ///
+    /// Default: delegates to stateless `decide()`, returns `None`.
+    async fn decide_stateful(
+        &self,
+        messages: &[crate::types::Message],
+        tools: &crate::registry::ToolRegistry,
+        _previous_response_id: Option<&str>,
+    ) -> Result<(Decision, Option<String>), AgentError> {
+        let d = self.decide(messages, tools).await?;
+        Ok((d, None))
+    }
+
     /// Hook: modify context before each step. Default: no-op.
     fn prepare_context(
         &self,

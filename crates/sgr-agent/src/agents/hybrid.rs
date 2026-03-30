@@ -62,6 +62,17 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
         messages: &[Message],
         tools: &ToolRegistry,
     ) -> Result<Decision, AgentError> {
+        self.decide_stateful(messages, tools, None)
+            .await
+            .map(|(d, _)| d)
+    }
+
+    async fn decide_stateful(
+        &self,
+        messages: &[Message],
+        tools: &ToolRegistry,
+        previous_response_id: Option<&str>,
+    ) -> Result<(Decision, Option<String>), AgentError> {
         // Prepare messages with system prompt
         let mut msgs = Vec::with_capacity(messages.len() + 1);
         let has_system = messages
@@ -72,7 +83,7 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
         }
         msgs.extend_from_slice(messages);
 
-        // Phase 1: Reasoning — FC call with only the reasoning tool
+        // Phase 1: Reasoning — stateless (fresh context each time)
         let reasoning_defs = vec![reasoning_tool_def()];
         let reasoning_calls = self.client.tools_call(&msgs, &reasoning_defs).await?;
 
@@ -101,17 +112,18 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
                 .unwrap_or(false);
             (sit, plan, done)
         } else {
-            // No reasoning call — treat as completed
-            return Ok(Decision {
-                situation: String::new(),
-                task: vec![],
-                tool_calls: vec![],
-                completed: true,
-            });
+            return Ok((
+                Decision {
+                    situation: String::new(),
+                    task: vec![],
+                    tool_calls: vec![],
+                    completed: true,
+                },
+                None,
+            ));
         };
 
-        // Phase 2: Action — ALWAYS run, even when reasoning says done.
-        // The model must call `answer` or `finish_task` tool to actually complete.
+        // Phase 2: Action — STATEFUL (chain from previous step for token caching)
         let mut action_msgs = msgs.clone();
         let reasoning_context = if done {
             format!(
@@ -127,17 +139,23 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
         ));
 
         let defs = tools.to_defs();
-        let tool_calls = self.client.tools_call(&action_msgs, &defs).await?;
+        let (tool_calls, new_response_id) = self
+            .client
+            .tools_call_stateful(&action_msgs, &defs, previous_response_id)
+            .await?;
 
         let completed =
             tool_calls.is_empty() || tool_calls.iter().any(|tc| tc.name == "finish_task");
 
-        Ok(Decision {
-            situation,
-            task: plan,
-            tool_calls,
-            completed,
-        })
+        Ok((
+            Decision {
+                situation,
+                task: plan,
+                tool_calls,
+                completed,
+            },
+            new_response_id,
+        ))
     }
 }
 
