@@ -37,7 +37,13 @@ pub fn is_retryable(err: &SgrError) -> bool {
         SgrError::EmptyResponse => true,
         // reqwest::Error — retryable if timeout or connect error
         SgrError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
-        SgrError::Api { status, .. } => *status >= 500 || *status == 408 || *status == 429,
+        SgrError::Api { status, body } => {
+            *status >= 500
+                || *status == 408
+                || *status == 429
+                // Cloudflare Workers AI transient errors (bad JSON parse on their side)
+                || (*status == 400 && body.contains("AiError"))
+        }
         // Empty response wrapped as Schema error — transient model behavior
         SgrError::Schema(msg) => msg.contains("Empty response"),
         _ => false,
