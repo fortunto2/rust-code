@@ -19,11 +19,26 @@ pub trait LlmClient: Send + Sync {
     ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError>;
 
     /// Native function calling: send messages + tool defs, get tool calls.
+    /// This is STATELESS — no side effects on shared state.
     async fn tools_call(
         &self,
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError>;
+
+    /// Stateful function calling with explicit response_id for chaining.
+    /// Returns (tool_calls, new_response_id).
+    /// When previous_response_id is Some, only delta messages are needed.
+    async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        _previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        // Default: delegate to stateless tools_call, no chaining
+        let calls = self.tools_call(messages, tools).await?;
+        Ok((calls, None))
+    }
 
     /// Plain text completion (no schema, no tools).
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError>;
@@ -140,6 +155,64 @@ mod openai_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::ToolDef;
+
+    /// Mock client that only implements the required trait methods.
+    /// tools_call_stateful uses the default impl (delegates to tools_call).
+    struct MockStatelessClient;
+
+    #[async_trait::async_trait]
+    impl LlmClient for MockStatelessClient {
+        async fn structured_call(
+            &self,
+            _: &[Message],
+            _: &Value,
+        ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
+            Ok((None, vec![], String::new()))
+        }
+        async fn tools_call(
+            &self,
+            _: &[Message],
+            _: &[ToolDef],
+        ) -> Result<Vec<ToolCall>, SgrError> {
+            Ok(vec![ToolCall {
+                id: "tc1".into(),
+                name: "test_tool".into(),
+                arguments: serde_json::json!({"x": 1}),
+            }])
+        }
+        async fn complete(&self, _: &[Message]) -> Result<String, SgrError> {
+            Ok(String::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_call_stateful_default_delegates() {
+        let client = MockStatelessClient;
+        let msgs = vec![Message::user("hi")];
+        let tools = vec![ToolDef {
+            name: "test_tool".into(),
+            description: "test".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }];
+
+        // Default impl delegates to tools_call, returns None for response_id
+        let (calls, response_id) = client
+            .tools_call_stateful(&msgs, &tools, None)
+            .await
+            .unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "test_tool");
+        assert!(response_id.is_none(), "default impl returns no response_id");
+
+        // With previous_response_id — still delegates to stateless, ignores it
+        let (calls, response_id) = client
+            .tools_call_stateful(&msgs, &tools, Some("resp_abc"))
+            .await
+            .unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(response_id.is_none());
+    }
 
     #[test]
     fn inject_schema_appends_to_existing_system() {

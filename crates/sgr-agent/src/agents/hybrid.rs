@@ -110,22 +110,18 @@ impl<C: LlmClient> Agent for HybridAgent<C> {
             });
         };
 
-        // If reasoning says done, complete without phase 2
-        if done {
-            return Ok(Decision {
-                situation,
-                task: plan,
-                tool_calls: vec![],
-                completed: true,
-            });
-        }
-
-        // Phase 2: Action — FC call with full toolkit + reasoning context
+        // Phase 2: Action — ALWAYS run, even when reasoning says done.
+        // The model must call `answer` or `finish_task` tool to actually complete.
         let mut action_msgs = msgs.clone();
-        // Add reasoning as assistant context
-        let reasoning_context = format!("Reasoning: {}\nPlan: {}", situation, plan.join(", "));
+        let reasoning_context = if done {
+            format!(
+                "Reasoning: {}\nStatus: Task appears complete. Call the answer/finish tool with the final result.",
+                situation
+            )
+        } else {
+            format!("Reasoning: {}\nPlan: {}", situation, plan.join(", "))
+        };
         action_msgs.push(Message::assistant(&reasoning_context));
-        // Prompt to execute
         action_msgs.push(Message::user(
             "Now execute the next step from your plan using the available tools.",
         ));
@@ -236,8 +232,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hybrid_done_in_reasoning() {
-        struct DoneClient;
+    async fn hybrid_done_still_runs_phase2() {
+        // Even when reasoning says done, phase 2 runs to let the model call answer/finish
+        struct DoneClient {
+            call_count: Arc<AtomicUsize>,
+        }
         #[async_trait::async_trait]
         impl LlmClient for DoneClient {
             async fn structured_call(
@@ -252,28 +251,45 @@ mod tests {
                 _: &[Message],
                 _: &[ToolDef],
             ) -> Result<Vec<ToolCall>, SgrError> {
-                Ok(vec![ToolCall {
-                    id: "r1".into(),
-                    name: "reasoning".into(),
-                    arguments: serde_json::json!({
-                        "situation": "Task is already complete",
-                        "plan": [],
-                        "done": true
-                    }),
-                }])
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    Ok(vec![ToolCall {
+                        id: "r1".into(),
+                        name: "reasoning".into(),
+                        arguments: serde_json::json!({
+                            "situation": "Task is already complete",
+                            "plan": [],
+                            "done": true
+                        }),
+                    }])
+                } else {
+                    // Phase 2 — model calls finish
+                    Ok(vec![ToolCall {
+                        id: "a1".into(),
+                        name: "finish_task".into(),
+                        arguments: serde_json::json!({"summary": "done"}),
+                    }])
+                }
             }
             async fn complete(&self, _: &[Message]) -> Result<String, SgrError> {
                 Ok(String::new())
             }
         }
 
-        let agent = HybridAgent::new(DoneClient, "test");
+        let agent = HybridAgent::new(
+            DoneClient {
+                call_count: Arc::new(AtomicUsize::new(0)),
+            },
+            "test",
+        );
         let tools = ToolRegistry::new().register(DummyTool);
         let msgs = vec![Message::user("done")];
 
         let decision = agent.decide(&msgs, &tools).await.unwrap();
+        // Phase 2 ran and returned finish_task
         assert!(decision.completed);
-        assert!(decision.tool_calls.is_empty());
+        assert_eq!(decision.tool_calls.len(), 1);
+        assert_eq!(decision.tool_calls[0].name, "finish_task");
     }
 
     #[tokio::test]
@@ -306,5 +322,88 @@ mod tests {
 
         let decision = agent.decide(&msgs, &tools).await.unwrap();
         assert!(decision.completed);
+    }
+
+    #[tokio::test]
+    async fn hybrid_two_phases_independent() {
+        // Verify that phase 1 and phase 2 don't share state:
+        // Both calls use tools_call (stateless), so they are independent.
+        // The mock tracks call order and verifies each phase gets separate invocations.
+        struct PhaseTrackingClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmClient for PhaseTrackingClient {
+            async fn structured_call(
+                &self,
+                _: &[Message],
+                _: &Value,
+            ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
+                Ok((None, vec![], String::new()))
+            }
+            async fn tools_call(
+                &self,
+                msgs: &[Message],
+                tools: &[ToolDef],
+            ) -> Result<Vec<ToolCall>, SgrError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // Phase 1: reasoning — only gets reasoning tool
+                    assert_eq!(tools.len(), 1, "Phase 1 should only have reasoning tool");
+                    assert_eq!(tools[0].name, "reasoning");
+                    Ok(vec![ToolCall {
+                        id: "r1".into(),
+                        name: "reasoning".into(),
+                        arguments: serde_json::json!({
+                            "situation": "Testing phase independence",
+                            "plan": ["call read_file"],
+                            "done": false
+                        }),
+                    }])
+                } else {
+                    // Phase 2: action — gets full tool registry
+                    assert!(
+                        tools.len() > 1 || tools[0].name != "reasoning",
+                        "Phase 2 should have the real tools, not just reasoning"
+                    );
+                    // Verify that messages don't contain any implicit state from phase 1
+                    // (they will have reasoning context added explicitly as assistant message)
+                    let last_msg = msgs.last().unwrap();
+                    assert_eq!(
+                        last_msg.role,
+                        crate::types::Role::User,
+                        "Last message in phase 2 should be the action prompt"
+                    );
+                    Ok(vec![ToolCall {
+                        id: "a1".into(),
+                        name: "read_file".into(),
+                        arguments: serde_json::json!({"path": "test.rs"}),
+                    }])
+                }
+            }
+            async fn complete(&self, _: &[Message]) -> Result<String, SgrError> {
+                Ok(String::new())
+            }
+        }
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let agent = HybridAgent::new(
+            PhaseTrackingClient {
+                call_count: call_count.clone(),
+            },
+            "test agent",
+        );
+        let tools = ToolRegistry::new().register(DummyTool);
+        let msgs = vec![Message::user("read test.rs")];
+
+        let decision = agent.decide(&msgs, &tools).await.unwrap();
+
+        // Both phases ran
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        // Phase 2 returned the action
+        assert_eq!(decision.tool_calls.len(), 1);
+        assert_eq!(decision.tool_calls[0].name, "read_file");
+        assert!(!decision.completed);
     }
 }

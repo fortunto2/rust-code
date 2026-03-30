@@ -124,28 +124,16 @@ impl Llm {
     }
 
     /// Function calling with stateful session support (Responses API).
+    /// Delegates to the trait method — each backend implements its own version.
     pub async fn tools_call_stateful(
         &self,
         messages: &[Message],
         tools: &[ToolDef],
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
-        match &self.inner {
-            Backend::Oxide(c) => {
-                c.tools_call_stateful(messages, tools, previous_response_id)
-                    .await
-            }
-            Backend::OxideChat(_) => {
-                // Chat API doesn't support stateful previous_response_id — use regular tools_call
-                let calls = self.client().tools_call(messages, tools).await?;
-                Ok((calls, None))
-            }
-            #[cfg(feature = "genai")]
-            Backend::Genai(c) => {
-                c.tools_call_stateful(messages, tools, previous_response_id)
-                    .await
-            }
-        }
+        self.client()
+            .tools_call_stateful(messages, tools, previous_response_id)
+            .await
     }
 
     /// Structured output — generates JSON schema from `T`, parses result.
@@ -190,6 +178,17 @@ impl LlmClient for Llm {
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
         self.client().tools_call(messages, tools).await
+    }
+
+    async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        self.client()
+            .tools_call_stateful(messages, tools, previous_response_id)
+            .await
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {

@@ -1412,4 +1412,115 @@ mod tests {
         // Should have: StepStart, Decision, ToolResult, StepStart, Decision, Completed
         assert!(events.len() >= 4);
     }
+
+    #[tokio::test]
+    async fn tool_output_done_stops_loop() {
+        // A tool that returns ToolOutput::done() should stop the loop immediately.
+        struct DoneTool;
+        #[async_trait::async_trait]
+        impl Tool for DoneTool {
+            fn name(&self) -> &str {
+                "done_tool"
+            }
+            fn description(&self) -> &str {
+                "returns done"
+            }
+            fn parameters_schema(&self) -> Value {
+                serde_json::json!({"type": "object"})
+            }
+            async fn execute(
+                &self,
+                _: Value,
+                _: &mut AgentContext,
+            ) -> Result<ToolOutput, ToolError> {
+                Ok(ToolOutput::done("final answer"))
+            }
+        }
+
+        struct OneShotAgent;
+        #[async_trait::async_trait]
+        impl Agent for OneShotAgent {
+            async fn decide(
+                &self,
+                _: &[Message],
+                _: &ToolRegistry,
+            ) -> Result<Decision, AgentError> {
+                Ok(Decision {
+                    situation: "calling done tool".into(),
+                    task: vec![],
+                    tool_calls: vec![ToolCall {
+                        id: "1".into(),
+                        name: "done_tool".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    completed: false,
+                })
+            }
+        }
+
+        let tools = ToolRegistry::new().register(DoneTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+
+        let steps = run_loop(
+            &OneShotAgent,
+            &tools,
+            &mut ctx,
+            &mut messages,
+            &config,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            steps, 1,
+            "Loop should stop on first step when tool returns done"
+        );
+        assert_eq!(ctx.state, AgentState::Completed);
+    }
+
+    #[tokio::test]
+    async fn tool_messages_formatted_correctly() {
+        // Verify that assistant messages with tool_calls are preserved in the message list,
+        // followed by tool result messages.
+        let agent = CountingAgent {
+            max_calls: 1,
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
+        let tools = ToolRegistry::new().register(EchoTool);
+        let mut ctx = AgentContext::new();
+        let mut messages = vec![Message::user("go")];
+        let config = LoopConfig::default();
+
+        run_loop(&agent, &tools, &mut ctx, &mut messages, &config, |_| {})
+            .await
+            .unwrap();
+
+        // After 1 tool call + completion, messages should be:
+        // [user("go"), assistant_with_tool_calls("step 0", [echo]), tool("echoed"), assistant("done")]
+        assert!(messages.len() >= 4);
+
+        // Find the assistant message with tool calls
+        let assistant_tc = messages
+            .iter()
+            .find(|m| m.role == crate::types::Role::Assistant && !m.tool_calls.is_empty());
+        assert!(
+            assistant_tc.is_some(),
+            "Should have an assistant message with tool_calls"
+        );
+        let atc = assistant_tc.unwrap();
+        assert_eq!(atc.tool_calls[0].name, "echo");
+        assert_eq!(atc.tool_calls[0].id, "call_0");
+
+        // The next message should be a Tool result
+        let tc_idx = messages
+            .iter()
+            .position(|m| m.role == crate::types::Role::Assistant && !m.tool_calls.is_empty())
+            .unwrap();
+        let tool_msg = &messages[tc_idx + 1];
+        assert_eq!(tool_msg.role, crate::types::Role::Tool);
+        assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_0"));
+        assert_eq!(tool_msg.content, "echoed");
+    }
 }

@@ -642,6 +642,16 @@ impl LlmClient for GenaiClient {
         Ok(Self::extract_tool_calls(&response))
     }
 
+    async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        // Delegate to the inherent method
+        GenaiClient::tools_call_stateful(self, messages, tools, previous_response_id).await
+    }
+
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
         let req = self.build_request(messages);
         let response = self.exec(req).await?;

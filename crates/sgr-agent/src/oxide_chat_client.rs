@@ -63,12 +63,35 @@ impl OxideChatClient {
                     content: UserContent::Text(m.content.clone()),
                     name: None,
                 },
-                Role::Assistant => ChatCompletionMessageParam::Assistant {
-                    content: Some(m.content.clone()),
-                    name: None,
-                    tool_calls: None,
-                    refusal: None,
-                },
+                Role::Assistant => {
+                    let tc = if m.tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            m.tool_calls
+                                .iter()
+                                .map(|tc| openai_oxide::types::chat::ToolCall {
+                                    id: tc.id.clone(),
+                                    type_: "function".into(),
+                                    function: openai_oxide::types::chat::FunctionCall {
+                                        name: tc.name.clone(),
+                                        arguments: tc.arguments.to_string(),
+                                    },
+                                })
+                                .collect(),
+                        )
+                    };
+                    ChatCompletionMessageParam::Assistant {
+                        content: if m.content.is_empty() {
+                            None
+                        } else {
+                            Some(m.content.clone())
+                        },
+                        name: None,
+                        tool_calls: tc,
+                        refusal: None,
+                    }
+                }
                 Role::Tool => ChatCompletionMessageParam::Tool {
                     content: m.content.clone(),
                     tool_call_id: m.tool_call_id.clone().unwrap_or_default(),
@@ -83,7 +106,12 @@ impl OxideChatClient {
             req.temperature = Some(temp);
         }
         if let Some(max) = self.max_tokens {
-            req.max_tokens = Some(max as i64);
+            // Use max_completion_tokens for newer models (gpt-5.x+), max_tokens for legacy
+            if self.model.starts_with("gpt-5") || self.model.starts_with("o") {
+                req = req.max_completion_tokens(max as i64);
+            } else {
+                req.max_tokens = Some(max as i64);
+            }
         }
         req
     }
@@ -113,8 +141,15 @@ impl LlmClient for OxideChatClient {
         messages: &[Message],
         schema: &Value,
     ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
-        let mut strict_schema = schema.clone();
-        openai_oxide::parsing::ensure_strict(&mut strict_schema);
+        // Skip ensure_strict for pre-strict schemas (e.g., from build_action_schema)
+        let strict_schema =
+            if schema.get("additionalProperties").and_then(|v| v.as_bool()) == Some(false) {
+                schema.clone()
+            } else {
+                let mut s = schema.clone();
+                openai_oxide::parsing::ensure_strict(&mut s);
+                s
+            };
 
         let mut req = self.build_request(messages);
         req.response_format = Some(ResponseFormat::JsonSchema {
