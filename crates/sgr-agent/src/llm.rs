@@ -24,6 +24,7 @@ use serde_json::Value;
 /// Backend dispatch — resolved at construction time.
 enum Backend {
     Oxide(crate::oxide_client::OxideClient),
+    OxideChat(crate::oxide_chat_client::OxideChatClient),
     #[cfg(feature = "genai")]
     Genai(crate::genai_client::GenaiClient),
 }
@@ -44,6 +45,16 @@ impl Llm {
             tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected");
             return Self {
                 inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(config)),
+            };
+        }
+
+        // Chat Completions mode for compat endpoints (Cloudflare, OpenRouter compat, etc.)
+        if config.use_chat_api
+            && let Ok(client) = crate::oxide_chat_client::OxideChatClient::from_config(config)
+        {
+            tracing::debug!(model = %config.model, backend = "oxide-chat", "Llm backend selected (Chat Completions)");
+            return Self {
+                inner: Backend::OxideChat(client),
             };
         }
 
@@ -69,6 +80,7 @@ impl Llm {
     fn client(&self) -> &dyn LlmClient {
         match &self.inner {
             Backend::Oxide(c) => c,
+            Backend::OxideChat(c) => c,
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c,
         }
@@ -96,7 +108,7 @@ impl Llm {
         match &self.inner {
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c.stream_complete(messages, on_token).await,
-            Backend::Oxide(_) => {
+            Backend::Oxide(_) | Backend::OxideChat(_) => {
                 // Oxide doesn't have streaming yet — generate full text,
                 // then invoke on_token so callers (e.g. TTS, TUI) get the content.
                 let text = self.generate(messages).await?;
@@ -122,6 +134,11 @@ impl Llm {
             Backend::Oxide(c) => {
                 c.tools_call_stateful(messages, tools, previous_response_id)
                     .await
+            }
+            Backend::OxideChat(_) => {
+                // Chat API doesn't support stateful previous_response_id — use regular tools_call
+                let calls = self.client().tools_call(messages, tools).await?;
+                Ok((calls, None))
             }
             #[cfg(feature = "genai")]
             Backend::Genai(c) => {
@@ -150,6 +167,7 @@ impl Llm {
     pub fn backend_name(&self) -> &'static str {
         match &self.inner {
             Backend::Oxide(_) => "oxide",
+            Backend::OxideChat(_) => "oxide-chat",
             #[cfg(feature = "genai")]
             Backend::Genai(_) => "genai",
         }

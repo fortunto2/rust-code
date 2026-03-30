@@ -287,6 +287,11 @@ pub struct LlmConfig {
     /// Vertex AI location (default: "global").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
+    /// Force Chat Completions API instead of Responses API.
+    /// Needed for OpenAI-compatible endpoints that don't support /responses
+    /// (e.g. Cloudflare AI Gateway compat, OpenRouter, local models).
+    #[serde(default)]
+    pub use_chat_api: bool,
 }
 
 fn default_temperature() -> f64 {
@@ -304,6 +309,7 @@ impl Default for LlmConfig {
             prompt_cache_key: None,
             project_id: None,
             location: None,
+            use_chat_api: false,
         }
     }
 }

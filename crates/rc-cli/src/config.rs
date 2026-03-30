@@ -45,6 +45,11 @@ pub struct Config {
     /// Model for compaction/summarization (cheap fast model).
     #[serde(default)]
     pub compaction_model: Option<String>,
+
+    /// Use Chat Completions API instead of Responses API.
+    /// For compat endpoints: Cloudflare AI Gateway, OpenRouter compat, Workers AI.
+    #[serde(default)]
+    pub use_chat_api: bool,
 }
 
 impl Config {
@@ -121,6 +126,9 @@ impl Config {
         if other.compaction_model.is_some() {
             self.compaction_model = other.compaction_model;
         }
+        if other.use_chat_api {
+            self.use_chat_api = true;
+        }
     }
 
     /// Merge environment variables.
@@ -194,12 +202,15 @@ impl Config {
         if let Some(ref key) = self.api_key {
             let mut cfg = LlmConfig::with_key(key, &model);
             cfg.base_url = self.base_url.clone();
+            cfg.use_chat_api = self.use_chat_api;
             return Some(cfg);
         }
 
         // Custom base_url from config
         if let Some(ref url) = self.base_url {
-            return Some(LlmConfig::endpoint("", url, &model));
+            let mut cfg = LlmConfig::endpoint("", url, &model);
+            cfg.use_chat_api = self.use_chat_api;
+            return Some(cfg);
         }
 
         // OpenRouter — needs explicit base_url

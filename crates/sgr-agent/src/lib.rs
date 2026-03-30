@@ -39,6 +39,10 @@ pub(crate) mod genai_client;
 pub mod oxide_client;
 pub use oxide_client::OxideClient;
 
+// Oxide Chat — Chat Completions API for compat endpoints (Cloudflare, OpenRouter, etc.)
+pub mod oxide_chat_client;
+pub use oxide_chat_client::OxideChatClient;
+
 // Llm facade — routes to oxide (primary) or genai (Vertex AI fallback)
 pub mod llm;
 pub use llm::Llm;
