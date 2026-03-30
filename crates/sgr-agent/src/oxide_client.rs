@@ -15,7 +15,7 @@ use serde_json::Value;
 /// Record OTEL attributes on the current span for Phoenix/OpenInference.
 #[cfg(feature = "telemetry")]
 fn record_otel_usage(response: &Response, model: &str) {
-    use opentelemetry::trace::{Span, TraceContextExt, Tracer, TracerProvider};
+    use opentelemetry::trace::{Span, Tracer, TracerProvider};
 
     let provider = opentelemetry::global::tracer_provider();
     let tracer = provider.tracer("sgr-agent");
@@ -256,10 +256,10 @@ impl OxideClient {
 
         // Temperature: send normally. openai-oxide WS layer auto-strips decimal values
         // (OpenAI WS bug: https://community.openai.com/t/1375536).
-        if let Some(temp) = self.temperature {
-            if (temp - 1.0).abs() > f64::EPSILON {
-                req = req.temperature(temp);
-            }
+        if let Some(temp) = self.temperature
+            && (temp - 1.0).abs() > f64::EPSILON
+        {
+            req = req.temperature(temp);
         }
         if let Some(max) = self.max_tokens {
             req = req.max_output_tokens(max as i64);
@@ -326,10 +326,10 @@ impl OxideClient {
         }
 
         // Temperature — skip default to reduce payload
-        if let Some(temp) = self.temperature {
-            if (temp - 1.0).abs() > f64::EPSILON {
-                req = req.temperature(temp);
-            }
+        if let Some(temp) = self.temperature
+            && (temp - 1.0).abs() > f64::EPSILON
+        {
+            req = req.temperature(temp);
         }
 
         // Max tokens

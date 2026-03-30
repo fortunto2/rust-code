@@ -1857,15 +1857,16 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.9.8"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce4494b3af9da2a1907a1cda78625f9425b8123a0f2e258f822596a711cfc7a"
+checksum = "02463a2c22757de567f5e2377c123995539e66b548029e9ebdfd8df32b90f7e9"
 dependencies = [
  "async-trait",
  "bytes",
  "futures-core",
  "futures-util",
  "gloo-timers",
+ "openai-types",
  "pin-project-lite",
  "reqwest 0.13.2",
  "rustls",
@@ -1877,6 +1878,16 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "openai-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64413cb80060f0aebfc6adbe972cf3297f61b0b6c249e5a7964cbbcae9629061"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2956,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-tui"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "crossterm 0.27.0",

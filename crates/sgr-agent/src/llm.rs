@@ -185,7 +185,8 @@ mod tests {
 
     #[test]
     fn llm_from_auto_config() {
-        let config = LlmConfig::auto("gpt-5.4");
+        // OxideClient::from_config needs an API key — use config-based key
+        let config = LlmConfig::endpoint("sk-test-dummy", "https://api.openai.com/v1", "gpt-5.4");
         let llm = Llm::new(&config);
         assert_eq!(llm.backend_name(), "oxide");
     }
