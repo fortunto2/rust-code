@@ -5,12 +5,16 @@
 use crate::agent::{Agent, AgentError, Decision};
 use crate::context::{AgentContext, AgentState};
 use crate::registry::ToolRegistry;
+use crate::retry::{RetryConfig, delay_for_attempt, is_retryable};
 use crate::types::{Message, SgrError};
 use futures::future::join_all;
 use std::collections::HashMap;
 
 /// Max consecutive parsing errors before aborting the loop.
 const MAX_PARSE_RETRIES: usize = 3;
+
+/// Max retries for transient LLM errors (rate limit, timeout, 5xx).
+const MAX_TRANSIENT_RETRIES: usize = 3;
 
 /// Check if an agent error is recoverable (parsing/empty response).
 fn is_recoverable_error(e: &AgentError) -> bool {
@@ -20,6 +24,43 @@ fn is_recoverable_error(e: &AgentError) -> bool {
             | AgentError::Llm(SgrError::EmptyResponse)
             | AgentError::Llm(SgrError::Schema(_))
     )
+}
+
+/// Wrap `agent.decide()` with retry for transient LLM errors (rate limit, timeout, 5xx).
+/// Parse errors and tool errors are NOT retried here (handled by the caller).
+async fn decide_with_retry(
+    agent: &dyn Agent,
+    messages: &[Message],
+    tools: &ToolRegistry,
+) -> Result<Decision, AgentError> {
+    let retry_config = RetryConfig {
+        max_retries: MAX_TRANSIENT_RETRIES,
+        base_delay_ms: 500,
+        max_delay_ms: 30_000,
+    };
+
+    for attempt in 0..=retry_config.max_retries {
+        match agent.decide(messages, tools).await {
+            Ok(d) => return Ok(d),
+            Err(AgentError::Llm(sgr_err))
+                if is_retryable(&sgr_err) && attempt < retry_config.max_retries =>
+            {
+                let delay = delay_for_attempt(attempt, &retry_config, &sgr_err);
+                tracing::warn!(
+                    attempt = attempt + 1,
+                    max = retry_config.max_retries,
+                    delay_ms = delay.as_millis() as u64,
+                    "Retrying agent.decide(): {}",
+                    sgr_err
+                );
+                tokio::time::sleep(delay).await;
+                // Loop continues — on last attempt, fall through to return the error
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    // If we exhausted all retries, do one final attempt and return its result directly
+    agent.decide(messages, tools).await
 }
 
 /// Loop configuration.
@@ -113,7 +154,7 @@ pub async fn run_loop(
             tools
         };
 
-        let decision = match agent.decide(messages, effective_tools).await {
+        let decision = match decide_with_retry(agent, messages, effective_tools).await {
             Ok(d) => {
                 parse_retries = 0;
                 d
@@ -366,7 +407,7 @@ where
             tools
         };
 
-        let decision = match agent.decide(messages, effective_tools).await {
+        let decision = match decide_with_retry(agent, messages, effective_tools).await {
             Ok(d) => {
                 parse_retries = 0;
                 d

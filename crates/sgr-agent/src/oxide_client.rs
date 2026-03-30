@@ -98,8 +98,6 @@ pub struct OxideClient {
     pub(crate) model: String,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_tokens: Option<u32>,
-    /// Last response_id for multi-turn chaining.
-    last_response_id: std::sync::Mutex<Option<String>>,
     /// WebSocket session (when oxide-ws feature is enabled and connected).
     #[cfg(feature = "oxide-ws")]
     ws: tokio::sync::Mutex<Option<openai_oxide::websocket::WsSession>>,
@@ -137,7 +135,6 @@ impl OxideClient {
             model: config.model.clone(),
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
-            last_response_id: std::sync::Mutex::new(None),
             #[cfg(feature = "oxide-ws")]
             ws: tokio::sync::Mutex::new(None),
             #[cfg(feature = "oxide-ws")]
@@ -206,92 +203,26 @@ impl OxideClient {
             })
     }
 
-    /// Build request with mixed input: regular messages + function_call_output items.
-    /// Required when chaining with previous_response_id after a function call response.
-    /// Takes explicit `previous_response_id` — does NOT read the Mutex.
-    fn build_request_with_tool_outputs(
-        &self,
-        messages: &[Message],
-        previous_response_id: Option<&str>,
-    ) -> ResponseCreateRequest {
-        use openai_oxide::types::responses::ResponseInput;
-
-        let mut items: Vec<Value> = Vec::new();
-
-        for msg in messages {
-            match msg.role {
-                Role::Tool => {
-                    if let Some(ref call_id) = msg.tool_call_id {
-                        // Responses API function_call_output item
-                        items.push(serde_json::json!({
-                            "type": "function_call_output",
-                            "call_id": call_id,
-                            "output": msg.content
-                        }));
-                    }
-                }
-                Role::System => {
-                    items.push(serde_json::json!({
-                        "type": "message",
-                        "role": "system",
-                        "content": msg.content
-                    }));
-                }
-                Role::User => {
-                    items.push(serde_json::json!({
-                        "type": "message",
-                        "role": "user",
-                        "content": msg.content
-                    }));
-                }
-                Role::Assistant => {
-                    items.push(serde_json::json!({
-                        "type": "message",
-                        "role": "assistant",
-                        "content": msg.content
-                    }));
-                }
-            }
-        }
-
-        let mut req = ResponseCreateRequest::new(&self.model);
-        if !items.is_empty() {
-            req.input = Some(ResponseInput::Items(items));
-        }
-
-        // Temperature: send normally. openai-oxide WS layer auto-strips decimal values
-        // (OpenAI WS bug: https://community.openai.com/t/1375536).
-        if let Some(temp) = self.temperature
-            && (temp - 1.0).abs() > f64::EPSILON
-        {
-            req = req.temperature(temp);
-        }
-        if let Some(max) = self.max_tokens {
-            req = req.max_output_tokens(max as i64);
-        }
-
-        // Chain previous response if explicitly provided
-        if let Some(prev_id) = previous_response_id {
-            req = req.previous_response_id(prev_id);
-        }
-
-        req
-    }
-
-    /// Build a ResponseCreateRequest from messages + optional schema.
-    /// Purely stateless — does NOT read/write last_response_id.
-    /// Use `previous_response_id` parameter for explicit chaining.
-    fn build_request(&self, messages: &[Message], schema: Option<&Value>) -> ResponseCreateRequest {
-        self.build_request_inner(messages, schema, None)
-    }
-
-    /// Build request with optional explicit previous_response_id for chaining.
-    fn build_request_inner(
+    /// Build a ResponseCreateRequest from messages + optional schema + optional chaining.
+    ///
+    /// - `previous_response_id` is None: full history as Messages format
+    /// - `previous_response_id` is Some: Items format with function_call_output
+    ///   (required for chaining after tool calls via Responses API)
+    /// - `schema`: optional structured output json_schema config
+    pub(crate) fn build_request(
         &self,
         messages: &[Message],
         schema: Option<&Value>,
         previous_response_id: Option<&str>,
     ) -> ResponseCreateRequest {
+        if previous_response_id.is_some() {
+            // Items format: messages + function_call_output items.
+            // HTTP API accepts Messages format (without type), but WS API requires it.
+            // Using Items consistently ensures both HTTP and WS work.
+            return self.build_request_items(messages, previous_response_id);
+        }
+
+        // Messages format: standard request with optional structured output
         let mut input_items = Vec::new();
 
         for msg in messages {
@@ -310,8 +241,7 @@ impl OxideClient {
                 }
                 Role::Assistant => {
                     // Include tool call info so structured_call context shows
-                    // what action was taken (build_request_with_tool_outputs
-                    // handles the native function_call format separately).
+                    // what action was taken.
                     let mut content = msg.content.clone();
                     if !msg.tool_calls.is_empty() {
                         for tc in &msg.tool_calls {
@@ -379,24 +309,74 @@ impl OxideClient {
             });
         }
 
-        // Chain previous response if explicitly provided
+        req
+    }
+
+    /// Build Items-format request for stateful chaining with previous_response_id.
+    fn build_request_items(
+        &self,
+        messages: &[Message],
+        previous_response_id: Option<&str>,
+    ) -> ResponseCreateRequest {
+        use openai_oxide::types::responses::ResponseInput;
+
+        let mut items: Vec<Value> = Vec::new();
+
+        for msg in messages {
+            match msg.role {
+                Role::Tool => {
+                    if let Some(ref call_id) = msg.tool_call_id {
+                        items.push(serde_json::json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": msg.content
+                        }));
+                    }
+                }
+                Role::System => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "system",
+                        "content": msg.content
+                    }));
+                }
+                Role::User => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "user",
+                        "content": msg.content
+                    }));
+                }
+                Role::Assistant => {
+                    items.push(serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": msg.content
+                    }));
+                }
+            }
+        }
+
+        let mut req = ResponseCreateRequest::new(&self.model);
+        if !items.is_empty() {
+            req.input = Some(ResponseInput::Items(items));
+        }
+
+        // Temperature
+        if let Some(temp) = self.temperature
+            && (temp - 1.0).abs() > f64::EPSILON
+        {
+            req = req.temperature(temp);
+        }
+        if let Some(max) = self.max_tokens {
+            req = req.max_output_tokens(max as i64);
+        }
+
         if let Some(prev_id) = previous_response_id {
             req = req.previous_response_id(prev_id);
         }
 
         req
-    }
-
-    /// Set response_id externally (for stateful session coordination with coach).
-    pub fn set_response_id(&self, id: Option<&str>) {
-        if let Ok(mut guard) = self.last_response_id.lock() {
-            *guard = id.map(String::from);
-        }
-    }
-
-    /// Get current response_id.
-    pub fn response_id(&self) -> Option<String> {
-        self.last_response_id.lock().ok().and_then(|g| g.clone())
     }
 
     /// Function calling with explicit previous_response_id.
@@ -416,10 +396,7 @@ impl OxideClient {
         tools: &[ToolDef],
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
-        // Always use Items format (with "type":"message" on each item).
-        // HTTP API accepts Messages format (without type), but WS API requires it.
-        // Using Items consistently ensures both HTTP and WS work.
-        let mut req = self.build_request_with_tool_outputs(messages, previous_response_id);
+        let mut req = self.build_request(messages, None, previous_response_id);
         // Always store so next call can chain via previous_response_id
         req = req.store(true);
 
@@ -510,7 +487,7 @@ impl LlmClient for OxideClient {
             };
 
         // Stateless — build request with full message history, no chaining
-        let req = self.build_request(messages, Some(&strict_schema));
+        let req = self.build_request(messages, Some(&strict_schema), None);
 
         let span = tracing::info_span!(
             "oxide.responses.create",
@@ -561,7 +538,7 @@ impl LlmClient for OxideClient {
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
         // Stateless — no previous_response_id, full message history
-        let mut req = self.build_request(messages, None);
+        let mut req = self.build_request(messages, None, None);
 
         // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
@@ -611,7 +588,7 @@ impl LlmClient for OxideClient {
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
-        let req = self.build_request(messages, None);
+        let req = self.build_request(messages, None, None);
 
         let response = self.send_request_auto(req).await?;
 
@@ -652,11 +629,10 @@ mod tests {
         let config = LlmConfig::with_key("sk-test", "gpt-5.4").temperature(0.5);
         let client = OxideClient::from_config(&config).unwrap();
         let messages = vec![Message::system("Be helpful."), Message::user("Hello")];
-        let req = client.build_request(&messages, None);
+        let req = client.build_request(&messages, None, None);
         assert_eq!(req.model, "gpt-5.4");
-        // System prompt goes as input message (not instructions) for fewer tokens
         assert!(req.instructions.is_none());
-        assert!(req.input.is_some()); // system + user as messages
+        assert!(req.input.is_some());
         assert_eq!(req.temperature, Some(0.5));
     }
 
@@ -669,56 +645,51 @@ mod tests {
             "properties": {"answer": {"type": "string"}},
             "required": ["answer"]
         });
-        let req = client.build_request(&[Message::user("Hi")], Some(&schema));
+        let req = client.build_request(&[Message::user("Hi")], Some(&schema), None);
         assert!(req.text.is_some());
     }
 
     #[test]
     fn build_request_stateless_no_previous_response_id() {
-        // build_request does NOT chain with last_response_id
         let config = LlmConfig::with_key("sk-test", "gpt-5.4");
         let client = OxideClient::from_config(&config).unwrap();
 
-        // Set a response_id manually
-        client.set_response_id(Some("resp_abc"));
-
-        // build_request should NOT include previous_response_id
-        let req = client.build_request(&[Message::user("Hi")], None);
+        let req = client.build_request(&[Message::user("Hi")], None, None);
         assert!(
             req.previous_response_id.is_none(),
-            "build_request must be stateless — no previous_response_id from Mutex"
+            "build_request must be stateless when no explicit ID"
         );
     }
 
     #[test]
-    fn build_request_inner_explicit_chaining() {
-        // build_request_inner with explicit previous_response_id
+    fn build_request_explicit_chaining() {
         let config = LlmConfig::with_key("sk-test", "gpt-5.4");
         let client = OxideClient::from_config(&config).unwrap();
-        let req = client.build_request_inner(&[Message::user("Hi")], None, Some("resp_xyz"));
+
+        // With previous_response_id — uses Items format for chaining
+        let req = client.build_request(&[Message::user("Hi")], None, Some("resp_xyz"));
         assert_eq!(
             req.previous_response_id.as_deref(),
             Some("resp_xyz"),
-            "build_request_inner should chain with explicit previous_response_id"
+            "build_request should chain with explicit previous_response_id"
         );
     }
 
     #[test]
-    fn build_request_with_tool_outputs_explicit_chaining() {
+    fn build_request_tool_outputs_chaining() {
         let config = LlmConfig::with_key("sk-test", "gpt-5.4");
         let client = OxideClient::from_config(&config).unwrap();
 
-        // With previous_response_id
+        // With previous_response_id — tool outputs as function_call_output items
         let messages = vec![Message::tool("call_1", "result data")];
-        let req = client.build_request_with_tool_outputs(&messages, Some("resp_123"));
+        let req = client.build_request(&messages, None, Some("resp_123"));
         assert_eq!(req.previous_response_id.as_deref(), Some("resp_123"));
 
-        // Without previous_response_id — even if Mutex has one
-        client.set_response_id(Some("resp_should_not_appear"));
-        let req = client.build_request_with_tool_outputs(&messages, None);
+        // Without previous_response_id
+        let req = client.build_request(&messages, None, None);
         assert!(
             req.previous_response_id.is_none(),
-            "build_request_with_tool_outputs must be stateless when no explicit ID"
+            "build_request must be stateless when no explicit ID"
         );
     }
 }

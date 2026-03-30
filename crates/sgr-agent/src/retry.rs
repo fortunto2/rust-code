@@ -30,8 +30,8 @@ impl Default for RetryConfig {
     }
 }
 
-/// Determine if an error is retryable.
-fn is_retryable(err: &SgrError) -> bool {
+/// Determine if an error is retryable (transient: rate limit, timeout, server errors).
+pub fn is_retryable(err: &SgrError) -> bool {
     match err {
         SgrError::RateLimit { .. } => true,
         SgrError::EmptyResponse => true,
@@ -45,7 +45,7 @@ fn is_retryable(err: &SgrError) -> bool {
 }
 
 /// Calculate delay for attempt N, honoring rate limit headers.
-fn delay_for_attempt(attempt: usize, config: &RetryConfig, err: &SgrError) -> Duration {
+pub fn delay_for_attempt(attempt: usize, config: &RetryConfig, err: &SgrError) -> Duration {
     // Honor retry-after header from rate limit
     if let Some(info) = err.rate_limit_info()
         && let Some(secs) = info.retry_after_secs
