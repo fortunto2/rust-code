@@ -545,7 +545,9 @@ impl LlmClient for OxideClient {
             "oxide.tools_call"
         );
 
-        Ok(Self::extract_tool_calls(&response))
+        let mut calls = Self::extract_tool_calls(&response);
+        crate::client::synthesize_finish_if_empty(&mut calls, &response.output_text());
+        Ok(calls)
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {

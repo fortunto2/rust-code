@@ -29,6 +29,22 @@ pub trait LlmClient: Send + Sync {
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError>;
 }
 
+/// When a model responds with text content instead of tool calls,
+/// synthesize a "finish" tool call so the agent loop gets the answer.
+/// Call this in `tools_call` implementations after extracting tool calls.
+pub fn synthesize_finish_if_empty(calls: &mut Vec<ToolCall>, content: &str) {
+    if calls.is_empty() {
+        let text = content.trim();
+        if !text.is_empty() {
+            calls.push(ToolCall {
+                id: "synth_finish".into(),
+                name: "finish".into(),
+                arguments: serde_json::json!({"summary": text}),
+            });
+        }
+    }
+}
+
 /// Inject schema into messages: append to existing system message or prepend a new one.
 fn inject_schema(messages: &[Message], schema: &Value) -> Vec<Message> {
     let schema_hint = format!(
