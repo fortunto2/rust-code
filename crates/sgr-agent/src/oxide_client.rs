@@ -32,6 +32,13 @@ fn record_otel_usage(response: &Response, model: &str) {
         .and_then(|u| u.output_tokens)
         .unwrap_or(0);
 
+    let cached = response
+        .usage
+        .as_ref()
+        .and_then(|u| u.input_tokens_details.as_ref())
+        .and_then(|d| d.cached_tokens)
+        .unwrap_or(0);
+
     // OpenInference conventions (Phoenix)
     otel_span.set_attribute(opentelemetry::KeyValue::new(
         "openinference.span.kind",
@@ -49,6 +56,10 @@ fn record_otel_usage(response: &Response, model: &str) {
     otel_span.set_attribute(opentelemetry::KeyValue::new(
         "llm.token_count.total",
         pt + ct,
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.cached",
+        cached,
     ));
 
     // GenAI conventions (LangSmith)
@@ -68,6 +79,10 @@ fn record_otel_usage(response: &Response, model: &str) {
     otel_span.set_attribute(opentelemetry::KeyValue::new(
         "gen_ai.usage.completion_tokens",
         ct,
+    ));
+    otel_span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.usage.cached_tokens",
+        cached,
     ));
 
     // Output text
@@ -441,14 +456,29 @@ impl OxideClient {
             .and_then(|d| d.cached_tokens)
             .unwrap_or(0);
 
+        let chained = previous_response_id.is_some();
+        let cache_pct = if input_tokens > 0 {
+            (cached_tokens * 100) / input_tokens
+        } else {
+            0
+        };
+
         tracing::info!(
             model = %response.model,
             response_id = %response_id,
             input_tokens,
             cached_tokens,
-            chained = previous_response_id.is_some(),
+            cache_pct,
+            chained,
             "oxide.tools_call_stateful"
         );
+
+        if std::env::var("SGR_DEBUG").is_ok() {
+            eprintln!(
+                "[sgr] stateful: input={} cached={} ({}%) chained={}",
+                input_tokens, cached_tokens, cache_pct, chained
+            );
+        }
 
         Ok((Self::extract_tool_calls(&response), Some(response_id)))
     }
