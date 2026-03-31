@@ -385,6 +385,23 @@ impl LlmConfig {
         self
     }
 
+    /// Apply extra_headers to an openai-oxide ClientConfig.
+    /// Used by both OxideClient and OxideChatClient.
+    pub fn apply_headers(&self, config: &mut openai_oxide::config::ClientConfig) {
+        if !self.extra_headers.is_empty() {
+            let mut hm = reqwest::header::HeaderMap::new();
+            for (k, v) in &self.extra_headers {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    hm.insert(name, val);
+                }
+            }
+            config.default_headers = Some(hm);
+        }
+    }
+
     /// Human-readable label for display.
     pub fn label(&self) -> String {
         if self.project_id.is_some() {

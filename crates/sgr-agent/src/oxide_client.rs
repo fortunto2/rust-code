@@ -144,6 +144,7 @@ impl OxideClient {
         if let Some(ref url) = config.base_url {
             client_config = client_config.base_url(url.clone());
         }
+        config.apply_headers(&mut client_config);
 
         Ok(Self {
             client: OpenAI::with_config(client_config),
