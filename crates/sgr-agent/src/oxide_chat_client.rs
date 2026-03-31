@@ -42,6 +42,18 @@ impl OxideChatClient {
         if let Some(ref url) = config.base_url {
             client_config = client_config.base_url(url.clone());
         }
+        if !config.extra_headers.is_empty() {
+            let mut hm = reqwest::header::HeaderMap::new();
+            for (k, v) in &config.extra_headers {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    hm.insert(name, val);
+                }
+            }
+            client_config.default_headers = Some(hm);
+        }
 
         Ok(Self {
             client: OpenAI::with_config(client_config),

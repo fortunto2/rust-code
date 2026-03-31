@@ -292,6 +292,10 @@ pub struct LlmConfig {
     /// (e.g. Cloudflare AI Gateway compat, OpenRouter, local models).
     #[serde(default)]
     pub use_chat_api: bool,
+    /// Extra HTTP headers to include in LLM API requests.
+    /// E.g. `cf-aig-request-timeout: 300000` for Cloudflare AI Gateway.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_headers: Vec<(String, String)>,
 }
 
 fn default_temperature() -> f64 {
@@ -310,6 +314,7 @@ impl Default for LlmConfig {
             project_id: None,
             location: None,
             use_chat_api: false,
+            extra_headers: Vec::new(),
         }
     }
 }
