@@ -1,4 +1,4 @@
-//! Configuration layers: global (~/.rust-code/config.toml) → project (.rust-code/config.toml) → env vars → CLI flags.
+//! Configuration layers: global (~/.rust-code/config.toml) → project (.rust-code/config.toml) → local (.rust-code/config.local.toml, gitignored) → env vars → CLI flags.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -56,9 +56,10 @@ impl Config {
     /// Load merged config from all layers.
     ///
     /// Priority (later overrides earlier):
-    /// 1. Global: ~/.rust-code/config.toml
-    /// 2. Project: .rust-code/config.toml
-    /// 3. Environment variables (RUST_CODE_MODEL, GEMINI_API_KEY, etc.)
+    /// 1. Global: `~/.rust-code/config.toml`
+    /// 2. Project: `.rust-code/config.toml` (shared, committed to git)
+    /// 3. Local: `.rust-code/config.local.toml` (gitignored — API keys, personal overrides)
+    /// 4. Environment variables (`RUST_CODE_MODEL`, `GEMINI_API_KEY`, etc.)
     pub fn load() -> Self {
         let mut config = Config::default();
 
@@ -70,13 +71,19 @@ impl Config {
             }
         }
 
-        // Layer 2: project
+        // Layer 2: project (shared, committed)
         let project_path = PathBuf::from(".rust-code").join("config.toml");
         if let Some(layer) = Self::load_file(&project_path) {
             config.merge(layer);
         }
 
-        // Layer 3: env vars
+        // Layer 3: local (gitignored — API keys, personal overrides)
+        let local_path = PathBuf::from(".rust-code").join("config.local.toml");
+        if let Some(layer) = Self::load_file(&local_path) {
+            config.merge(layer);
+        }
+
+        // Layer 4: env vars
         config.merge_env();
 
         config
@@ -288,5 +295,50 @@ mod tests {
         let cfg = Config::default();
         assert!(cfg.model.is_none());
         assert!(cfg.provider.is_none());
+    }
+
+    #[test]
+    fn local_layer_overrides_project() {
+        // Simulates: project sets provider, local overrides api_key
+        let mut config = Config {
+            provider: Some("openai".into()),
+            model: Some("gpt-4o".into()),
+            ..Default::default()
+        };
+        // Local layer adds api_key without touching provider/model
+        let local = Config {
+            api_key: Some("sk-local-secret".into()),
+            ..Default::default()
+        };
+        config.merge(local);
+        assert_eq!(config.provider.as_deref(), Some("openai"));
+        assert_eq!(config.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(config.api_key.as_deref(), Some("sk-local-secret"));
+    }
+
+    #[test]
+    fn three_layer_merge() {
+        // Global
+        let mut config = Config {
+            provider: Some("gemini".into()),
+            max_steps: Some(10),
+            ..Default::default()
+        };
+        // Project overrides model
+        config.merge(Config {
+            model: Some("gpt-4o".into()),
+            provider: Some("openai".into()),
+            ..Default::default()
+        });
+        // Local adds api_key + overrides max_steps
+        config.merge(Config {
+            api_key: Some("sk-secret".into()),
+            max_steps: Some(50),
+            ..Default::default()
+        });
+        assert_eq!(config.provider.as_deref(), Some("openai")); // from project
+        assert_eq!(config.model.as_deref(), Some("gpt-4o")); // from project
+        assert_eq!(config.api_key.as_deref(), Some("sk-secret")); // from local
+        assert_eq!(config.max_steps, Some(50)); // from local
     }
 }
