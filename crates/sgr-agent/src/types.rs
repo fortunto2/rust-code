@@ -296,6 +296,10 @@ pub struct LlmConfig {
     /// E.g. `cf-aig-request-timeout: 300000` for Cloudflare AI Gateway.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_headers: Vec<(String, String)>,
+    /// Force genai backend (for providers with native API: Anthropic, Gemini).
+    /// When false, oxide (OpenAI Responses API) is used by default.
+    #[serde(default)]
+    pub use_genai: bool,
 }
 
 fn default_temperature() -> f64 {
@@ -315,6 +319,7 @@ impl Default for LlmConfig {
             location: None,
             use_chat_api: false,
             extra_headers: Vec::new(),
+            use_genai: false,
         }
     }
 }

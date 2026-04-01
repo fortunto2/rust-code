@@ -106,6 +106,8 @@ pub fn provider_names() -> Vec<&'static str> {
 
 /// Extract Claude OAuth token from macOS Keychain.
 /// Token is stored by Claude Code CLI under "Claude Code-credentials".
+// AI-NOTE: Token works as x-api-key for haiku only. Sonnet/opus get 429 (subscription tier limit).
+// Token expires ~8h, needs refresh via console.anthropic.com/api/oauth/token. See CLAUDE_PROXY_RESEARCH.md.
 pub fn load_claude_keychain_token() -> Result<String, String> {
     // First check env var (takes priority, like Claude Code does)
     if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {

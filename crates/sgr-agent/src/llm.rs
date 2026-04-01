@@ -36,9 +36,19 @@ pub struct Llm {
 
 impl Llm {
     /// Create from config. Backend auto-selected:
-    /// - oxide for all models (primary)
-    /// - genai only for Vertex AI (project_id set)
+    /// - genai when explicitly requested (`use_genai`) or for Vertex AI (project_id set)
+    /// - oxide-chat for Chat Completions compat endpoints
+    /// - oxide for all other models (primary)
     pub fn new(config: &LlmConfig) -> Self {
+        // Explicit genai backend (e.g. Anthropic native API)
+        #[cfg(feature = "genai")]
+        if config.use_genai {
+            tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected (explicit)");
+            return Self {
+                inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(config)),
+            };
+        }
+
         // Vertex AI needs genai (gcloud ADC auth)
         #[cfg(feature = "genai")]
         if config.project_id.is_some() {
