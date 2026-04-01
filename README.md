@@ -351,3 +351,25 @@ The crate is published on crates.io:
 - https://crates.io/crates/rust-code
 
 Release artifacts (Linux x86_64 + macOS aarch64) are published on GitHub when you push a tag matching `v*`.
+
+## Comparison with Other Terminal Agents
+
+| | rust-code | Claude Code | [claw-code](https://github.com/instructkr/claw-code) | Codex CLI | Aider |
+|---|---|---|---|---|---|
+| **Language** | Rust | TypeScript | Rust | TypeScript | Python |
+| **LLM providers** | Gemini, OpenAI, Anthropic, Vertex, Ollama, OpenRouter | Anthropic only | Anthropic (+ OpenAI via [openai-oxide](https://crates.io/crates/openai-oxide)) | OpenAI only | Multi-provider |
+| **Agent variants** | 6 (structured, tool-calling, flexible, hybrid, planning, clarification) | 1 | 1 | 1 | 1 |
+| **Loop detection** | 4-tier (exact, semantic, output stagnation, frequency churn) | Unknown | None | None | None |
+| **Context compaction** | LLM-based + incremental | LLM-based | Heuristic (no LLM) | Sliding window | Repo map |
+| **Memory** | JSONL typed entries + GC + token budget | File-based | None | None | Repo map |
+| **Tools** | 27+ with fuzzy matching | 20+ | 19 | ~10 | Edit/shell |
+| **MCP support** | Yes (rmcp) | Yes | Yes (stdio) | Yes | No |
+| **OpenAPI → Tool** | 11 pre-configured APIs + APIs.guru (2800+) | No | No | No | No |
+| **Background tasks** | Yes (tmux) | No | No | No | No |
+| **Agent swarm** | Yes (multi-agent) | Yes (Agent tool) | Agent tool (stub) | No | No |
+| **Self-evolution** | Yes (`--evolve`) | No | No | No | No |
+| **Autonomous loop** | Yes (`--loop N`) | No | No | Yes | No |
+| **TUI** | Full (ratatui) | Inline terminal | Inline REPL | Inline terminal | Inline terminal |
+| **Session resume** | Yes (fuzzy search) | Yes | Yes | No | Yes |
+| **Config layering** | Global → project → local → env → CLI | 5-level JSON merge | 2-level | Env only | YAML |
+| **License** | MIT | Proprietary | MIT | Apache-2.0 | Apache-2.0 |
