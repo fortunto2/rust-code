@@ -31,6 +31,13 @@ pub struct AgentContext {
     /// Directories the agent is allowed to write to (sandbox).
     /// Empty = no restriction.
     pub writable_roots: Vec<PathBuf>,
+    /// Compressed observation log — tool results summarized for context injection.
+    /// Agents inject this into LLM messages via `prepare_context` to give the model
+    /// structured awareness of what's been done, avoiding redundant tool calls.
+    /// Format: vec of "tool(args) → summary" entries, max `observation_limit` entries.
+    pub observations: Vec<String>,
+    /// Max observation entries before oldest are evicted.
+    pub observation_limit: usize,
     /// Tool result cache — keyed by "tool_name:arg_hash".
     /// Tools can check this before executing and return cached results.
     /// Avoids redundant RPCs/file reads within a single agent loop.
@@ -46,7 +53,30 @@ impl AgentContext {
             custom: HashMap::new(),
             tool_configs: HashMap::new(),
             writable_roots: Vec::new(),
+            observations: Vec::new(),
+            observation_limit: 30,
             tool_cache: HashMap::new(),
+        }
+    }
+
+    /// Record a compressed observation: "tool(key_arg) → short summary".
+    /// Used by Agent::after_action to build structured history.
+    pub fn observe(&mut self, entry: impl Into<String>) {
+        self.observations.push(entry.into());
+        while self.observations.len() > self.observation_limit {
+            self.observations.remove(0);
+        }
+    }
+
+    /// Get observation log as a single string for LLM context injection.
+    pub fn observation_summary(&self) -> Option<String> {
+        if self.observations.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "OBSERVATION LOG:\n{}",
+                self.observations.join("\n")
+            ))
         }
     }
 
