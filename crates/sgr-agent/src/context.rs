@@ -31,6 +31,10 @@ pub struct AgentContext {
     /// Directories the agent is allowed to write to (sandbox).
     /// Empty = no restriction.
     pub writable_roots: Vec<PathBuf>,
+    /// Tool result cache — keyed by "tool_name:arg_hash".
+    /// Tools can check this before executing and return cached results.
+    /// Avoids redundant RPCs/file reads within a single agent loop.
+    pub tool_cache: HashMap<String, String>,
 }
 
 impl AgentContext {
@@ -42,7 +46,23 @@ impl AgentContext {
             custom: HashMap::new(),
             tool_configs: HashMap::new(),
             writable_roots: Vec::new(),
+            tool_cache: HashMap::new(),
         }
+    }
+
+    /// Cache a tool result. Key format: "tool_name:args_summary".
+    pub fn cache_tool_result(&mut self, key: impl Into<String>, result: impl Into<String>) {
+        self.tool_cache.insert(key.into(), result.into());
+    }
+
+    /// Get cached tool result. Returns None if not cached.
+    pub fn cached_tool_result(&self, key: &str) -> Option<&str> {
+        self.tool_cache.get(key).map(|s| s.as_str())
+    }
+
+    /// Invalidate cache entry (e.g., after write/delete to same path).
+    pub fn invalidate_cache(&mut self, key: &str) {
+        self.tool_cache.remove(key);
     }
 
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
