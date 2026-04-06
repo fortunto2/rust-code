@@ -455,8 +455,9 @@ where
             .iter()
             .partition(|tc| tools.get(&tc.name).is_some_and(|t| t.is_read_only()));
 
-        // Phase 1: read-only tools in parallel
+        // Phase 1: read-only tools in parallel (shared read-only context ref)
         if !ro_calls.is_empty() {
+            let ctx_snapshot = ctx.clone(); // snapshot for read-only parallel access
             let futs: Vec<_> = ro_calls
                 .iter()
                 .map(|tc| {
@@ -464,7 +465,8 @@ where
                     let args = tc.arguments.clone();
                     let name = tc.name.clone();
                     let id = tc.id.clone();
-                    async move { (id, name, tool.execute_readonly(args).await) }
+                    let ctx_ref = &ctx_snapshot;
+                    async move { (id, name, tool.execute_readonly(args, ctx_ref).await) }
                 })
                 .collect();
 
@@ -1360,7 +1362,11 @@ mod tests {
             ) -> Result<ToolOutput, ToolError> {
                 Ok(ToolOutput::text(format!("{} result", self.name)))
             }
-            async fn execute_readonly(&self, _: Value) -> Result<ToolOutput, ToolError> {
+            async fn execute_readonly(
+                &self,
+                _: Value,
+                _ctx: &crate::context::AgentContext,
+            ) -> Result<ToolOutput, ToolError> {
                 Ok(ToolOutput::text(format!("{} result", self.name)))
             }
         }

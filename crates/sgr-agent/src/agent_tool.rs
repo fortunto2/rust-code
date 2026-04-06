@@ -163,8 +163,13 @@ pub trait Tool: Send + Sync {
     ) -> Result<ToolOutput, ToolError>;
 
     /// Execute without mutable context access. Used for parallel execution of read-only tools.
+    /// Gets read-only context ref for cache lookups (tool_cache, observations).
     /// Default implementation panics — override if is_read_only() returns true.
-    async fn execute_readonly(&self, args: Value) -> Result<ToolOutput, ToolError> {
+    async fn execute_readonly(
+        &self,
+        args: Value,
+        _ctx: &super::context::AgentContext,
+    ) -> Result<ToolOutput, ToolError> {
         let _ = args;
         panic!("execute_readonly called on tool that doesn't implement it")
     }
