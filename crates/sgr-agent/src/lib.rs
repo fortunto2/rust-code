@@ -43,7 +43,11 @@ pub use oxide_client::OxideClient;
 pub mod oxide_chat_client;
 pub use oxide_chat_client::OxideChatClient;
 
-// Llm facade — routes to oxide (primary) or genai (Vertex AI fallback)
+// CLI subprocess client (claude -p / gemini -p / codex exec)
+pub mod cli_client;
+pub use cli_client::{CliBackend, CliClient};
+
+// Llm facade — routes to oxide (primary) or genai (Vertex AI fallback) or cli
 pub mod llm;
 pub use llm::Llm;
 

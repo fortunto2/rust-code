@@ -25,6 +25,8 @@ pub struct StepDecision<A> {
     /// Soft hints injected as system messages before execution.
     /// Used for intent-mismatch nudges, guardrails, etc.
     pub hints: Vec<String>,
+    /// Tool call IDs from Responses API — paired with actions by index for stateful chaining.
+    pub call_ids: Vec<String>,
 }
 
 impl<A> Default for StepDecision<A> {
@@ -35,6 +37,7 @@ impl<A> Default for StepDecision<A> {
             completed: false,
             actions: vec![],
             hints: vec![],
+            call_ids: vec![],
         }
     }
 }
@@ -284,8 +287,9 @@ where
         );
     }
 
-    // --- Execute actions ---
-    for action in &decision.actions {
+    // --- Execute actions (with call_ids for stateful chaining) ---
+    for (i, action) in decision.actions.iter().enumerate() {
+        let call_id = decision.call_ids.get(i).cloned();
         let action_sig = A::action_signature(action);
         on_event(LoopEvent::ActionStart(action));
 
@@ -302,10 +306,14 @@ where
                     "tool_executed"
                 );
 
-                session.push(
+                let mut msg = A::Msg::new(
                     <<A::Msg as AgentMessage>::Role>::tool(),
                     result.output.clone(),
                 );
+                if let Some(cid) = call_id.clone() {
+                    msg = msg.with_call_id(cid);
+                }
+                session.push_msg(msg);
 
                 let done = result.done;
                 on_event(LoopEvent::ActionDone(&result));
@@ -347,10 +355,14 @@ where
             }
             Err(e) => {
                 tracing::error!(step = step_num, action = %action_sig, error = %e, "tool_error");
-                session.push(
+                let mut msg = A::Msg::new(
                     <<A::Msg as AgentMessage>::Role>::tool(),
                     format!("Tool error: {}", e),
                 );
+                if let Some(cid) = call_id {
+                    msg = msg.with_call_id(cid);
+                }
+                session.push_msg(msg);
             }
         }
     }

@@ -22,6 +22,11 @@ pub trait AgentMessage: Clone {
     fn new(role: Self::Role, content: String) -> Self;
     fn role(&self) -> &Self::Role;
     fn content(&self) -> &str;
+    /// Attach a tool call ID for Responses API stateful chaining.
+    /// Default: no-op (returns self unchanged).
+    fn with_call_id(self, _call_id: String) -> Self {
+        self
+    }
 }
 
 /// Entry type discriminator — prevents invalid types at compile time.

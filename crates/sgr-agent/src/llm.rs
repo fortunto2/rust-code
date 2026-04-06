@@ -27,6 +27,8 @@ enum Backend {
     OxideChat(crate::oxide_chat_client::OxideChatClient),
     #[cfg(feature = "genai")]
     Genai(crate::genai_client::GenaiClient),
+    /// CLI subprocess (claude -p / gemini -p / codex exec).
+    Cli(crate::cli_client::CliClient),
 }
 
 /// Provider-agnostic LLM client. Construct via `Llm::new(&LlmConfig)`.
@@ -40,6 +42,17 @@ impl Llm {
     /// - oxide-chat for Chat Completions compat endpoints
     /// - oxide for all other models (primary)
     pub fn new(config: &LlmConfig) -> Self {
+        // CLI subprocess backend (claude -p / gemini -p / codex exec)
+        if config.use_cli {
+            let backend = crate::cli_client::CliBackend::from_model(&config.model)
+                .unwrap_or(crate::cli_client::CliBackend::Claude);
+            let client = crate::cli_client::CliClient::new(backend).with_model(&config.model);
+            tracing::debug!(model = %config.model, backend = "cli", "Llm backend selected");
+            return Self {
+                inner: Backend::Cli(client),
+            };
+        }
+
         // Explicit genai backend (e.g. Anthropic native API)
         #[cfg(feature = "genai")]
         if config.use_genai {
@@ -93,6 +106,7 @@ impl Llm {
             Backend::OxideChat(c) => c,
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c,
+            Backend::Cli(c) => c,
         }
     }
 
@@ -118,8 +132,8 @@ impl Llm {
         match &self.inner {
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c.stream_complete(messages, on_token).await,
-            Backend::Oxide(_) | Backend::OxideChat(_) => {
-                // Oxide doesn't have streaming yet — generate full text,
+            Backend::Oxide(_) | Backend::OxideChat(_) | Backend::Cli(_) => {
+                // Non-streaming backends — generate full text,
                 // then invoke on_token so callers (e.g. TTS, TUI) get the content.
                 let text = self.generate(messages).await?;
                 on_token(&text);
@@ -168,6 +182,7 @@ impl Llm {
             Backend::OxideChat(_) => "oxide-chat",
             #[cfg(feature = "genai")]
             Backend::Genai(_) => "genai",
+            Backend::Cli(_) => "cli",
         }
     }
 }

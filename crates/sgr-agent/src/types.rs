@@ -300,6 +300,11 @@ pub struct LlmConfig {
     /// When false, oxide (OpenAI Responses API) is used by default.
     #[serde(default)]
     pub use_genai: bool,
+    /// Use CLI subprocess backend (claude/gemini/codex -p).
+    /// Tool calls emulated via text prompt + flexible parsing.
+    /// Uses CLI's own auth (subscription credits, no API key).
+    #[serde(default)]
+    pub use_cli: bool,
 }
 
 fn default_temperature() -> f64 {
@@ -320,6 +325,7 @@ impl Default for LlmConfig {
             use_chat_api: false,
             extra_headers: Vec::new(),
             use_genai: false,
+            use_cli: false,
         }
     }
 }
@@ -407,9 +413,22 @@ impl LlmConfig {
         }
     }
 
+    /// CLI subprocess backend — uses `claude -p` / `gemini -p` / `codex exec`.
+    /// No API key needed, uses CLI's own auth (subscription credits).
+    /// Optional `model` overrides the CLI's default model via `--model` flag.
+    pub fn cli(cli_model: impl Into<String>) -> Self {
+        Self {
+            model: cli_model.into(),
+            use_cli: true,
+            ..Default::default()
+        }
+    }
+
     /// Human-readable label for display.
     pub fn label(&self) -> String {
-        if self.project_id.is_some() {
+        if self.use_cli {
+            format!("CLI ({})", self.model)
+        } else if self.project_id.is_some() {
             format!("Vertex ({})", self.model)
         } else if self.base_url.is_some() {
             format!("Custom ({})", self.model)

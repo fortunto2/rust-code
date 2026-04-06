@@ -539,8 +539,10 @@ impl LlmClient for OxideClient {
                 s
             };
 
-        // Stateless — build request with full message history, no chaining
-        let req = self.build_request(messages, Some(&strict_schema), None);
+        // Stateless — build request with full message history, no chaining.
+        // store(true) enables server-side prompt caching for stable prefix.
+        let mut req = self.build_request(messages, Some(&strict_schema), None);
+        req = req.store(true);
 
         let span = tracing::info_span!(
             "oxide.responses.create",
@@ -576,10 +578,29 @@ impl LlmClient for OxideClient {
         let tool_calls = Self::extract_tool_calls(&response);
         let parsed = serde_json::from_str::<Value>(&raw_text).ok();
 
+        let input_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens)
+            .unwrap_or(0);
+        let cached_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0);
+        let cache_pct = if input_tokens > 0 {
+            (cached_tokens * 100) / input_tokens
+        } else {
+            0
+        };
+
         tracing::info!(
             model = %response.model,
             response_id = %response.id,
-            input_tokens = response.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+            input_tokens,
+            cached_tokens,
+            cache_pct,
             output_tokens = response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
             "oxide.structured_call"
         );
@@ -592,8 +613,11 @@ impl LlmClient for OxideClient {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
-        // Stateless — no previous_response_id, full message history
+        // Stateless — no previous_response_id, full message history.
+        // store(true) enables server-side prompt caching: OpenAI auto-caches
+        // the stable prefix (system prompt + tools) for requests >1024 tokens.
         let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
 
         // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
@@ -619,13 +643,32 @@ impl LlmClient for OxideClient {
 
         let response = self.send_request_auto(req).await?;
 
-        // No Mutex save — tools_call is stateless
         record_otel_usage(&response, &self.model);
         Self::check_truncation(&response)?;
+
+        let input_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens)
+            .unwrap_or(0);
+        let cached_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0);
+        let cache_pct = if input_tokens > 0 {
+            (cached_tokens * 100) / input_tokens
+        } else {
+            0
+        };
 
         tracing::info!(
             model = %response.model,
             response_id = %response.id,
+            input_tokens,
+            cached_tokens,
+            cache_pct,
             "oxide.tools_call"
         );
 
@@ -644,11 +687,11 @@ impl LlmClient for OxideClient {
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
-        let req = self.build_request(messages, None, None);
+        let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
 
         let response = self.send_request_auto(req).await?;
 
-        // No Mutex save — complete is stateless
         record_otel_usage(&response, &self.model);
         Self::check_truncation(&response)?;
 
