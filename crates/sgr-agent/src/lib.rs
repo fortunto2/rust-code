@@ -98,6 +98,7 @@ pub mod app_loop;
 pub mod doctor;
 #[cfg(feature = "session")]
 pub mod hints;
+pub mod hooks;
 #[cfg(feature = "session")]
 pub mod intent_guard;
 #[cfg(feature = "session")]
