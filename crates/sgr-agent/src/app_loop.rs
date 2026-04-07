@@ -119,6 +119,20 @@ pub trait SgrAgent {
     /// String signature for loop detection (exact match).
     fn action_signature(action: &Self::Action) -> String;
 
+    /// Post-action hook: called after execute() returns successfully.
+    /// Returns messages to inject into session before next LLM decision.
+    /// Use for workflow hints ("card written → now update thread"),
+    /// state transitions, or chaining follow-up actions.
+    ///
+    /// Default: no-op (no messages injected).
+    ///
+    /// Both approaches coexist:
+    /// - Tool augments its own output (inside execute) — immediate context
+    /// - After-action hook (here) — can see full result + inject system messages
+    fn after_execute(&self, _action: &Self::Action, _result: &ActionResult) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Coarse category for semantic loop detection.
     ///
     /// Default: normalize the signature (strips bash flags, quotes, fallbacks).
@@ -314,6 +328,13 @@ where
                     msg = msg.with_call_id(cid);
                 }
                 session.push_msg(msg);
+
+                // --- After-action hooks ---
+                let hook_msgs = agent.after_execute(action, &result);
+                for hook_msg in &hook_msgs {
+                    session.push(<<A::Msg as AgentMessage>::Role>::tool(), hook_msg.clone());
+                    tracing::debug!(step = step_num, hook = %hook_msg, "after_execute_hook");
+                }
 
                 let done = result.done;
                 on_event(LoopEvent::ActionDone(&result));
