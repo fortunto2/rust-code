@@ -19,6 +19,8 @@ pub struct OxideChatClient {
     pub(crate) max_tokens: Option<u32>,
     /// Reasoning effort — None disables reasoning for FC (DeepInfra Nemotron Super).
     pub(crate) reasoning_effort: Option<openai_oxide::types::chat::ReasoningEffort>,
+    /// Server-side prompt prefix caching key (DeepInfra, OpenAI).
+    pub(crate) prompt_cache_key: Option<String>,
 }
 
 impl OxideChatClient {
@@ -61,6 +63,7 @@ impl OxideChatClient {
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
             reasoning_effort,
+            prompt_cache_key: config.prompt_cache_key.clone(),
         })
     }
 
@@ -127,6 +130,9 @@ impl OxideChatClient {
         }
         if let Some(ref effort) = self.reasoning_effort {
             req.reasoning_effort = Some(effort.clone());
+        }
+        if let Some(ref key) = self.prompt_cache_key {
+            req.prompt_cache_key = Some(key.clone());
         }
         req
     }
