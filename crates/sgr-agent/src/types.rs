@@ -24,6 +24,11 @@ pub struct Message {
     /// Inline images (for multimodal VLM input).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ImagePart>,
+    /// Whether this message can be dropped during context compaction.
+    /// false (default) = critical — never remove (inbox, instruction, system).
+    /// true = compactable — can be summarized or dropped when context overflows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compactable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +48,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: vec![],
             images: vec![],
+            compactable: false,
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
@@ -52,6 +58,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: vec![],
             images: vec![],
+            compactable: false,
         }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
@@ -61,6 +68,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: vec![],
             images: vec![],
+            compactable: false,
         }
     }
     /// Create an assistant message that includes function calls (for Gemini FC protocol).
@@ -74,6 +82,7 @@ impl Message {
             tool_call_id: None,
             tool_calls,
             images: vec![],
+            compactable: false,
         }
     }
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -83,6 +92,7 @@ impl Message {
             tool_call_id: Some(call_id.into()),
             tool_calls: vec![],
             images: vec![],
+            compactable: false,
         }
     }
     /// Tool result with inline images (for VLM — Gemini sees the images).
@@ -97,6 +107,7 @@ impl Message {
             tool_call_id: Some(call_id.into()),
             tool_calls: vec![],
             images,
+            compactable: false,
         }
     }
     /// User message with inline images.
@@ -107,7 +118,13 @@ impl Message {
             tool_call_id: None,
             tool_calls: vec![],
             images,
+            compactable: false,
         }
+    }
+    /// Mark this message as compactable (safe to drop during context overflow).
+    pub fn compactable(mut self) -> Self {
+        self.compactable = true;
+        self
     }
 }
 
