@@ -17,6 +17,8 @@ pub struct OxideChatClient {
     pub(crate) model: String,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_tokens: Option<u32>,
+    /// Reasoning effort — None disables reasoning for FC (DeepInfra Nemotron Super).
+    pub(crate) reasoning_effort: Option<openai_oxide::types::chat::ReasoningEffort>,
 }
 
 impl OxideChatClient {
@@ -44,11 +46,21 @@ impl OxideChatClient {
         }
         config.apply_headers(&mut client_config);
 
+        let reasoning_effort = config.reasoning_effort.as_deref()
+            .and_then(|s| match s {
+                "none" => Some(openai_oxide::types::chat::ReasoningEffort::None),
+                "low" => Some(openai_oxide::types::chat::ReasoningEffort::Low),
+                "medium" => Some(openai_oxide::types::chat::ReasoningEffort::Medium),
+                "high" => Some(openai_oxide::types::chat::ReasoningEffort::High),
+                _ => None,
+            });
+
         Ok(Self {
             client: OpenAI::with_config(client_config),
             model: config.model.clone(),
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
+            reasoning_effort,
         })
     }
 
@@ -107,12 +119,14 @@ impl OxideChatClient {
             req.temperature = Some(temp);
         }
         if let Some(max) = self.max_tokens {
-            // Use max_completion_tokens for newer models (gpt-5.x+), max_tokens for legacy
             if self.model.starts_with("gpt-5") || self.model.starts_with("o") {
                 req = req.max_completion_tokens(max as i64);
             } else {
                 req.max_tokens = Some(max as i64);
             }
+        }
+        if let Some(ref effort) = self.reasoning_effort {
+            req.reasoning_effort = Some(effort.clone());
         }
         req
     }
