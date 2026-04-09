@@ -243,6 +243,98 @@ impl SkillRegistry {
     }
 }
 
+// ── Skill tools (agent feature) ─────────────────────────────────────────
+
+#[cfg(feature = "agent")]
+mod skill_tools {
+    use super::*;
+    use crate::agent_tool::{Tool, ToolError, ToolOutput};
+    use crate::context::AgentContext;
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use std::sync::Arc;
+
+    /// List available skills — agent can discover alternative workflows mid-task.
+    pub struct ListSkillsTool(pub Arc<SkillRegistry>);
+
+    #[async_trait]
+    impl Tool for ListSkillsTool {
+        fn name(&self) -> &str {
+            "list_skills"
+        }
+        fn description(&self) -> &str {
+            "List all available skill workflows. Use when current instructions don't match the task."
+        }
+        fn is_read_only(&self) -> bool {
+            true
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(
+            &self,
+            _args: Value,
+            _ctx: &mut AgentContext,
+        ) -> Result<ToolOutput, ToolError> {
+            let list = self.0.list();
+            let text = list
+                .iter()
+                .map(|(name, desc)| format!("- {}: {}", name, desc))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(ToolOutput::text(format!(
+                "Available skills:\n{}\n\nUse get_skill(name) to load full instructions.",
+                text
+            )))
+        }
+    }
+
+    /// Get full instructions for a specific skill by name.
+    pub struct GetSkillTool(pub Arc<SkillRegistry>);
+
+    #[async_trait]
+    impl Tool for GetSkillTool {
+        fn name(&self) -> &str {
+            "get_skill"
+        }
+        fn description(&self) -> &str {
+            "Load full instructions for a specific skill. Use after list_skills to switch to correct workflow."
+        }
+        fn is_read_only(&self) -> bool {
+            true
+        }
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Skill name from list_skills" }
+                },
+                "required": ["name"]
+            })
+        }
+        async fn execute(
+            &self,
+            args: Value,
+            _ctx: &mut AgentContext,
+        ) -> Result<ToolOutput, ToolError> {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            match self.0.get(name) {
+                Some(skill) => Ok(ToolOutput::text(format!(
+                    "# Skill: {}\n{}\n\n---\n{}",
+                    skill.name, skill.description, skill.body
+                ))),
+                None => Err(ToolError::Execution(format!(
+                    "Skill '{}' not found. Use list_skills to see available skills.",
+                    name
+                ))),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "agent")]
+pub use skill_tools::{GetSkillTool, ListSkillsTool};
+
 #[cfg(test)]
 mod tests {
     use super::*;

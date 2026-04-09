@@ -180,5 +180,7 @@ pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};
 pub use skills::{Skill, SkillRegistry, load_skills_from_dir, parse_skill};
+#[cfg(feature = "agent")]
+pub use skills::{GetSkillTool, ListSkillsTool};
 pub use tool::{ToolDef, tool};
 pub use types::*;
