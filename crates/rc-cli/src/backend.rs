@@ -6,7 +6,6 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sgr_agent::client::LlmClient;
 use sgr_agent::tool::tool;
 
 /// System prompt for native function calling mode (Gemini/Vertex).
@@ -60,7 +59,12 @@ pub struct LlmProvider {
 }
 
 impl LlmProvider {
-    pub fn new(config: sgr_agent::LlmConfig) -> Self {
+    pub fn new(mut config: sgr_agent::LlmConfig) -> Self {
+        // Auto-enable prompt caching for genai backend (Anthropic/Gemini).
+        // Oxide backend uses store(true) for Responses API caching instead.
+        if config.prompt_cache_key.is_none() && config.use_genai {
+            config.prompt_cache_key = Some("rust-code-system".into());
+        }
         Self { config }
     }
 
@@ -86,6 +90,12 @@ pub struct SgrNextStep {
     pub situation: String,
     pub task: Vec<String>,
     pub actions: Vec<SgrAction>,
+    /// Responses API response_id for stateful chaining (prompt caching).
+    #[serde(skip)]
+    pub response_id: Option<String>,
+    /// Tool call IDs from the API — paired with actions by index for stateful chaining.
+    #[serde(skip)]
+    pub call_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -619,9 +629,13 @@ pub fn sgr_tool_defs() -> Vec<sgr_agent::tool::ToolDef> {
 // ---------------------------------------------------------------------------
 
 impl LlmProvider {
-    /// Call LLM with native function calling via genai.
-    /// All providers (Gemini, OpenAI, Anthropic, Vertex) go through the same path.
-    pub async fn call_flexible(&self, messages: &[sgr_agent::Message]) -> Result<SgrNextStep> {
+    /// Call LLM with native function calling.
+    /// Uses stateful chaining (previous_response_id) for prompt caching when available.
+    pub async fn call_flexible(
+        &self,
+        messages: &[sgr_agent::Message],
+        previous_response_id: Option<&str>,
+    ) -> Result<SgrNextStep> {
         static TOOLS: std::sync::LazyLock<Vec<sgr_agent::tool::ToolDef>> =
             std::sync::LazyLock::new(sgr_tool_defs);
         let tools = &*TOOLS;
@@ -641,15 +655,16 @@ impl LlmProvider {
             .collect();
 
         let llm = self.make_llm_client();
-        let tool_calls = llm
-            .tools_call(&messages, &tools)
+        let (tool_calls, response_id) = llm
+            .tools_call_stateful(&messages, tools, previous_response_id)
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
 
-        let actions: Vec<SgrAction> = tool_calls
+        // Convert tool calls to actions, preserving call_ids for stateful chaining.
+        let (actions, call_ids): (Vec<SgrAction>, Vec<String>) = tool_calls
             .iter()
-            .filter_map(tool_call_to_sgr_action)
-            .collect();
+            .filter_map(|tc| tool_call_to_sgr_action(tc).map(|a| (a, tc.id.clone())))
+            .unzip();
 
         if actions.is_empty() {
             return Ok(SgrNextStep {
@@ -658,6 +673,8 @@ impl LlmProvider {
                 actions: vec![SgrAction::Finish {
                     summary: "Task completed.".into(),
                 }],
+                response_id,
+                call_ids: vec![],
             });
         }
 
@@ -674,6 +691,7 @@ impl LlmProvider {
 
         tracing::info!(
             n = actions.len(),
+            chained = previous_response_id.is_some(),
             situation = situation.as_str(),
             "LLM function calling"
         );
@@ -682,6 +700,8 @@ impl LlmProvider {
             situation,
             task: vec![],
             actions,
+            response_id,
+            call_ids,
         })
     }
 
@@ -844,7 +864,7 @@ pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> 
         .collect()
 }
 
-/// Convert Msg structs to sgr-agent Messages (preserves images).
+/// Convert Msg structs to sgr-agent Messages (preserves images + call_id).
 pub fn msgs_to_sgr_messages(messages: &[crate::agent::Msg]) -> Vec<sgr_agent::Message> {
     messages
         .iter()
@@ -858,7 +878,7 @@ pub fn msgs_to_sgr_messages(messages: &[crate::agent::Msg]) -> Vec<sgr_agent::Me
             sgr_agent::Message {
                 role: r,
                 content: m.content.clone(),
-                tool_call_id: None,
+                tool_call_id: m.call_id.clone(),
                 tool_calls: vec![],
                 images: m.images.clone(),
             }

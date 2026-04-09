@@ -112,24 +112,15 @@ pub fn collect_installed_skills() -> Vec<InstalledSkill> {
     out
 }
 
-/// Read description from SKILL.md (YAML frontmatter or first text line).
+/// Read description from SKILL.md using shared frontmatter parser.
 fn read_skill_description(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
-    let mut lines = content.lines();
-
-    // Check for YAML frontmatter
-    if lines.next()?.trim() == "---" {
-        for line in lines.by_ref() {
-            let trimmed = line.trim();
-            if trimmed == "---" {
-                break;
-            }
-            if let Some(desc) = trimmed.strip_prefix("description:") {
-                return Some(desc.trim().chars().take(200).collect());
-            }
+    let (frontmatter, _body) = sgr_agent::skills::split_frontmatter(&content)?;
+    if !frontmatter.is_empty() {
+        if let Some(desc) = sgr_agent::skills::extract_field(&frontmatter, "description") {
+            return Some(desc.chars().take(200).collect());
         }
     }
-
     // Fallback: first non-empty, non-heading, non-frontmatter line
     for line in content.lines() {
         let trimmed = line.trim();
@@ -142,6 +133,14 @@ fn read_skill_description(path: &Path) -> Option<String> {
         return Some(trimmed.chars().take(200).collect());
     }
     None
+}
+
+impl InstalledSkill {
+    /// Convert to sgr_agent::Skill (loads full content from disk).
+    pub fn to_skill(&self) -> Option<sgr_agent::Skill> {
+        let content = std::fs::read_to_string(&self.path).ok()?;
+        sgr_agent::skills::parse_skill(&content)
+    }
 }
 
 /// Install a skill by git-cloning the repo and copying skill dirs to ~/.agents/skills/.

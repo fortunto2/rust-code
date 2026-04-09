@@ -4757,9 +4757,10 @@ impl<'a> App<'a> {
                                     locked_agent.record_step_cost(&assistant_msg);
                                     locked_agent.add_assistant_message(assistant_msg);
 
-                                    // Execute all actions sequentially
+                                    // Execute all actions sequentially (with call_ids for stateful chaining)
                                     let mut is_done = false;
-                                    for action in &step.actions {
+                                    for (i, action) in step.actions.iter().enumerate() {
+                                        let call_id = step.call_ids.get(i).cloned();
                                         if matches!(
                                             action,
                                             Action::Finish { .. } | Action::AskUser { .. }
@@ -4788,10 +4789,10 @@ impl<'a> App<'a> {
                                                         .await;
                                                 }
 
-                                                locked_agent.add_user_message(format!(
-                                                    "Tool result:\n{}",
-                                                    result.output
-                                                ));
+                                                locked_agent.add_tool_result(
+                                                    format!("Tool result:\n{}", result.output),
+                                                    call_id,
+                                                );
                                                 let _ = agent_tx
                                                     .send(AppEvent::AgentResponse(format!(
                                                         "[TOOL]\n{}",
@@ -4800,10 +4801,10 @@ impl<'a> App<'a> {
                                                     .await;
                                             }
                                             Err(e) => {
-                                                locked_agent.add_user_message(format!(
-                                                    "Tool error:\n{}",
-                                                    e
-                                                ));
+                                                locked_agent.add_tool_result(
+                                                    format!("Tool error:\n{}", e),
+                                                    call_id,
+                                                );
                                                 let _ = agent_tx
                                                     .send(AppEvent::AgentResponse(format!(
                                                         "[ERR] Tool Error\n{}",

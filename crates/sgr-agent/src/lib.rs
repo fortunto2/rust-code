@@ -118,6 +118,7 @@ pub mod app_tools;
 pub mod benchmark;
 pub mod evolution;
 pub mod openapi;
+pub mod skills;
 
 #[cfg(feature = "providers")]
 pub mod providers;
@@ -178,5 +179,6 @@ pub use telemetry::{TelemetryGuard, init_telemetry};
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};
+pub use skills::{Skill, SkillRegistry, load_skills_from_dir, parse_skill};
 pub use tool::{ToolDef, tool};
 pub use types::*;

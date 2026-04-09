@@ -55,6 +55,8 @@ pub struct Msg {
     pub content: String,
     /// Inline images (base64 + mime_type) for multimodal input.
     pub images: Vec<sgr_agent::ImagePart>,
+    /// Tool call ID for Responses API stateful chaining (function_call_output).
+    pub call_id: Option<String>,
 }
 
 impl AgentMessage for Msg {
@@ -64,7 +66,12 @@ impl AgentMessage for Msg {
             role: role.0,
             content,
             images: vec![],
+            call_id: None,
         }
+    }
+    fn with_call_id(mut self, call_id: String) -> Self {
+        self.call_id = Some(call_id);
+        self
     }
     fn role(&self) -> &Role {
         // Safety: Role is repr(String), same layout
@@ -100,6 +107,8 @@ pub struct Agent {
     delegate_mgr: TokioMutex<DelegateManager>,
     /// OpenAPI registry for the `api` tool.
     api_registry: TokioMutex<sgr_agent::openapi::ApiRegistry>,
+    /// Last Responses API response_id for stateful chaining (prompt caching).
+    last_response_id: std::sync::Mutex<Option<String>>,
 }
 
 const AGENT_HOME: &str = ".rust-code";
@@ -230,6 +239,7 @@ impl Agent {
             swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
             delegate_mgr: TokioMutex::new(DelegateManager::new()),
             api_registry: TokioMutex::new(sgr_agent::openapi::ApiRegistry::new()),
+            last_response_id: std::sync::Mutex::new(None),
         }
     }
 
@@ -366,7 +376,20 @@ impl Agent {
         self.session.push(Role::assistant(), content.into());
     }
 
+    /// Add a tool result with call_id for Responses API stateful chaining.
+    pub fn add_tool_result(&mut self, content: impl Into<String>, call_id: Option<String>) {
+        let mut msg = Msg::new(Role::tool(), content.into());
+        msg.call_id = call_id;
+        self.session.push_msg(msg);
+    }
+
+    /// Reset stateful chaining (e.g. after compaction changes message history).
+    pub fn reset_response_chain(&self) {
+        *self.last_response_id.lock().unwrap() = None;
+    }
+
     /// Call LLM and get next step (non-streaming).
+    /// Uses Responses API stateful chaining for prompt caching.
     pub async fn step(&mut self) -> Result<SgrNextStep> {
         // Try LLM compaction before falling back to simple trim
         self.try_compact().await;
@@ -382,10 +405,18 @@ impl Agent {
             )
         })?;
 
+        let prev_id = self.last_response_id.lock().unwrap().clone();
         let mut sgr_msgs = backend::msgs_to_sgr_messages(&history);
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
 
-        provider.call_flexible(&sgr_msgs).await
+        let step = provider
+            .call_flexible(&sgr_msgs, prev_id.as_deref())
+            .await?;
+
+        // Store response_id for next call's chaining
+        *self.last_response_id.lock().unwrap() = step.response_id.clone();
+
+        Ok(step)
     }
 
     /// Try LLM-based context compaction if history is getting large.
@@ -445,11 +476,14 @@ impl Agent {
                         },
                         content: m.content.clone(),
                         images: m.images.clone(),
+                        call_id: None,
                     })
                     .collect();
                 let session_msgs = self.session.messages_mut();
                 session_msgs.clear();
                 session_msgs.extend(compacted);
+                // Compaction changes message history — break stateful chain
+                self.reset_response_chain();
                 tracing::info!(
                     "Context compacted to {} messages",
                     self.session.messages().len()
@@ -1562,9 +1596,15 @@ impl SgrAgent for Agent {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
+        let prev_id = self.last_response_id.lock().unwrap().clone();
         let mut sgr_msgs = backend::msgs_to_sgr_messages(messages);
         sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
-        let step = provider.call_flexible(&sgr_msgs).await?;
+        let step = provider
+            .call_flexible(&sgr_msgs, prev_id.as_deref())
+            .await?;
+
+        // Store response_id for next call's chaining
+        *self.last_response_id.lock().unwrap() = step.response_id.clone();
 
         // Track cost
         let output_chars = step.situation.len()
@@ -1599,6 +1639,7 @@ impl SgrAgent for Agent {
             completed: done,
             actions: step.actions,
             hints,
+            call_ids: step.call_ids,
         })
     }
 
@@ -1745,12 +1786,18 @@ impl SgrAgentStream for Agent {
         let sgr_msgs_base = backend::msgs_to_sgr_messages(messages);
         let input_chars: usize = messages.iter().map(|m| m.content.len()).sum();
         let provider = self.provider.clone();
+        let prev_id = self.last_response_id.lock().unwrap().clone();
         async move {
             let provider = provider.ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
 
             let mut sgr_msgs = sgr_msgs_base;
             sgr_msgs.insert(0, sgr_agent::Message::system(SGR_SYSTEM_PROMPT));
-            let step = provider.call_flexible(&sgr_msgs).await?;
+            let step = provider
+                .call_flexible(&sgr_msgs, prev_id.as_deref())
+                .await?;
+
+            // Store response_id for next call's chaining
+            *self.last_response_id.lock().unwrap() = step.response_id.clone();
             // Emit situation as single token (no streaming yet)
             on_token(&step.situation);
 
@@ -1786,6 +1833,7 @@ impl SgrAgentStream for Agent {
                 completed: done,
                 actions: step.actions,
                 hints,
+                call_ids: step.call_ids,
             })
         }
     }

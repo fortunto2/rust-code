@@ -167,6 +167,20 @@ impl Config {
 
         let provider = self.provider.as_deref();
 
+        // CLI subprocess backend (claude -p / gemini -p / codex exec)
+        // Activated by provider = "claude-cli" or --model claude-cli
+        if matches!(provider, Some("claude-cli" | "gemini-cli" | "codex-cli")) {
+            let model = model_override
+                .or_else(|| self.model.clone())
+                .unwrap_or_else(|| provider.unwrap().to_string());
+            return Some(LlmConfig::cli(model));
+        }
+        if let Some(ref m) = model_override {
+            if sgr_agent::CliBackend::from_model(m).is_some() {
+                return Some(LlmConfig::cli(m));
+            }
+        }
+
         // Vertex needs special handling (project_id + location)
         if provider == Some("vertex") {
             let project_id = self

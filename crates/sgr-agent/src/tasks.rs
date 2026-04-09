@@ -183,52 +183,14 @@ fn parse_task_filename(filename: &str) -> Option<(u16, String)> {
     }
 }
 
-/// Split content into (frontmatter, body). Frontmatter is between `---` markers.
-fn split_frontmatter(content: &str) -> Option<(String, String)> {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return Some((String::new(), content.to_string()));
-    }
+// Frontmatter parsing delegates to skills module (single source of truth).
+use crate::skills::{extract_field, extract_string_list, split_frontmatter};
 
-    let after_first = &trimmed[3..].trim_start_matches(['\r', '\n']);
-    let end = after_first.find("\n---")?;
-    let frontmatter = after_first[..end].to_string();
-    let body = after_first[end + 4..].to_string();
-    Some((frontmatter, body))
-}
-
-/// Extract a simple `key: value` field from YAML-ish frontmatter.
-fn extract_field(frontmatter: &str, key: &str) -> Option<String> {
-    for line in frontmatter.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix(key) {
-            let rest = rest.trim_start();
-            if let Some(value) = rest.strip_prefix(':') {
-                return Some(
-                    value
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .to_string(),
-                );
-            }
-        }
-    }
-    None
-}
-
-/// Extract a `key: [1, 2, 3]` list from frontmatter.
+/// Extract a `key: [1, 2, 3]` numeric list from frontmatter.
 fn extract_list(frontmatter: &str, key: &str) -> Vec<u16> {
-    let Some(value) = extract_field(frontmatter, key) else {
-        return vec![];
-    };
-    let trimmed = value.trim().trim_start_matches('[').trim_end_matches(']');
-    if trimmed.is_empty() {
-        return vec![];
-    }
-    trimmed
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+    extract_string_list(frontmatter, key)
+        .iter()
+        .filter_map(|s| s.parse().ok())
         .collect()
 }
 
