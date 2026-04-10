@@ -201,14 +201,15 @@ impl LlmClient for OxideChatClient {
         let tool_calls = Self::extract_tool_calls(&response);
         let parsed = serde_json::from_str::<Value>(&raw_text).ok();
 
-        let input_tokens = response.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0) as u64;
-        let cached_tokens = response.usage.as_ref()
-            .and_then(|u| u.prompt_tokens_details.as_ref())
-            .and_then(|d| d.cached_tokens)
-            .unwrap_or(0) as u64;
-        {
-            let pct = if input_tokens > 0 { (cached_tokens * 100) / input_tokens } else { 0 };
-            tracing::info!(input_tokens, cached_tokens, cache_pct = pct, "oxide_chat.call");
+        if let Some(ref usage) = response.usage {
+            let input = usage.prompt_tokens.unwrap_or(0);
+            let cached = usage.cached_tokens();
+            let output = usage.completion_tokens.unwrap_or(0);
+            if cached > 0 {
+                eprintln!("    💰 {}in/{}out (cached: {}, {}%)", input, output, cached, usage.cache_hit_pct());
+            } else {
+                eprintln!("    💰 {}in/{}out", input, output);
+            }
         }
 
         Ok((parsed, tool_calls, raw_text))
@@ -251,14 +252,15 @@ impl LlmClient for OxideChatClient {
                 body: e.to_string(),
             })?;
 
-        let input_tokens = response.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0) as u64;
-        let cached_tokens = response.usage.as_ref()
-            .and_then(|u| u.prompt_tokens_details.as_ref())
-            .and_then(|d| d.cached_tokens)
-            .unwrap_or(0) as u64;
-        if cached_tokens > 0 {
-            let pct = if input_tokens > 0 { (cached_tokens * 100) / input_tokens } else { 0 };
-            tracing::info!(input_tokens, cached_tokens, cache_pct = pct, "oxide_chat.tools_call (cache hit)");
+        if let Some(ref usage) = response.usage {
+            let input = usage.prompt_tokens.unwrap_or(0);
+            let cached = usage.cached_tokens();
+            let output = usage.completion_tokens.unwrap_or(0);
+            if cached > 0 {
+                eprintln!("    💰 {}in/{}out (cached: {}, {}%)", input, output, cached, usage.cache_hit_pct());
+            } else {
+                eprintln!("    💰 {}in/{}out", input, output);
+            }
         }
 
         let calls = Self::extract_tool_calls(&response);
