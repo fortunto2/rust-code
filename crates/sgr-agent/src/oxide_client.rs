@@ -474,11 +474,13 @@ impl OxideClient {
             "oxide.tools_call_stateful"
         );
 
-        if std::env::var("SGR_DEBUG").is_ok() {
-            eprintln!(
-                "[sgr] stateful: input={} cached={} ({}%) chained={}",
-                input_tokens, cached_tokens, cache_pct, chained
-            );
+        if cached_tokens > 0 {
+            eprintln!("    💰 {}in/{}out (cached: {}, {}%)",
+                input_tokens, response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+                cached_tokens, cache_pct);
+        } else {
+            eprintln!("    💰 {}in/{}out",
+                input_tokens, response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0));
         }
 
         Self::check_truncation(&response)?;
@@ -595,15 +597,14 @@ impl LlmClient for OxideClient {
             0
         };
 
-        tracing::info!(
-            model = %response.model,
-            response_id = %response.id,
-            input_tokens,
-            cached_tokens,
-            cache_pct,
-            output_tokens = response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
-            "oxide.structured_call"
-        );
+        {
+            let output_tokens = response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0);
+            if cached_tokens > 0 {
+                eprintln!("    💰 {}in/{}out (cached: {}, {}%)", input_tokens, output_tokens, cached_tokens, cache_pct);
+            } else {
+                eprintln!("    💰 {}in/{}out", input_tokens, output_tokens);
+            }
+        }
 
         Ok((parsed, tool_calls, raw_text))
     }
@@ -663,14 +664,14 @@ impl LlmClient for OxideClient {
             0
         };
 
-        tracing::info!(
-            model = %response.model,
-            response_id = %response.id,
-            input_tokens,
-            cached_tokens,
-            cache_pct,
-            "oxide.tools_call"
-        );
+        if cached_tokens > 0 {
+            eprintln!("    💰 {}in/{}out (cached: {}, {}%)",
+                input_tokens, response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+                cached_tokens, cache_pct);
+        } else {
+            eprintln!("    💰 {}in/{}out",
+                input_tokens, response.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0));
+        }
 
         let calls = Self::extract_tool_calls(&response);
         Ok(calls)
