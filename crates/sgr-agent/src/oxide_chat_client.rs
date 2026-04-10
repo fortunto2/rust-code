@@ -117,6 +117,23 @@ impl OxideChatClient {
     }
 
     fn build_request(&self, messages: &[Message]) -> ChatCompletionRequest {
+        self.build_request_with_reasoning(messages, self.reasoning_effort.as_ref())
+    }
+
+    fn build_request_no_reasoning(&self, messages: &[Message]) -> ChatCompletionRequest {
+        // Force reasoning off for action/tool execution calls (faster + cache friendly)
+        if self.reasoning_effort.is_some() {
+            self.build_request_with_reasoning(messages, Some(&openai_oxide::types::chat::ReasoningEffort::None))
+        } else {
+            self.build_request_with_reasoning(messages, None)
+        }
+    }
+
+    fn build_request_with_reasoning(
+        &self,
+        messages: &[Message],
+        reasoning: Option<&openai_oxide::types::chat::ReasoningEffort>,
+    ) -> ChatCompletionRequest {
         let mut req = ChatCompletionRequest::new(&self.model, self.build_messages(messages));
         if let Some(temp) = self.temperature {
             req.temperature = Some(temp);
@@ -128,7 +145,7 @@ impl OxideChatClient {
                 req.max_tokens = Some(max as i64);
             }
         }
-        if let Some(ref effort) = self.reasoning_effort {
+        if let Some(effort) = reasoning {
             req.reasoning_effort = Some(effort.clone());
         }
         if let Some(ref key) = self.prompt_cache_key {
@@ -220,7 +237,8 @@ impl LlmClient for OxideChatClient {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
-        let mut req = self.build_request(messages);
+        // No reasoning for tool execution — faster + better cache hit
+        let mut req = self.build_request_no_reasoning(messages);
 
         let chat_tools: Vec<Tool> = tools
             .iter()
