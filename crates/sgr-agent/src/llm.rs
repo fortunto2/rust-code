@@ -14,6 +14,7 @@
 //! ```
 
 use crate::client::LlmClient;
+use crate::retry::RetryClient;
 use crate::schema::response_schema_for;
 use crate::tool::ToolDef;
 use crate::types::{LlmConfig, Message, SgrError, ToolCall};
@@ -22,9 +23,10 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// Backend dispatch — resolved at construction time.
+/// All network backends wrapped in RetryClient for automatic retry on transient errors.
 enum Backend {
-    Oxide(crate::oxide_client::OxideClient),
-    OxideChat(crate::oxide_chat_client::OxideChatClient),
+    Oxide(RetryClient<crate::oxide_client::OxideClient>),
+    OxideChat(RetryClient<crate::oxide_chat_client::OxideChatClient>),
     #[cfg(feature = "genai")]
     Genai(crate::genai_client::GenaiClient),
     /// CLI subprocess (claude -p / gemini -p / codex exec).
@@ -77,14 +79,14 @@ impl Llm {
         {
             tracing::debug!(model = %config.model, backend = "oxide-chat", "Llm backend selected (Chat Completions)");
             return Self {
-                inner: Backend::OxideChat(client),
+                inner: Backend::OxideChat(RetryClient::new(client)),
             };
         }
 
         if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
             tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
             Self {
-                inner: Backend::Oxide(client),
+                inner: Backend::Oxide(RetryClient::new(client)),
             }
         } else {
             #[cfg(feature = "genai")]

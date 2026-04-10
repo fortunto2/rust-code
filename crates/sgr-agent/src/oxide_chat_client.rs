@@ -201,10 +201,15 @@ impl LlmClient for OxideChatClient {
         let tool_calls = Self::extract_tool_calls(&response);
         let parsed = serde_json::from_str::<Value>(&raw_text).ok();
 
-        tracing::info!(
-            model = %response.model,
-            "oxide_chat.structured_call"
-        );
+        let input_tokens = response.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0) as u64;
+        let cached_tokens = response.usage.as_ref()
+            .and_then(|u| u.prompt_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0) as u64;
+        {
+            let pct = if input_tokens > 0 { (cached_tokens * 100) / input_tokens } else { 0 };
+            tracing::info!(input_tokens, cached_tokens, cache_pct = pct, "oxide_chat.call");
+        }
 
         Ok((parsed, tool_calls, raw_text))
     }
@@ -246,7 +251,15 @@ impl LlmClient for OxideChatClient {
                 body: e.to_string(),
             })?;
 
-        tracing::info!(model = %response.model, "oxide_chat.tools_call");
+        let input_tokens = response.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0) as u64;
+        let cached_tokens = response.usage.as_ref()
+            .and_then(|u| u.prompt_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0) as u64;
+        if cached_tokens > 0 {
+            let pct = if input_tokens > 0 { (cached_tokens * 100) / input_tokens } else { 0 };
+            tracing::info!(input_tokens, cached_tokens, cache_pct = pct, "oxide_chat.tools_call (cache hit)");
+        }
 
         let calls = Self::extract_tool_calls(&response);
         // Don't synthesize finish — empty tool_calls signals completion to ToolCallingAgent.
