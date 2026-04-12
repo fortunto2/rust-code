@@ -1,6 +1,6 @@
 [package]
 name = "sgr-agent-tools"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "14 reusable file-system tools for sgr-agent based AI agents"
 license = "MIT"
@@ -13,6 +13,7 @@ default = []
 eval = ["dep:boa_engine", "dep:boa_gc"]
 shell = ["tokio/process", "tokio/time"]
 patch = []
+local-fs = ["tokio/fs"]
 
 [dependencies]
 sgr-agent-core = { version = "0.1.0", path = "../sgr-agent-core" }

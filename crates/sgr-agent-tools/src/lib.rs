@@ -60,8 +60,15 @@ pub mod shell;
 #[cfg(feature = "patch")]
 pub mod apply_patch;
 
+// Optional: local filesystem backend (std::fs + tokio::fs)
+#[cfg(feature = "local-fs")]
+pub mod local_fs;
+
 // Re-export the core trait
 pub use backend::FileBackend;
+
+#[cfg(feature = "local-fs")]
+pub use local_fs::LocalFs;
 
 // Re-export all tools
 pub use delete::DeleteTool;
