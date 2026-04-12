@@ -196,15 +196,19 @@ async fn main() {
 ## Crate structure
 
 ```
-sgr-agent-core    ← Tool trait, AgentContext, schema (5 lightweight deps)
-    ↑         ↑
-sgr-agent-tools   sgr-agent (this crate)
-(FileBackend)     re-exports core, optional tools via feature "tools"
+sgr-agent-core 0.2   <- Tool, FileBackend, AgentContext (typed store), ToolError (6 deps)
+    ^            ^
+sgr-agent-tools  sgr-agent (this crate)
+0.4              LLM framework + parallel tool execution
+14 tools +       re-exports core + optional tools
+LocalFs + MockFs
 ```
 
-- [`sgr-agent-core`](https://crates.io/crates/sgr-agent-core) — minimal types, use when building tool crates
-- [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — 14 tools: read (+indentation), write, delete, search, list, tree, read_all, mkdir, move, find, eval, shell, apply_patch
-- `sgr-agent` (this crate) — framework + re-exports everything
+| Crate | When to use |
+|-------|-------------|
+| [`sgr-agent-core`](https://crates.io/crates/sgr-agent-core) | Building a tool crate or FileBackend impl |
+| [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) | 14 tools + LocalFs + MockFs for testing |
+| `sgr-agent` (this) | Full framework: LLM clients, agent loop, registry, tools |
 
 ## Using file-system tools
 

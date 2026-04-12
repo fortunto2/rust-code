@@ -11,8 +11,8 @@ AI-powered terminal coding agent written in Rust.
 - tmux (background task execution)
 
 ## Architecture
-- `crates/sgr-agent-core/` — minimal core: Tool trait, ToolDef, AgentContext, schema helpers (5 deps)
-- `crates/sgr-agent-tools/` — 14 reusable file-system tools generic over `FileBackend` trait (+ shell, apply_patch, indentation read)
+- `crates/sgr-agent-core/` — minimal core: Tool trait, FileBackend trait, AgentContext (typed store), ToolError (5 variants), schema (6 deps)
+- `crates/sgr-agent-tools/` — 14 tools + LocalFs + MockFs, generic over `FileBackend` trait (shell, apply_patch, indentation read, eval)
 - `crates/sgr-agent/` — LLM client + agent framework + session/memory/providers/OpenAPI (re-exports core + tools)
 - `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs), 27 tools (backend.rs + tools/)
 - `crates/sgr-agent-tui/` — shared TUI shell: chat panel, streaming, agent loop integration, fuzzy picker
@@ -21,12 +21,13 @@ AI-powered terminal coding agent written in Rust.
 
 ### Crate dependency graph
 ```
-sgr-agent-core          ← Tool trait, ToolDef, AgentContext, schema (5 deps, no heavy deps)
-    ↑              ↑
-sgr-agent-tools    sgr-agent
-(11 tools,         (framework, re-exports core, optional re-export tools via feature "tools")
- FileBackend)           ↑
-                   rc-cli, agent-bit, etc.
+sgr-agent-core 0.2      <- Tool, FileBackend, AgentContext (typed store), ToolError (6 deps)
+    ^              ^
+sgr-agent-tools    sgr-agent 0.7
+0.4                LLM framework + parallel tool execution
+14 tools +         re-exports core + optional tools
+LocalFs + MockFs        ^
+                   rc-cli, agent-bit, souffleur, video-analyzer
 ```
 
 Agent loop: user message → Agent::decide() → model returns `Decision { situation, task, tool_calls }` → execute tools → feed result back → repeat until `finish_task` or completion.
@@ -57,7 +58,7 @@ Agent loop: user message → Agent::decide() → model returns `Decision { situa
 - **Telemetry** (`feature = "telemetry"`): OTEL file telemetry
 - **Llm** (`feature = "genai"`): provider-agnostic LLM facade — `LlmConfig::auto("gpt-4o")` / `LlmConfig::endpoint(key, url, model)`
 - **Demo**: `cargo run -p sgr-agent --features agent --example agent_demo`
-- **Tests**: `cargo test -p sgr-agent --all-features` — 510+ tests (sgr-agent), 54 tests (sgr-agent-tools), 12 tests (sgr-agent-core)
+- **Tests**: `cargo test -p sgr-agent --all-features` — 510+ tests (sgr-agent), 82 tests (sgr-agent-tools), 15 tests (sgr-agent-core)
 
 ## Agent Memory System
 - **Agent home dir** (`.rust-code/`): SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md (user notes), MEMORY.jsonl (typed agent memory), context/*.md

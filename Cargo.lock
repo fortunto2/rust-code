@@ -3524,7 +3524,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3563,7 +3563,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3576,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-tools"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",

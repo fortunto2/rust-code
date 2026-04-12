@@ -6,7 +6,7 @@ description = "Self-improving prompt optimization via Karpathy autoresearch patt
 license = "MIT"
 
 [dependencies]
-sgr-agent = { version = "0.7.3", path = "../sgr-agent", features = ["genai"] }
+sgr-agent = { version = "0.7.4", path = "../sgr-agent", features = ["genai"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
