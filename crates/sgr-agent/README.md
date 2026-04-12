@@ -181,8 +181,11 @@ async fn main() {
 | `oxide-ws` | no | WebSocket mode for oxide (-20% latency on agent loops) |
 | `genai` | no | Multi-provider via genai crate (Gemini, Anthropic, OpenRouter, Ollama) |
 | `agent` | no | Full agent framework (traits, loop, registry, routing) |
-| **`tools`** | no | **11 universal file-system tools** via [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — generic over `FileBackend` |
+| **`tools`** | no | **14 file-system tools** via [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — generic over `FileBackend` |
 | **`tools-eval`** | no | `tools` + JavaScript eval via Boa engine |
+| **`tools-shell`** | no | `tools` + shell command execution (tokio::process) |
+| **`tools-patch`** | no | `tools` + Codex-compatible diff editing (apply_patch DSL) |
+| **`tools-all`** | no | All tools: eval + shell + patch |
 | `session` | no | Session persistence, 4-tier loop detection, memory context, hints, tasks, intent guard |
 | `app-tools` | no | Shared tools: bash, fs (read/write/edit), git, apply_patch |
 | `providers` | no | Provider config (TOML), auth, CLI proxy, Codex proxy |
@@ -200,7 +203,7 @@ sgr-agent-tools   sgr-agent (this crate)
 ```
 
 - [`sgr-agent-core`](https://crates.io/crates/sgr-agent-core) — minimal types, use when building tool crates
-- [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — 11 tools: read, write, delete, search, list, tree, eval, read_all, mkdir, move, find
+- [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — 14 tools: read (+indentation), write, delete, search, list, tree, read_all, mkdir, move, find, eval, shell, apply_patch
 - `sgr-agent` (this crate) — framework + re-exports everything
 
 ## Using file-system tools

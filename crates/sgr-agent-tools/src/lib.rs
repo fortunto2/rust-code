@@ -1,20 +1,13 @@
-//! sgr-agent-tools — reusable file-system tools for sgr-agent based AI agents.
+//! sgr-agent-tools — 14 reusable file-system tools for sgr-agent based AI agents.
 //!
-//! 11 universal tools parameterized by `FileBackend` trait:
+//! All tools are generic over [`FileBackend`] trait.
 //!
-//! | # | Tool | Category |
-//! |---|------|----------|
-//! | 1 | ReadTool | observe |
-//! | 2 | WriteTool | act |
-//! | 3 | DeleteTool | act |
-//! | 4 | SearchTool | observe |
-//! | 5 | ListTool | observe |
-//! | 6 | TreeTool | observe |
-//! | 7 | EvalTool | compute (feature "eval") |
-//! | 8 | ReadAllTool | observe (batch) |
-//! | 9 | MkDirTool | act (deferred) |
-//! | 10 | MoveTool | act (deferred) |
-//! | 11 | FindTool | observe (deferred) |
+//! **Core (10):** ReadTool (+ indentation mode), WriteTool (JSON repair),
+//! DeleteTool (batch), SearchTool (smart search), ListTool, TreeTool,
+//! ReadAllTool, MkDirTool, MoveTool, FindTool.
+//!
+//! **Optional:** EvalTool (feature `eval`), ShellTool (feature `shell`),
+//! ApplyPatchTool (feature `patch` — Codex-compatible diff DSL).
 //!
 //! # Usage
 //!

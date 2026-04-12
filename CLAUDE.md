@@ -12,7 +12,7 @@ AI-powered terminal coding agent written in Rust.
 
 ## Architecture
 - `crates/sgr-agent-core/` — minimal core: Tool trait, ToolDef, AgentContext, schema helpers (5 deps)
-- `crates/sgr-agent-tools/` — 11 reusable file-system tools generic over `FileBackend` trait
+- `crates/sgr-agent-tools/` — 14 reusable file-system tools generic over `FileBackend` trait (+ shell, apply_patch, indentation read)
 - `crates/sgr-agent/` — LLM client + agent framework + session/memory/providers/OpenAPI (re-exports core + tools)
 - `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs), 27 tools (backend.rs + tools/)
 - `crates/sgr-agent-tui/` — shared TUI shell: chat panel, streaming, agent loop integration, fuzzy picker
@@ -33,10 +33,11 @@ Agent loop: user message → Agent::decide() → model returns `Decision { situa
 
 ## sgr-agent Framework
 - **Core** (`sgr-agent-core`): `Tool` trait, `ToolOutput`, `ToolError`, `AgentContext`, `ToolDef`, `json_schema_for`
-- **Tools** (`sgr-agent-tools`, or `sgr-agent` feature `"tools"`): 11 universal file-system tools generic over `FileBackend`:
-  - Core: `ReadTool`, `WriteTool`, `DeleteTool`, `SearchTool`, `ListTool`, `TreeTool`, `ReadAllTool`
+- **Tools** (`sgr-agent-tools`, or `sgr-agent` feature `"tools"`): 14 file-system tools generic over `FileBackend`:
+  - Core: `ReadTool` (+ indentation mode), `WriteTool` (JSON repair), `DeleteTool` (batch), `SearchTool` (smart), `ListTool`, `TreeTool`, `ReadAllTool`
   - Deferred: `MkDirTool`, `MoveTool`, `FindTool`
-  - Optional: `EvalTool` (Boa JS engine, feature `"eval"`)
+  - Optional: `EvalTool` (`"eval"`), `ShellTool` (`"shell"`), `ApplyPatchTool` (`"patch"` — Codex-compatible diff DSL)
+  - All-in-one: `"tools-all"` enables eval + shell + patch
 - **LLM Client**: `GeminiClient`, `OpenAIClient` — structured output + function calling + flexible parse
 - **Agent framework** (`feature = "agent"`):
   - `Tool` trait → `ToolRegistry` (builder, case-insensitive lookup, fuzzy resolve)
@@ -56,7 +57,7 @@ Agent loop: user message → Agent::decide() → model returns `Decision { situa
 - **Telemetry** (`feature = "telemetry"`): OTEL file telemetry
 - **Llm** (`feature = "genai"`): provider-agnostic LLM facade — `LlmConfig::auto("gpt-4o")` / `LlmConfig::endpoint(key, url, model)`
 - **Demo**: `cargo run -p sgr-agent --features agent --example agent_demo`
-- **Tests**: `cargo test -p sgr-agent --all-features` — 510+ tests
+- **Tests**: `cargo test -p sgr-agent --all-features` — 510+ tests (sgr-agent), 54 tests (sgr-agent-tools), 12 tests (sgr-agent-core)
 
 ## Agent Memory System
 - **Agent home dir** (`.rust-code/`): SOUL.md, IDENTITY.md, MANIFESTO.md, RULES.md, MEMORY.md (user notes), MEMORY.jsonl (typed agent memory), context/*.md
@@ -131,6 +132,9 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/sgr-agent-core/src/schema.rs` | json_schema_for, response_schema_for (canonical source) |
 | `crates/sgr-agent-tools/src/backend.rs` | FileBackend trait (10 async methods) |
 | `crates/sgr-agent-tools/src/search.rs` | SearchTool: smart_search, expand_query, fuzzy_regex, auto_expand |
+| `crates/sgr-agent-tools/src/shell.rs` | ShellTool: tokio::process, timeout, workdir |
+| `crates/sgr-agent-tools/src/apply_patch.rs` | ApplyPatchTool: Codex-compatible diff DSL parser + applicator |
+| `crates/sgr-agent-tools/src/read.rs` | ReadTool: slice mode + indentation-aware block extraction |
 | `crates/sgr-agent/src/agent_tool.rs` | Re-exports from sgr-agent-core |
 | `crates/sgr-agent/src/registry.rs` | ToolRegistry (builder, lookup, fuzzy resolve) |
 | `crates/sgr-agent/src/agent_loop.rs` | Generic agent loop + 4-tier loop detection |
