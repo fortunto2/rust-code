@@ -306,7 +306,7 @@ mod tests {
 
         // Different types don't collide
         #[derive(Clone)]
-        struct OtherState(String);
+        struct OtherState(#[allow(dead_code)] String);
         ctx.insert(OtherState("hello".into()));
         assert_eq!(ctx.get_typed::<MyState>().unwrap().count, 42);
     }

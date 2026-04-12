@@ -21,6 +21,8 @@ use tracing_subscriber::prelude::*;
 static SESSION_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 /// Global task ID — set per trial, attached to every LLM span.
 static TASK_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+/// Global JSONL log path — set during init, used by record_llm_span for file-based export.
+static SPANS_LOG: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
 /// Set the current session ID (e.g. "t16_vm-abc123").
 pub fn set_session_id(id: String) {
@@ -59,6 +61,11 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
 
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     let path = format!("{}/{}-{}.jsonl", log_dir, prefix, date);
+    // Separate spans log — always written, independent of Phoenix
+    let spans_path = format!("{}/{}-spans-{}.jsonl", log_dir, prefix, date);
+    if let Ok(mut lock) = SPANS_LOG.write() {
+        *lock = Some(spans_path);
+    }
 
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -293,6 +300,46 @@ pub fn record_llm_span(
     }
 
     span.end();
+
+    // File-based export — always writes, even when Phoenix is down
+    write_span_to_file(span_name, model, input, output, tool_calls, usage);
+}
+
+/// Append span as JSONL to `.agent/{prefix}-spans-{date}.jsonl`.
+fn write_span_to_file(
+    span_name: &str,
+    model: &str,
+    input: &str,
+    output: &str,
+    tool_calls: &[(String, String)],
+    usage: &LlmUsage,
+) {
+    let path = match SPANS_LOG.read().ok().and_then(|l| l.clone()) {
+        Some(p) => p,
+        None => return,
+    };
+    let tc: Vec<&str> = tool_calls.iter().map(|(n, _)| n.as_str()).collect();
+    let line = serde_json::json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "span": span_name,
+        "model": model,
+        "session_id": session_id().unwrap_or_default(),
+        "task_id": TASK_ID.read().ok().and_then(|l| l.clone()).unwrap_or_default(),
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "cached_tokens": usage.cached_tokens,
+        "input": truncate_str(input, 200),
+        "output": truncate_str(output, 200),
+        "tool_calls": tc,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{}", line);
+    }
 }
 
 /// Record a trial result as an OTEL span with metadata attributes.
