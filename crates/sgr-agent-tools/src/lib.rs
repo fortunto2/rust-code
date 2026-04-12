@@ -56,6 +56,14 @@ pub mod move_file;
 #[cfg(feature = "eval")]
 pub mod eval;
 
+// Optional: shell (needs tokio process feature)
+#[cfg(feature = "shell")]
+pub mod shell;
+
+// Optional: apply_patch (Codex-compatible diff editing)
+#[cfg(feature = "patch")]
+pub mod apply_patch;
+
 // Re-export the core trait
 pub use backend::FileBackend;
 
@@ -73,6 +81,12 @@ pub use write::WriteTool;
 
 #[cfg(feature = "eval")]
 pub use eval::EvalTool;
+
+#[cfg(feature = "shell")]
+pub use shell::ShellTool;
+
+#[cfg(feature = "patch")]
+pub use apply_patch::ApplyPatchTool;
 
 // Re-export helpers for wrapper tools (PAC1 uses these for Pac1SearchTool, etc.)
 pub use helpers::{backend_err, has_matches, unique_files_from_search};

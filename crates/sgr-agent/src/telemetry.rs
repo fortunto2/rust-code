@@ -330,6 +330,112 @@ pub fn annotate_session(task_id: &str, score: f32, outcome: &str, steps: u32) {
         "application/json",
     ));
     span.end();
+
+    // Post annotations to Phoenix REST API for all LLM spans in this session.
+    // Simple exporter flushes spans synchronously on span.end(), so DB should have them already.
+    if let (Some(endpoint), Some(sid)) = (
+        std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
+        session_id(),
+    ) {
+        post_session_annotations(&endpoint, &sid, task_id, score, outcome);
+    }
+}
+
+/// Post annotations to Phoenix for all LLM spans in a session.
+fn post_session_annotations(
+    endpoint: &str,
+    session_id: &str,
+    task_id: &str,
+    score: f32,
+    outcome: &str,
+) {
+    let base = endpoint.trim_end_matches('/');
+    let db_path = dirs::home_dir()
+        .map(|h| h.join(".phoenix/phoenix.db"))
+        .unwrap_or_default();
+    let Ok(db) =
+        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return;
+    };
+
+    // Find all LLM span_ids for this session
+    let mut stmt = db
+        .prepare(
+            "SELECT s.span_id FROM spans s
+         JOIN traces t ON s.trace_rowid = t.id
+         JOIN project_sessions ps ON t.project_session_rowid = ps.id
+         WHERE ps.session_id = ?1
+           AND s.name IN ('chat.completions.api', 'oxide.responses.api')",
+        )
+        .unwrap();
+    let span_ids: Vec<String> = stmt
+        .query_map([session_id], |row| row.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if span_ids.is_empty() {
+        return;
+    }
+
+    // Build annotations: task_id on all, score+outcome on last
+    let mut data = Vec::new();
+    for (i, sid) in span_ids.iter().enumerate() {
+        data.push(serde_json::json!({
+            "span_id": sid, "name": "task_id", "annotator_kind": "LLM",
+            "result": {"explanation": task_id}
+        }));
+        if i == 0 {
+            // first = most recent (DESC order)
+            data.push(serde_json::json!({
+                "span_id": sid, "name": "score", "annotator_kind": "LLM",
+                "result": {"score": score}
+            }));
+            data.push(serde_json::json!({
+                "span_id": sid, "name": "outcome", "annotator_kind": "LLM",
+                "result": {"label": outcome}
+            }));
+        }
+    }
+
+    let client = reqwest::blocking::Client::new();
+    // Span annotations (visible in Spans tab)
+    let _ = client
+        .post(format!("{base}/v1/span_annotations"))
+        .json(&serde_json::json!({"data": data}))
+        .send();
+
+    // Trace annotations (visible in Traces tab) — annotate all traces in this session
+    let trace_ids: Vec<String> = db.prepare(
+        "SELECT DISTINCT t.trace_id FROM traces t
+         JOIN project_sessions ps ON t.project_session_rowid = ps.id
+         WHERE ps.session_id = ?1"
+    ).unwrap()
+    .query_map([session_id], |row| row.get(0))
+    .unwrap().filter_map(|r| r.ok()).collect();
+
+    if !trace_ids.is_empty() {
+        let mut trace_data = Vec::new();
+        for tid in &trace_ids {
+            trace_data.push(serde_json::json!({
+                "trace_id": tid, "name": "task_id", "annotator_kind": "LLM",
+                "result": {"explanation": task_id}
+            }));
+            trace_data.push(serde_json::json!({
+                "trace_id": tid, "name": "score", "annotator_kind": "LLM",
+                "result": {"score": score}
+            }));
+            trace_data.push(serde_json::json!({
+                "trace_id": tid, "name": "outcome", "annotator_kind": "LLM",
+                "result": {"label": outcome}
+            }));
+        }
+        let _ = client
+            .post(format!("{base}/v1/trace_annotations"))
+            .json(&serde_json::json!({"data": trace_data}))
+            .send();
+    }
 }
 
 /// Truncate a string to `max_len` bytes, appending "..." if truncated.

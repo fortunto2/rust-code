@@ -1,8 +1,8 @@
 [package]
 name = "sgr-agent-tools"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "11 reusable file-system tools for sgr-agent based AI agents"
+description = "14 reusable file-system tools for sgr-agent based AI agents"
 license = "MIT"
 repository = "https://github.com/fortunto2/rust-code"
 keywords = ["llm", "agent", "tools", "filesystem"]
@@ -11,6 +11,8 @@ categories = ["development-tools"]
 [features]
 default = []
 eval = ["dep:boa_engine", "dep:boa_gc"]
+shell = ["tokio/process", "tokio/time"]
+patch = []
 
 [dependencies]
 sgr-agent-core = { version = "0.1.0", path = "../sgr-agent-core" }
@@ -28,3 +30,6 @@ llm_json = { version = "1.0", path = "../llm-json" }
 # Eval tool (optional, heavy)
 boa_engine = { version = "0.20", optional = true }
 boa_gc = { version = "0.20", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
