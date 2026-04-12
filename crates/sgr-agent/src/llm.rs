@@ -117,7 +117,7 @@ impl Llm {
     pub async fn connect_ws(&self) -> Result<(), SgrError> {
         #[cfg(feature = "oxide-ws")]
         if let Backend::Oxide(c) = &self.inner {
-            return c.connect_ws().await;
+            return c.inner().connect_ws().await;
         }
         Ok(())
     }

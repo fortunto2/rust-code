@@ -83,6 +83,11 @@ impl<C: LlmClient> RetryClient<C> {
         self.config = config;
         self
     }
+
+    /// Access inner client (e.g. for connect_ws on OxideClient).
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
 }
 
 #[async_trait::async_trait]
