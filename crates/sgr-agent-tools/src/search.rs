@@ -130,7 +130,7 @@ pub async fn smart_search<B: FileBackend>(
                 let name_part = filename.rsplit('.').last().unwrap_or(filename);
                 let name_lower = name_part.to_lowercase().replace('-', " ").replace('_', " ");
                 let score = strsim::normalized_levenshtein(&query_lower, &name_lower);
-                if score > 0.7 && (best_match.is_none() || score > best_match.as_ref().unwrap().1) {
+                if score > 0.7 && best_match.as_ref().map_or(true, |b| score > b.1) {
                     best_match = Some((format!("{}/{}", root, filename), score));
                 }
             }
