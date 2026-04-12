@@ -1,6 +1,6 @@
 [package]
 name = "sgr-agent"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
 description = "SGR LLM client + agent framework — structured output, function calling, agent loop, 3 agent variants"
 license = "MIT"
@@ -58,7 +58,7 @@ rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 dirs = { version = "6", optional = true }
 nucleo-matcher = { version = "0.3", optional = true }
 sgr-agent-core = { version = "0.2.0", path = "../sgr-agent-core" }
-sgr-agent-tools = { version = "0.3.0", path = "../sgr-agent-tools", optional = true }
+sgr-agent-tools = { version = "0.4.0", path = "../sgr-agent-tools", optional = true }
 serde_yaml = "0.9"
 genai = { version = "0.6.0-beta.10", optional = true }
 openai-oxide = { version = "0.12", default-features = false, features = ["chat", "responses", "structured"] }
