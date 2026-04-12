@@ -37,7 +37,9 @@ pub fn is_retryable(err: &SgrError) -> bool {
         SgrError::EmptyResponse => true,
         // reqwest::Error — retryable if timeout or connect error
         SgrError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
-        SgrError::Api { status, .. } => *status == 0 || *status >= 500 || *status == 408 || *status == 429,
+        SgrError::Api { status, .. } => {
+            *status == 0 || *status >= 500 || *status == 408 || *status == 429
+        }
         // Empty response wrapped as Schema error — transient model behavior
         SgrError::Schema(msg) => msg.contains("Empty response"),
         // MaxOutputTokens and PromptTooLong are NOT retryable at this level —

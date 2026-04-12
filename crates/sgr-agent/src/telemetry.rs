@@ -17,6 +17,23 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::prelude::*;
 
+/// Global session ID for Phoenix session grouping.
+/// Updated per trial via `set_session_id()`, read by LLM clients on every span.
+static SESSION_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the current session ID (e.g. "t16_Nemotron-Ultra_abc123").
+/// Phoenix groups spans by this value in Sessions tab.
+pub fn set_session_id(id: String) {
+    if let Ok(mut lock) = SESSION_ID.write() {
+        *lock = Some(id);
+    }
+}
+
+/// Get current session ID (if set).
+pub fn session_id() -> Option<String> {
+    SESSION_ID.read().ok().and_then(|lock| lock.clone())
+}
+
 /// Initialize OTEL-aware file telemetry + optional OTLP export.
 ///
 /// Output: `{log_dir}/{prefix}-YYYY-MM-DD.jsonl`
@@ -48,11 +65,17 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
         .unwrap_or_else(|_| "dev".into());
 
     // Build tracer provider with resource identification
+    // AI-NOTE: openinference.project.name required by Phoenix to route spans to named project
+    let project_name = std::env::var("OTEL_PROJECT_NAME").unwrap_or_else(|_| prefix.to_string());
     let resource = opentelemetry_sdk::Resource::builder()
         .with_service_name(prefix.to_string())
         .with_attribute(opentelemetry::KeyValue::new(
             "deployment.environment",
             environment.clone(),
+        ))
+        .with_attribute(opentelemetry::KeyValue::new(
+            "openinference.project.name",
+            project_name,
         ))
         .build();
     let mut builder = SdkTracerProvider::builder().with_resource(resource);
@@ -148,6 +171,21 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
         tracer_provider,
         otlp_enabled,
     }
+}
+
+/// Emit a test span to verify OTLP export works.
+pub fn emit_test_span() {
+    use opentelemetry::trace::{Span, Tracer, TracerProvider};
+    let provider = opentelemetry::global::tracer_provider();
+    let tracer = provider.tracer("test");
+    let mut span = tracer.start("test.startup");
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "openinference.span.kind",
+        "CHAIN",
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new("input.value", "test startup"));
+    span.set_attribute(opentelemetry::KeyValue::new("output.value", "ok"));
+    span.end();
 }
 
 /// Must be held alive for the duration of the program.

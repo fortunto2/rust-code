@@ -174,13 +174,13 @@ pub use tasks::{
     tasks_dir, tasks_summary, update_status,
 };
 #[cfg(feature = "telemetry")]
-pub use telemetry::{TelemetryGuard, init_telemetry};
+pub use telemetry::{TelemetryGuard, init_telemetry, set_session_id};
 
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};
 pub use schema::{json_schema_for, response_schema_for};
-pub use skills::{Skill, SkillRegistry, load_skills_from_dir, parse_skill};
 #[cfg(feature = "agent")]
 pub use skills::{GetSkillTool, ListSkillsTool};
+pub use skills::{Skill, SkillRegistry, load_skills_from_dir, parse_skill};
 pub use tool::{ToolDef, tool};
 pub use types::*;

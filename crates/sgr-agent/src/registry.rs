@@ -38,15 +38,47 @@ impl Tool for ProxyTool {
     }
 }
 
+/// Error from `ToolRegistry::resolve()`.
+#[derive(Debug, Clone)]
+pub enum ResolveError {
+    /// Tool exists but is deferred — schema not loaded yet.
+    Deferred(String),
+    /// Tool not found (not active, not deferred, no fuzzy match).
+    NotFound(String),
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::Deferred(name) => write!(
+                f,
+                "Tool '{}' is deferred. Call tool_search to load its schema first.",
+                name
+            ),
+            ResolveError::NotFound(name) => write!(f, "Tool '{}' not found.", name),
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
 /// Ordered registry of tools. Builder pattern for registration.
+///
+/// Supports deferred tools — tools whose schema is hidden from the LLM until
+/// explicitly promoted. Deferred tools appear in `to_defs()` with empty parameters,
+/// and `resolve()` returns an error message directing the caller to load the schema first.
 pub struct ToolRegistry {
     tools: IndexMap<String, Box<dyn Tool>>,
+    /// Deferred tools: model sees name+description only, not full schema.
+    /// Call `promote_deferred(name)` to move to active tools.
+    deferred: IndexMap<String, Box<dyn Tool>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: IndexMap::new(),
+            deferred: IndexMap::new(),
         }
     }
 
@@ -59,6 +91,50 @@ impl ToolRegistry {
     /// Add a tool (mutable, non-chainable).
     pub fn add(&mut self, tool: impl Tool + 'static) {
         self.tools.insert(tool.name().to_string(), Box::new(tool));
+    }
+
+    /// Register a deferred tool. Builder pattern (chainable).
+    /// Deferred tools appear in `to_defs()` with empty parameters (name + description only).
+    /// The LLM must call a search/load mechanism to promote them before use.
+    pub fn register_deferred(mut self, tool: impl Tool + 'static) -> Self {
+        self.deferred
+            .insert(tool.name().to_string(), Box::new(tool));
+        self
+    }
+
+    /// Add a deferred tool (mutable, non-chainable).
+    pub fn add_deferred(&mut self, tool: impl Tool + 'static) {
+        self.deferred
+            .insert(tool.name().to_string(), Box::new(tool));
+    }
+
+    /// Move a deferred tool to the active registry.
+    /// Returns true if the tool was found and promoted, false if not found.
+    pub fn promote_deferred(&mut self, name: &str) -> bool {
+        let lower = name.to_lowercase();
+        let key = self
+            .deferred
+            .keys()
+            .find(|k| k.to_lowercase() == lower)
+            .cloned();
+        if let Some(key) = key
+            && let Some(tool) = self.deferred.swap_remove(&key)
+        {
+            self.tools.insert(key, tool);
+            return true;
+        }
+        false
+    }
+
+    /// List deferred tool names.
+    pub fn deferred_names(&self) -> Vec<&str> {
+        self.deferred.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Check if a tool name is in the deferred set.
+    pub fn is_deferred(&self, name: &str) -> bool {
+        let lower = name.to_lowercase();
+        self.deferred.keys().any(|k| k.to_lowercase() == lower)
     }
 
     /// Get tool by name (case-insensitive).
@@ -85,15 +161,30 @@ impl ToolRegistry {
     }
 
     /// Convert all tools to ToolDef for LLM API.
+    /// Active tools get full schema; deferred tools get name + description with empty parameters.
     pub fn to_defs(&self) -> Vec<ToolDef> {
-        self.tools.values().map(|t| t.to_def()).collect()
+        let mut defs: Vec<ToolDef> = self.tools.values().map(|t| t.to_def()).collect();
+        // AI-NOTE: deferred tools emit stub schema — LLM sees them but can't call until promoted
+        for tool in self.deferred.values() {
+            defs.push(ToolDef {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            });
+        }
+        defs
     }
 
     /// Fuzzy resolve: exact match first, then Levenshtein distance.
-    pub fn resolve(&self, name: &str) -> Option<&dyn Tool> {
+    /// Returns `Err(message)` if the tool is deferred (schema not yet loaded).
+    pub fn resolve(&self, name: &str) -> Result<&dyn Tool, ResolveError> {
         // Exact (case-insensitive)
         if let Some(t) = self.get(name) {
-            return Some(t);
+            return Ok(t);
+        }
+        // Check deferred before fuzzy — deferred is an exact match, not "not found"
+        if self.is_deferred(name) {
+            return Err(ResolveError::Deferred(name.to_string()));
         }
         // Fuzzy
         let lower = name.to_lowercase();
@@ -104,7 +195,10 @@ impl ToolRegistry {
                 best = Some((key.as_str(), score));
             }
         }
-        best.and_then(|(k, _)| self.tools.get(k).map(|t| t.as_ref()))
+        match best.and_then(|(k, _)| self.tools.get(k).map(|t| t.as_ref())) {
+            Some(t) => Ok(t),
+            None => Err(ResolveError::NotFound(name.to_string())),
+        }
     }
 
     /// Number of registered tools.
@@ -258,7 +352,7 @@ mod tests {
         // Fuzzy (typo)
         assert_eq!(reg.resolve("reed_file").unwrap().name(), "read_file");
         // Too different
-        assert!(reg.resolve("xyz").is_none());
+        assert!(reg.resolve("xyz").is_err());
     }
 
     #[test]
@@ -267,5 +361,77 @@ mod tests {
         reg.add(MockTool::new("tool_a", "A"));
         reg.add(MockTool::new("tool_b", "B"));
         assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn register_deferred_adds_to_deferred_map() {
+        let reg = ToolRegistry::new()
+            .register(MockTool::new("active", "Active tool"))
+            .register_deferred(MockTool::new("lazy", "Lazy tool"));
+        assert_eq!(reg.len(), 1); // only active tools counted
+        assert!(reg.is_deferred("lazy"));
+        assert!(!reg.is_deferred("active"));
+        assert_eq!(reg.deferred_names(), vec!["lazy"]);
+    }
+
+    #[test]
+    fn to_defs_returns_deferred_with_empty_params() {
+        let reg = ToolRegistry::new()
+            .register(MockTool::new("active", "Active tool"))
+            .register_deferred(MockTool::new("lazy", "Lazy tool"));
+        let defs = reg.to_defs();
+        assert_eq!(defs.len(), 2);
+        // Active tool has real schema
+        let active_def = defs.iter().find(|d| d.name == "active").unwrap();
+        assert!(active_def.parameters["type"] == "object");
+        // Deferred tool has empty properties
+        let lazy_def = defs.iter().find(|d| d.name == "lazy").unwrap();
+        assert_eq!(lazy_def.description, "Lazy tool");
+        assert_eq!(lazy_def.parameters["properties"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn promote_deferred_moves_to_active() {
+        let mut reg = ToolRegistry::new().register_deferred(MockTool::new("lazy", "Lazy tool"));
+        assert_eq!(reg.len(), 0);
+        assert!(reg.is_deferred("lazy"));
+
+        let promoted = reg.promote_deferred("lazy");
+        assert!(promoted);
+        assert_eq!(reg.len(), 1);
+        assert!(!reg.is_deferred("lazy"));
+        assert!(reg.get("lazy").is_some());
+    }
+
+    #[test]
+    fn promote_deferred_not_found() {
+        let mut reg = ToolRegistry::new();
+        assert!(!reg.promote_deferred("ghost"));
+    }
+
+    #[test]
+    fn resolve_deferred_returns_error() {
+        let reg = ToolRegistry::new()
+            .register(MockTool::new("active", "Active"))
+            .register_deferred(MockTool::new("lazy", "Lazy"));
+        // Active resolves fine
+        assert!(reg.resolve("active").is_ok());
+        // Deferred returns specific error
+        let result = reg.resolve("lazy");
+        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected Deferred error"),
+        };
+        assert!(matches!(err, ResolveError::Deferred(_)));
+        assert!(err.to_string().contains("tool_search"));
+    }
+
+    #[test]
+    fn resolve_deferred_after_promote() {
+        let mut reg = ToolRegistry::new().register_deferred(MockTool::new("lazy", "Lazy"));
+        assert!(reg.resolve("lazy").is_err());
+        reg.promote_deferred("lazy");
+        assert!(reg.resolve("lazy").is_ok());
     }
 }

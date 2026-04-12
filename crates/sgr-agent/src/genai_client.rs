@@ -322,6 +322,11 @@ impl GenaiClient {
             let tracer = provider.tracer("sgr-agent");
             let mut otel_span = tracer.start("gen_ai.chat");
 
+            // AI-NOTE: session.id — Phoenix Sessions tab groups spans by this value
+            if let Some(sid) = crate::telemetry::session_id() {
+                otel_span.set_attribute(opentelemetry::KeyValue::new("session.id", sid));
+            }
+
             // LangSmith conventions
             otel_span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
             otel_span.set_attribute(opentelemetry::KeyValue::new("gen_ai.system", "OpenRouter"));
@@ -379,6 +384,35 @@ impl GenaiClient {
                 ));
             }
 
+            // AI-NOTE: input.value + mime_type — Phoenix renders formatted JSON in detail view
+            let input_json = req.messages.iter().rev().find_map(|m| {
+                let json = serde_json::to_string(m).unwrap_or_default();
+                if json.contains("\"role\":\"user\"") || json.contains("\"role\":\"tool\"") {
+                    let content = serde_json::from_str::<serde_json::Value>(&json)
+                        .ok()
+                        .and_then(|v| v.get("content")?.as_str().map(String::from))
+                        .unwrap_or(json);
+                    let content = if content.len() > 2000 {
+                        format!("{}...", &content[..2000])
+                    } else {
+                        content
+                    };
+                    Some(serde_json::json!({"role": "user", "content": content}))
+                } else {
+                    None
+                }
+            });
+            if let Some(input) = &input_json {
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "input.value",
+                    input.to_string(),
+                ));
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "input.mime_type",
+                    "application/json",
+                ));
+            }
+
             opentelemetry::Context::current().with_span(otel_span)
         };
 
@@ -410,6 +444,36 @@ impl GenaiClient {
                     output_text
                 },
             ));
+
+            // AI-NOTE: output.value + mime_type — Phoenix renders formatted JSON
+            let out_text = response.first_text().unwrap_or("").to_string();
+            let tcs = response.tool_calls();
+            let output_json = if !out_text.is_empty() {
+                let text = if out_text.len() > 2000 {
+                    format!("{}...", &out_text[..2000])
+                } else {
+                    out_text
+                };
+                Some(serde_json::json!({"role": "assistant", "content": text}))
+            } else if !tcs.is_empty() {
+                let calls: Vec<serde_json::Value> = tcs
+                    .into_iter()
+                    .map(|tc| serde_json::json!({"name": tc.fn_name, "arguments": tc.fn_arguments}))
+                    .collect();
+                Some(serde_json::json!({"role": "assistant", "tool_calls": calls}))
+            } else {
+                None
+            };
+            if let Some(output) = &output_json {
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "output.value",
+                    output.to_string(),
+                ));
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "output.mime_type",
+                    "application/json",
+                ));
+            }
 
             // Token usage — GenAI conventions (LangSmith)
             otel_span.set_attribute(opentelemetry::KeyValue::new(

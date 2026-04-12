@@ -48,14 +48,13 @@ impl OxideChatClient {
         }
         config.apply_headers(&mut client_config);
 
-        let reasoning_effort = config.reasoning_effort.as_deref()
-            .and_then(|s| match s {
-                "none" => Some(openai_oxide::types::chat::ReasoningEffort::None),
-                "low" => Some(openai_oxide::types::chat::ReasoningEffort::Low),
-                "medium" => Some(openai_oxide::types::chat::ReasoningEffort::Medium),
-                "high" => Some(openai_oxide::types::chat::ReasoningEffort::High),
-                _ => None,
-            });
+        let reasoning_effort = config.reasoning_effort.as_deref().and_then(|s| match s {
+            "none" => Some(openai_oxide::types::chat::ReasoningEffort::None),
+            "low" => Some(openai_oxide::types::chat::ReasoningEffort::Low),
+            "medium" => Some(openai_oxide::types::chat::ReasoningEffort::Medium),
+            "high" => Some(openai_oxide::types::chat::ReasoningEffort::High),
+            _ => None,
+        });
 
         Ok(Self {
             client: OpenAI::with_config(client_config),
@@ -123,7 +122,10 @@ impl OxideChatClient {
     fn build_request_no_reasoning(&self, messages: &[Message]) -> ChatCompletionRequest {
         // Force reasoning off for action/tool execution calls (faster + cache friendly)
         if self.reasoning_effort.is_some() {
-            self.build_request_with_reasoning(messages, Some(&openai_oxide::types::chat::ReasoningEffort::None))
+            self.build_request_with_reasoning(
+                messages,
+                Some(&openai_oxide::types::chat::ReasoningEffort::None),
+            )
         } else {
             self.build_request_with_reasoning(messages, None)
         }
@@ -220,10 +222,18 @@ impl LlmClient for OxideChatClient {
 
         if let Some(ref usage) = response.usage {
             let input = usage.prompt_tokens.unwrap_or(0);
-            let cached = usage.cached_tokens();
+            let cached = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
             let output = usage.completion_tokens.unwrap_or(0);
             if cached > 0 {
-                eprintln!("    💰 {}in/{}out (cached: {}, {}%)", input, output, cached, usage.cache_hit_pct());
+                let pct = if input > 0 { cached * 100 / input } else { 0 };
+                eprintln!(
+                    "    💰 {}in/{}out (cached: {}, {}%)",
+                    input, output, cached, pct
+                );
             } else {
                 eprintln!("    💰 {}in/{}out", input, output);
             }
@@ -272,10 +282,18 @@ impl LlmClient for OxideChatClient {
 
         if let Some(ref usage) = response.usage {
             let input = usage.prompt_tokens.unwrap_or(0);
-            let cached = usage.cached_tokens();
+            let cached = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
             let output = usage.completion_tokens.unwrap_or(0);
             if cached > 0 {
-                eprintln!("    💰 {}in/{}out (cached: {}, {}%)", input, output, cached, usage.cache_hit_pct());
+                let pct = if input > 0 { cached * 100 / input } else { 0 };
+                eprintln!(
+                    "    💰 {}in/{}out (cached: {}, {}%)",
+                    input, output, cached, pct
+                );
             } else {
                 eprintln!("    💰 {}in/{}out", input, output);
             }

@@ -859,6 +859,7 @@ pub fn to_sgr_messages(history: &[(String, String)]) -> Vec<sgr_agent::Message> 
                 tool_call_id: None,
                 tool_calls: vec![],
                 images: vec![],
+                compactable: false,
             }
         })
         .collect()
@@ -881,6 +882,7 @@ pub fn msgs_to_sgr_messages(messages: &[crate::agent::Msg]) -> Vec<sgr_agent::Me
                 tool_call_id: m.call_id.clone(),
                 tool_calls: vec![],
                 images: m.images.clone(),
+                compactable: false,
             }
         })
         .collect()

@@ -1,0 +1,21 @@
+[package]
+name = "llm_json"
+version = "1.0.3"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/oramasearch/llm_json"
+readme = "README.md"
+description = "Rust crate to fix malformed JSON outputs from LLMs"
+keywords = ["LLM", "json-fixer", "fix"]
+
+[[bin]]
+name = "llm_json"
+path = "src/bin/main.rs"
+
+[dependencies]
+serde_json = "1.0"
+thiserror = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.0"

@@ -186,7 +186,22 @@ impl OpenAIClient {
         }
 
         let response_body: Value = response.json().await?;
-        Ok(self.extract_tool_calls(&response_body))
+        let tool_calls = self.extract_tool_calls(&response_body);
+        if tool_calls.is_empty() {
+            // Debug: log raw response when no tool calls extracted
+            let choice = response_body.get("choices").and_then(|c| c.get(0));
+            let finish = choice.and_then(|c| c.get("finish_reason"));
+            let msg = choice.and_then(|c| c.get("message"));
+            let content = msg.and_then(|m| m.get("content"));
+            let has_tc = msg.and_then(|m| m.get("tool_calls")).map(|t| t.to_string());
+            tracing::warn!(
+                finish_reason = ?finish,
+                content_preview = ?content.map(|c| c.to_string().chars().take(200).collect::<String>()),
+                raw_tool_calls = ?has_tc,
+                "tools_call returned 0 tool_calls"
+            );
+        }
+        Ok(tool_calls)
     }
 
     // --- Private ---
