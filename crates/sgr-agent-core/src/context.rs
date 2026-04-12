@@ -1,11 +1,9 @@
-//! Agent execution context — state and domain-specific data.
+//! Agent execution context — shared state passed to tools during execution.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::any::{Any, TypeId};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-
-/// Well-known key in `AgentContext.custom` for max_tokens override.
-pub const MAX_TOKENS_OVERRIDE_KEY: &str = "_max_tokens_override";
 
 /// Agent execution state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,18 +15,70 @@ pub enum AgentState {
     WaitingInput,
 }
 
+/// Well-known key for max_tokens override (legacy string-key compat).
+pub const MAX_TOKENS_OVERRIDE_KEY: &str = "_max_tokens_override";
+
 /// Shared context passed to tools during execution.
-#[derive(Debug, Clone)]
+///
+/// Two ways to store custom state:
+/// - **Typed** (preferred): `ctx.insert::<MyState>(state)` / `ctx.get_typed::<MyState>()`
+/// - **String-keyed** (legacy): `ctx.set("key", json_value)` / `ctx.get("key")`
+#[derive(Clone)]
 pub struct AgentContext {
     pub iteration: usize,
     pub state: AgentState,
     pub cwd: PathBuf,
+    /// String-keyed extensible state (legacy — prefer typed store).
     pub custom: HashMap<String, Value>,
+    /// Per-tool configuration overrides.
     pub tool_configs: HashMap<String, Value>,
+    /// Sandbox: writable directory roots (empty = no restriction).
     pub writable_roots: Vec<PathBuf>,
-    pub observations: Vec<String>,
+    /// Compressed observation log (FIFO, capped at `observation_limit`).
+    observations: VecDeque<String>,
     pub observation_limit: usize,
+    /// Tool result cache — keyed by "tool_name:arg_hash".
     pub tool_cache: HashMap<String, String>,
+    /// Type-safe extensible store. Projects store typed data without string-key collisions.
+    typed: HashMap<TypeId, TypedSlot>,
+}
+
+// -- Typed store support --
+
+/// Wrapper that stores a concrete Clone + Send + Sync + 'static value as trait object.
+struct TypedSlot {
+    data: Box<dyn Any + Send + Sync>,
+    clone_fn: fn(&Box<dyn Any + Send + Sync>) -> Box<dyn Any + Send + Sync>,
+}
+
+impl Clone for TypedSlot {
+    fn clone(&self) -> Self {
+        Self {
+            data: (self.clone_fn)(&self.data),
+            clone_fn: self.clone_fn,
+        }
+    }
+}
+
+fn make_clone_fn<T: Clone + Send + Sync + 'static>()
+-> fn(&Box<dyn Any + Send + Sync>) -> Box<dyn Any + Send + Sync> {
+    |data| {
+        let val = data.downcast_ref::<T>().expect("TypedSlot type mismatch");
+        Box::new(val.clone())
+    }
+}
+
+impl std::fmt::Debug for AgentContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentContext")
+            .field("iteration", &self.iteration)
+            .field("state", &self.state)
+            .field("cwd", &self.cwd)
+            .field("custom_keys", &self.custom.keys().collect::<Vec<_>>())
+            .field("typed_count", &self.typed.len())
+            .field("observations", &self.observations.len())
+            .finish()
+    }
 }
 
 impl AgentContext {
@@ -40,29 +90,72 @@ impl AgentContext {
             custom: HashMap::new(),
             tool_configs: HashMap::new(),
             writable_roots: Vec::new(),
-            observations: Vec::new(),
+            observations: VecDeque::new(),
             observation_limit: 30,
             tool_cache: HashMap::new(),
+            typed: HashMap::new(),
         }
     }
 
+    // -- Typed store (preferred API) --
+
+    /// Insert typed state. Each type T gets exactly one slot — no string-key collisions.
+    ///
+    /// ```rust,ignore
+    /// #[derive(Clone)]
+    /// struct MyToolState { count: usize }
+    /// ctx.insert(MyToolState { count: 0 });
+    /// ```
+    pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, value: T) {
+        self.typed.insert(
+            TypeId::of::<T>(),
+            TypedSlot {
+                data: Box::new(value),
+                clone_fn: make_clone_fn::<T>(),
+            },
+        );
+    }
+
+    /// Get typed state by type.
+    pub fn get_typed<T: Clone + Send + Sync + 'static>(&self) -> Option<&T> {
+        self.typed
+            .get(&TypeId::of::<T>())
+            .and_then(|slot| slot.data.downcast_ref())
+    }
+
+    /// Remove typed state, returning it if present.
+    pub fn remove_typed<T: Clone + Send + Sync + 'static>(&mut self) -> Option<T> {
+        self.typed
+            .remove(&TypeId::of::<T>())
+            .and_then(|slot| slot.data.downcast::<T>().ok().map(|b| *b))
+    }
+
+    // -- Observations (VecDeque, O(1) eviction) --
+
+    /// Record a compressed observation.
     pub fn observe(&mut self, entry: impl Into<String>) {
-        self.observations.push(entry.into());
+        self.observations.push_back(entry.into());
         while self.observations.len() > self.observation_limit {
-            self.observations.remove(0);
+            self.observations.pop_front();
         }
     }
 
+    /// Get observation log as a single string for LLM context injection.
     pub fn observation_summary(&self) -> Option<String> {
         if self.observations.is_empty() {
             None
         } else {
-            Some(format!(
-                "OBSERVATION LOG:\n{}",
-                self.observations.join("\n")
-            ))
+            let joined: String = self
+                .observations
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!("OBSERVATION LOG:\n{joined}"))
         }
     }
+
+    // -- Tool cache --
 
     pub fn cache_tool_result(&mut self, key: impl Into<String>, result: impl Into<String>) {
         self.tool_cache.insert(key.into(), result.into());
@@ -76,6 +169,8 @@ impl AgentContext {
         self.tool_cache.remove(key);
     }
 
+    // -- Builders --
+
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = cwd.into();
         self
@@ -85,6 +180,8 @@ impl AgentContext {
         self.writable_roots = roots;
         self
     }
+
+    // -- Sandbox --
 
     pub fn is_writable(&self, path: &std::path::Path) -> bool {
         if self.writable_roots.is_empty() {
@@ -110,6 +207,8 @@ impl AgentContext {
         })
     }
 
+    // -- Legacy string-keyed custom data --
+
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.custom.insert(key.into(), value);
     }
@@ -124,6 +223,8 @@ impl AgentContext {
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
     }
+
+    // -- Per-tool config --
 
     pub fn set_tool_config(&mut self, tool_name: impl Into<String>, config: Value) {
         self.tool_configs.insert(tool_name.into(), config);
@@ -188,5 +289,51 @@ mod tests {
         assert_eq!(merged["timeout"], 60);
         assert_eq!(merged["cwd"], "/tmp");
         assert_eq!(merged["shell"], "zsh");
+    }
+
+    #[test]
+    fn typed_store() {
+        #[derive(Clone, Debug, PartialEq)]
+        struct MyState {
+            count: usize,
+        }
+
+        let mut ctx = AgentContext::new();
+        assert!(ctx.get_typed::<MyState>().is_none());
+
+        ctx.insert(MyState { count: 42 });
+        assert_eq!(ctx.get_typed::<MyState>().unwrap().count, 42);
+
+        // Different types don't collide
+        #[derive(Clone)]
+        struct OtherState(String);
+        ctx.insert(OtherState("hello".into()));
+        assert_eq!(ctx.get_typed::<MyState>().unwrap().count, 42);
+    }
+
+    #[test]
+    fn typed_store_clone() {
+        #[derive(Clone, PartialEq, Debug)]
+        struct S(u32);
+
+        let mut ctx = AgentContext::new();
+        ctx.insert(S(7));
+
+        let ctx2 = ctx.clone();
+        assert_eq!(ctx2.get_typed::<S>().unwrap(), &S(7));
+    }
+
+    #[test]
+    fn observations_fifo() {
+        let mut ctx = AgentContext::new();
+        ctx.observation_limit = 3;
+        ctx.observe("a");
+        ctx.observe("b");
+        ctx.observe("c");
+        ctx.observe("d"); // evicts "a"
+        let summary = ctx.observation_summary().unwrap();
+        assert!(!summary.contains("\na\n"));
+        assert!(summary.contains("b"));
+        assert!(summary.contains("d"));
     }
 }
