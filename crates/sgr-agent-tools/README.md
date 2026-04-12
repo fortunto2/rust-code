@@ -119,6 +119,61 @@ impl<B: FileBackend> Tool for WordCountTool<B> {
 
 Pattern: `struct YourTool<B: FileBackend>(pub Arc<B>)` — generic over backend, reusable across projects.
 
+## Middleware pattern (extending tools)
+
+When you need project-specific behavior on top of base tools (workflow guards, hooks, annotations), use the **middleware wrapper** pattern instead of forking the tool:
+
+```rust
+use sgr_agent_tools::{ReadTool, FileBackend};
+use sgr_agent_core::{Tool, ToolOutput, ToolError, AgentContext};
+
+/// Middleware: adds workflow tracking + content security scanning to ReadTool.
+struct Pac1ReadTool<B: FileBackend> {
+    inner: ReadTool<B>,
+    workflow: Arc<Mutex<WorkflowState>>,
+}
+
+#[async_trait::async_trait]
+impl<B: FileBackend> Tool for Pac1ReadTool<B> {
+    fn name(&self) -> &str { self.inner.name() }          // delegate name
+    fn description(&self) -> &str { self.inner.description() } // delegate schema
+    fn parameters_schema(&self) -> serde_json::Value { self.inner.parameters_schema() }
+
+    async fn execute(&self, args: serde_json::Value, ctx: &mut AgentContext)
+        -> Result<ToolOutput, ToolError>
+    {
+        // 1. Base read (trust metadata, auto line numbers)
+        let result = self.inner.execute(args, ctx).await?;
+        let mut output = result.content;
+
+        // 2. Middleware: security content scan
+        output = scan_for_injection(output);
+
+        // 3. Middleware: workflow phase tracking
+        let path = extract_path_from_header(&output);
+        for msg in self.workflow.lock().unwrap().post_action("read", &path) {
+            output.push_str(&format!("\n{}", msg));
+        }
+
+        Ok(ToolOutput::text(output))
+    }
+}
+```
+
+**When to use middleware vs custom tool:**
+
+| Scenario | Approach |
+|----------|----------|
+| Add pre/post hooks to existing tool | Middleware wrapper |
+| Same schema, different behavior | Middleware wrapper |
+| Completely different schema/logic | Custom tool from scratch |
+| Project-specific annotations (CRM, etc.) | Middleware wrapper |
+
+Real example from PAC1 agent — 3 tools use middleware:
+- `ReadTool` + security scan + workflow tracking
+- `WriteTool` + outbox injection + JSON schema validation + hooks
+- `DeleteTool` + workflow guards (block delete before write)
+
 ## Design principles
 
 Based on building a PAC1 benchmark agent (16→11 tools, 7 models, 40+ tasks) and studying Codex CLI / Claude Code:
