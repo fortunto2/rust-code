@@ -1,6 +1,6 @@
 [package]
 name = "sgr-agent-core"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Core types for sgr-agent: Tool trait, FileBackend trait, ToolDef, AgentContext, schema helpers"
 license = "MIT"

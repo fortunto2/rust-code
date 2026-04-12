@@ -96,10 +96,28 @@ impl ToolOutput {
 /// Errors from tool execution.
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
+    /// Tool execution failed (I/O, network, logic error).
     #[error("{0}")]
     Execution(String),
+    /// Tool arguments failed to parse or validate.
     #[error("invalid args: {0}")]
     InvalidArgs(String),
+    /// Permission denied (sandbox, policy, auth).
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+    /// Tool not found or not available.
+    #[error("not found: {0}")]
+    NotFound(String),
+    /// Timeout exceeded.
+    #[error("timeout: {0}")]
+    Timeout(String),
+}
+
+impl ToolError {
+    /// Create an execution error from any error type.
+    pub fn exec(err: impl std::fmt::Display) -> Self {
+        Self::Execution(err.to_string())
+    }
 }
 
 /// Parse JSON args into a typed struct.

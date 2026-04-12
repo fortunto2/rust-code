@@ -64,11 +64,15 @@ pub mod apply_patch;
 #[cfg(feature = "local-fs")]
 pub mod local_fs;
 
+// In-memory mock backend (always available, zero deps)
+pub mod mock_fs;
+
 // Re-export the core trait
 pub use backend::FileBackend;
 
 #[cfg(feature = "local-fs")]
 pub use local_fs::LocalFs;
+pub use mock_fs::MockFs;
 
 // Re-export all tools
 pub use delete::DeleteTool;
