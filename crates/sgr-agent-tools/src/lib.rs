@@ -43,6 +43,9 @@ pub mod write;
 // Dynamic context injection for skills
 pub mod skill_context;
 
+// Plan checklist tool (Codex-compatible update_plan)
+pub mod plan;
+
 // Deferred tools
 pub mod find;
 pub mod mkdir;
@@ -85,6 +88,8 @@ pub use read_all::ReadAllTool;
 pub use search::SearchTool;
 pub use tree::TreeTool;
 pub use write::WriteTool;
+
+pub use plan::{PlanState, PlanStep, UpdatePlanTool};
 
 #[cfg(feature = "eval")]
 pub use eval::EvalTool;
