@@ -78,5 +78,13 @@ name = "agent_demo"
 required-features = ["agent", "tools-all", "tools-local-fs"]
 
 [[example]]
+name = "structured_output"
+required-features = ["oxide"]
+
+[[example]]
+name = "function_calling"
+required-features = ["oxide"]
+
+[[example]]
 name = "oxide_agent_test"
 required-features = ["oxide", "genai"]
