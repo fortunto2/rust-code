@@ -35,20 +35,14 @@ struct WriteArgs {
 /// Auto-repair broken JSON content via llm_json.
 /// Returns repaired content or original if not JSON / already valid.
 fn maybe_repair_json(path: &str, content: &str) -> String {
-    if !path.ends_with(".json") || path.contains("README") {
+    if !path.ends_with(".json") {
         return content.to_string();
     }
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(_) => content.to_string(),
         Err(_) => {
             let opts = llm_json::RepairOptions::default();
-            match llm_json::repair_json(content, &opts) {
-                Ok(fixed) => {
-                    eprintln!("    sgr-tools: auto-fixed JSON via llm_json in {}", path);
-                    fixed
-                }
-                Err(_) => content.to_string(),
-            }
+            llm_json::repair_json(content, &opts).unwrap_or_else(|_| content.to_string())
         }
     }
 }

@@ -128,13 +128,16 @@ pub trait Tool: Send + Sync {
         ctx: &mut crate::context::AgentContext,
     ) -> Result<ToolOutput, ToolError>;
 
+    /// Execute without mutable context (for parallel read-only dispatch).
+    /// Default: delegates to `execute` with a cloned context. Override for true
+    /// read-only tools to avoid the clone.
     async fn execute_readonly(
         &self,
         args: Value,
-        _ctx: &crate::context::AgentContext,
+        ctx: &crate::context::AgentContext,
     ) -> Result<ToolOutput, ToolError> {
-        let _ = args;
-        panic!("execute_readonly called on tool that doesn't implement it")
+        let mut ctx_clone = ctx.clone();
+        self.execute(args, &mut ctx_clone).await
     }
 
     fn to_def(&self) -> ToolDef {

@@ -49,14 +49,18 @@ impl LocalFs {
         let full = self.root.join(path);
         // For existing paths, canonicalize and verify containment (catches symlinks).
         // For new paths (write/mkdir), canonicalize parent.
-        let canonical = std::fs::canonicalize(&full).or_else(|_| {
-            if let Some(parent) = full.parent() {
-                std::fs::canonicalize(parent).map(|p| p.join(full.file_name().unwrap_or_default()))
-            } else {
-                Ok(full.clone())
-            }
-        }).unwrap_or_else(|_| full.clone());
-        let root_canonical = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let canonical = std::fs::canonicalize(&full)
+            .or_else(|_| {
+                if let Some(parent) = full.parent() {
+                    std::fs::canonicalize(parent)
+                        .map(|p| p.join(full.file_name().unwrap_or_default()))
+                } else {
+                    Ok(full.clone())
+                }
+            })
+            .unwrap_or_else(|_| full.clone());
+        let root_canonical =
+            std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
         if !canonical.starts_with(&root_canonical) {
             bail!("path escapes workspace root: {path}");
         }
@@ -66,15 +70,29 @@ impl LocalFs {
 
 #[async_trait::async_trait]
 impl FileBackend for LocalFs {
-    async fn read(&self, path: &str, number: bool, start_line: i32, end_line: i32) -> Result<String> {
+    async fn read(
+        &self,
+        path: &str,
+        number: bool,
+        start_line: i32,
+        end_line: i32,
+    ) -> Result<String> {
         let full = self.resolve(path)?;
         let content = tokio::fs::read_to_string(&full)
             .await
             .with_context(|| format!("read {}", full.display()))?;
 
         let lines: Vec<&str> = content.lines().collect();
-        let start = if start_line > 0 { (start_line - 1) as usize } else { 0 };
-        let end = if end_line > 0 { end_line as usize } else { lines.len() };
+        let start = if start_line > 0 {
+            (start_line - 1) as usize
+        } else {
+            0
+        };
+        let end = if end_line > 0 {
+            end_line as usize
+        } else {
+            lines.len()
+        };
         let end = end.min(lines.len());
 
         let mut out = String::new();
@@ -200,7 +218,16 @@ impl FileBackend for LocalFs {
 
         tokio::task::spawn_blocking(move || {
             let mut results = Vec::new();
-            find_recursive(&dir, &ws_root, &name, &file_type, max, MAX_FIND_DEPTH, 0, &mut results)?;
+            find_recursive(
+                &dir,
+                &ws_root,
+                &name,
+                &file_type,
+                max,
+                MAX_FIND_DEPTH,
+                0,
+                &mut results,
+            )?;
             Ok(results.join("\n"))
         })
         .await?
@@ -233,7 +260,9 @@ fn search_dir_recursive(
     out: &mut String,
 ) -> Result<()> {
     for entry in read_dir_visible(dir)? {
-        if *count >= max { return Ok(()); }
+        if *count >= max {
+            return Ok(());
+        }
         let path = entry.path();
         if path.is_dir() {
             search_dir_recursive(&path, root, re, max, count, out)?;
@@ -242,7 +271,9 @@ fn search_dir_recursive(
                 let reader = BufReader::new(file);
                 let rel = path.strip_prefix(root).unwrap_or(&path);
                 for (i, line_result) in reader.lines().enumerate() {
-                    if *count >= max { return Ok(()); }
+                    if *count >= max {
+                        return Ok(());
+                    }
                     let Ok(line) = line_result else { break }; // non-UTF8 → likely binary, stop
                     if re.is_match(&line) {
                         use std::fmt::Write;
@@ -265,7 +296,9 @@ fn tree_recursive(
     depth: usize,
     out: &mut String,
 ) -> Result<()> {
-    if max_depth > 0 && depth >= max_depth { return Ok(()); }
+    if max_depth > 0 && depth >= max_depth {
+        return Ok(());
+    }
 
     let mut entries = read_dir_visible(dir)?;
     entries.sort_by_key(|e| e.file_name());
@@ -283,11 +316,23 @@ fn tree_recursive(
         }
 
         use std::fmt::Write;
-        let _ = write!(out, "{prefix}{connector}{}{}\n", name, if is_dir { "/" } else { "" });
+        let _ = write!(
+            out,
+            "{prefix}{connector}{}{}\n",
+            name,
+            if is_dir { "/" } else { "" }
+        );
 
         if is_dir {
             let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-            tree_recursive(&entry.path(), root, &child_prefix, max_depth, depth + 1, out)?;
+            tree_recursive(
+                &entry.path(),
+                root,
+                &child_prefix,
+                max_depth,
+                depth + 1,
+                out,
+            )?;
         }
     }
     Ok(())
@@ -304,10 +349,14 @@ fn find_recursive(
     depth: usize,
     results: &mut Vec<String>,
 ) -> Result<()> {
-    if max_depth > 0 && depth >= max_depth { return Ok(()); }
+    if max_depth > 0 && depth >= max_depth {
+        return Ok(());
+    }
 
     for entry in read_dir_visible(dir)? {
-        if results.len() >= max { return Ok(()); }
+        if results.len() >= max {
+            return Ok(());
+        }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
@@ -324,7 +373,16 @@ fn find_recursive(
         }
 
         if is_dir {
-            find_recursive(&path, root, pattern, file_type, max, max_depth, depth + 1, results)?;
+            find_recursive(
+                &path,
+                root,
+                pattern,
+                file_type,
+                max,
+                max_depth,
+                depth + 1,
+                results,
+            )?;
         }
     }
     Ok(())
@@ -341,7 +399,9 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
 
         let fs = LocalFs::new(&tmp);
-        fs.write("test.txt", "line1\nline2\nline3\n", 0, 0).await.unwrap();
+        fs.write("test.txt", "line1\nline2\nline3\n", 0, 0)
+            .await
+            .unwrap();
 
         let content = fs.read("test.txt", false, 0, 0).await.unwrap();
         assert!(content.contains("line1"));

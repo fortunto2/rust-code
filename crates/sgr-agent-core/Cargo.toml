@@ -1,8 +1,8 @@
 [package]
 name = "sgr-agent-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Core types for sgr-agent: Tool trait, ToolDef, AgentContext, schema helpers"
+description = "Core types for sgr-agent: Tool trait, FileBackend trait, ToolDef, AgentContext, schema helpers"
 license = "MIT"
 repository = "https://github.com/fortunto2/rust-code"
 keywords = ["llm", "agent", "tool", "function-calling"]
@@ -14,6 +14,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "0.8"
 thiserror = "2"
+anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
