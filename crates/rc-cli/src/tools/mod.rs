@@ -8,6 +8,24 @@ pub mod search;
 pub mod skills;
 pub mod truncate;
 
+// Tool trait implementations (one per tool or tool group)
+pub mod api_tool;
+pub mod apply_patch_tool;
+pub mod bash_tool;
+pub mod delegate_tools;
+pub mod edit_file_tool;
+pub mod editor_tool;
+pub mod finish_tool;
+pub mod git_tool;
+pub mod mcp_tool;
+pub mod memory_tool;
+pub mod project_tools;
+pub mod read_file_tool;
+pub mod search_tool;
+pub mod swarm_tools;
+pub mod task_tool;
+pub mod write_file_tool;
+
 pub use bash::*;
 pub use checkpoint::*;
 pub use cost::*;

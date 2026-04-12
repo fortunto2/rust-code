@@ -1,13 +1,11 @@
 use crate::backend::{self, LlmProvider, SgrAction, SgrNextStep};
+use crate::rc_state::RcState;
 use crate::tools::{
-    FuzzySearcher, build_skills_context, cost, create_checkpoint,
-    delegate::{DelegateAgent, DelegateManager},
-    git_add, git_diff, git_status, is_mutating_action,
-    mcp::McpManager,
-    read_file, truncate_output, write_file,
+    build_skills_context, cost, create_checkpoint, is_mutating_action, mcp::McpManager,
 };
 use anyhow::Result;
-use sgr_agent::swarm::{AgentId, AgentRole, SwarmManager};
+use sgr_agent::registry::ToolRegistry;
+use sgr_agent::swarm::SwarmManager;
 use sgr_agent::{
     ActionKind, ActionResult, AgentMessage, HintContext, Intent, LoopDetector, MessageRole,
     Session, SgrAgent, SgrAgentStream, StepDecision, collect_hints,
@@ -16,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-/// Action type — the 18-variant tool enum.
+/// Action type -- the 27-variant tool enum (kept as wire format for LLM parsing).
 pub type Action = SgrAction;
 
 // Implement sgr-agent traits for the Message type
@@ -84,29 +82,25 @@ impl AgentMessage for Msg {
 
 pub struct Agent {
     session: Session<Msg>,
-    mcp: Option<McpManager>,
+    mcp: Arc<Option<McpManager>>,
     step_count: usize,
     last_input_chars: usize,
-    /// LLM provider (via LlmConfig — auto-detects from model name).
+    /// LLM provider (via LlmConfig -- auto-detects from model name).
     provider: Option<LlmProvider>,
     /// Current user intent for action filtering.
     pub intent: Intent,
     /// Pluggable hint sources.
     hint_sources: Vec<Box<dyn sgr_agent::HintSource>>,
-    /// Persistent CWD for bash commands (tracks `cd` across steps).
-    /// Interior mutability: execute() takes &self but needs to update CWD.
-    cwd: std::sync::Mutex<std::path::PathBuf>,
-    /// Track consecutive edit failures per file path for fallback hints.
-    edit_failures: std::sync::Mutex<std::collections::HashMap<String, usize>>,
-    /// Cache of recently read files — prevents wasteful re-reads.
-    /// Key: resolved path, Value: (content, step_number).
-    read_cache: std::sync::Mutex<std::collections::HashMap<String, (String, usize)>>,
+    /// Shared mutable state for tools (cwd, read_cache, edit_failures).
+    state: RcState,
+    /// Tool registry -- dispatches SgrAction to Tool impls.
+    tool_registry: ToolRegistry,
     /// Multi-agent swarm manager for sub-agents.
     swarm: Arc<TokioMutex<SwarmManager>>,
     /// Delegate manager for external CLI agents (claude/gemini/codex/opencode/rust-code).
-    delegate_mgr: TokioMutex<DelegateManager>,
+    delegate_mgr: Arc<TokioMutex<crate::tools::delegate::DelegateManager>>,
     /// OpenAPI registry for the `api` tool.
-    api_registry: TokioMutex<sgr_agent::openapi::ApiRegistry>,
+    api_registry: Arc<TokioMutex<sgr_agent::openapi::ApiRegistry>>,
     /// Last Responses API response_id for stateful chaining (prompt caching).
     last_response_id: std::sync::Mutex<Option<String>>,
 }
@@ -223,40 +217,113 @@ impl Agent {
             session.push(Role::system(), skills_ctx);
         }
 
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let state = RcState::new(cwd);
+        let swarm = Arc::new(TokioMutex::new(SwarmManager::new()));
+        let delegate_mgr = Arc::new(TokioMutex::new(
+            crate::tools::delegate::DelegateManager::new(),
+        ));
+        let api_registry = Arc::new(TokioMutex::new(sgr_agent::openapi::ApiRegistry::new()));
+        let mcp: Arc<Option<McpManager>> = Arc::new(None);
+
+        // Build tool registry -- each tool holds shared state references
+        let tool_registry = Self::build_tool_registry(
+            state.clone(),
+            swarm.clone(),
+            delegate_mgr.clone(),
+            api_registry.clone(),
+            mcp.clone(),
+            None, // provider not yet set
+        );
+
         Self {
             session,
-            mcp: None,
+            mcp,
             step_count: 0,
             last_input_chars: 0,
             provider: None,
             intent: Intent::Auto,
             hint_sources: sgr_agent::default_sources_with_tasks(Path::new(".")),
-            cwd: std::sync::Mutex::new(
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            ),
-            edit_failures: std::sync::Mutex::new(std::collections::HashMap::new()),
-            read_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
-            swarm: Arc::new(TokioMutex::new(SwarmManager::new())),
-            delegate_mgr: TokioMutex::new(DelegateManager::new()),
-            api_registry: TokioMutex::new(sgr_agent::openapi::ApiRegistry::new()),
+            state,
+            tool_registry,
+            swarm,
+            delegate_mgr,
+            api_registry,
             last_response_id: std::sync::Mutex::new(None),
         }
     }
 
-    /// Set working directory for tool execution.
-    pub fn set_cwd(&self, path: std::path::PathBuf) {
-        *self.cwd.lock().unwrap() = path;
+    /// Build the ToolRegistry with all 27 tools.
+    fn build_tool_registry(
+        state: RcState,
+        swarm: Arc<TokioMutex<SwarmManager>>,
+        delegate_mgr: Arc<TokioMutex<crate::tools::delegate::DelegateManager>>,
+        api_registry: Arc<TokioMutex<sgr_agent::openapi::ApiRegistry>>,
+        mcp: Arc<Option<McpManager>>,
+        provider: Option<LlmProvider>,
+    ) -> ToolRegistry {
+        use crate::tools::*;
+        ToolRegistry::new()
+            .register(read_file_tool::ReadFileTool {
+                state: state.clone(),
+            })
+            .register(write_file_tool::WriteFileTool {
+                state: state.clone(),
+            })
+            .register(edit_file_tool::EditFileTool {
+                state: state.clone(),
+            })
+            .register(apply_patch_tool::ApplyPatchTool {
+                state: state.clone(),
+            })
+            .register(bash_tool::BashTool {
+                state: state.clone(),
+            })
+            .register(bash_tool::BashBgTool)
+            .register(search_tool::SearchCodeTool {
+                state: state.clone(),
+            })
+            .register(git_tool::GitStatusTool)
+            .register(git_tool::GitDiffTool)
+            .register(git_tool::GitAddTool)
+            .register(git_tool::GitCommitTool {
+                state: state.clone(),
+            })
+            .register(editor_tool::OpenEditorTool)
+            .register(finish_tool::AskUserTool)
+            .register(finish_tool::FinishTool)
+            .register(mcp_tool::McpCallTool { mcp })
+            .register(memory_tool::MemoryTool)
+            .register(project_tools::ProjectMapTool)
+            .register(project_tools::DependenciesTool)
+            .register(task_tool::TaskTool)
+            .register(swarm_tools::SpawnAgentTool {
+                swarm: swarm.clone(),
+                provider: Arc::new(provider),
+            })
+            .register(swarm_tools::WaitAgentsTool {
+                swarm: swarm.clone(),
+            })
+            .register(swarm_tools::AgentStatusTool {
+                swarm: swarm.clone(),
+            })
+            .register(swarm_tools::CancelAgentTool { swarm })
+            .register(api_tool::ApiTool {
+                registry: api_registry,
+            })
+            .register(delegate_tools::DelegateTaskTool {
+                state: state.clone(),
+                delegate_mgr: delegate_mgr.clone(),
+            })
+            .register(delegate_tools::DelegateStatusTool {
+                delegate_mgr: delegate_mgr.clone(),
+            })
+            .register(delegate_tools::DelegateResultTool { delegate_mgr })
     }
 
-    /// Resolve a potentially relative path against agent CWD.
-    fn resolve_path(&self, path: &str) -> String {
-        let p = std::path::Path::new(path);
-        if p.is_absolute() {
-            path.to_string()
-        } else {
-            let cwd = self.cwd.lock().unwrap();
-            cwd.join(p).to_string_lossy().to_string()
-        }
+    /// Set working directory for tool execution.
+    pub fn set_cwd(&self, path: std::path::PathBuf) {
+        *self.state.cwd.lock().unwrap() = path;
     }
 
     /// Create a new LoopDetector (used by callers in app.rs/main.rs).
@@ -283,12 +350,21 @@ impl Agent {
             manager.server_count(),
             manager.tool_count()
         );
-        self.mcp = Some(manager);
+        self.mcp = Arc::new(Some(manager));
+        // Rebuild tool registry with updated MCP reference
+        self.tool_registry = Self::build_tool_registry(
+            self.state.clone(),
+            self.swarm.clone(),
+            self.delegate_mgr.clone(),
+            self.api_registry.clone(),
+            self.mcp.clone(),
+            self.provider.clone(),
+        );
         Ok(())
     }
 
     pub fn mcp(&self) -> Option<&McpManager> {
-        self.mcp.as_ref()
+        self.mcp.as_ref().as_ref()
     }
 
     pub fn load_last_session(&mut self) -> Result<()> {
@@ -509,7 +585,16 @@ impl Agent {
 
     /// Set LLM provider.
     pub fn set_provider(&mut self, provider: LlmProvider) {
-        self.provider = Some(provider);
+        self.provider = Some(provider.clone());
+        // Rebuild tool registry with updated provider (for spawn_agent)
+        self.tool_registry = Self::build_tool_registry(
+            self.state.clone(),
+            self.swarm.clone(),
+            self.delegate_mgr.clone(),
+            self.api_registry.clone(),
+            self.mcp.clone(),
+            Some(provider),
+        );
     }
 
     /// Get current cost stats for display in TUI.
@@ -519,6 +604,7 @@ impl Agent {
 
     /// Execute a single action. Returns tool output + done flag.
     /// Auto-checkpoints before mutating actions (write, edit, bash).
+    /// Dispatches through ToolRegistry -- each SgrAction variant maps to a Tool impl.
     pub async fn execute_action(&self, action: &Action) -> Result<ActionResult> {
         let sig = Self::action_signature(action);
         if is_mutating_action(&sig) {
@@ -526,1057 +612,41 @@ impl Agent {
                 tracing::info!("Checkpoint: {}", label);
             }
         }
-        match action {
-            SgrAction::ReadFile {
-                path,
-                offset,
-                limit,
-            } => {
-                let resolved = self.resolve_path(path);
-                // Check read cache — return cached content with warning on re-read
-                let cache_key = resolved.clone();
-                let is_reread = {
-                    let cache = self.read_cache.lock().unwrap();
-                    cache.contains_key(&cache_key)
-                };
-                let content = read_file(
-                    &resolved,
-                    offset.map(|o| o as usize),
-                    limit.map(|l| l as usize),
-                )
-                .await?;
-                let output = if is_reread {
-                    // Return truncated content on re-read to save context window
-                    let lines: Vec<&str> = content.lines().collect();
-                    let preview = if lines.len() > 5 {
-                        format!(
-                            "{}\n... ({} more lines — use content from conversation history)",
-                            lines[..5].join("\n"),
-                            lines.len() - 5
-                        )
-                    } else {
-                        content.clone()
-                    };
-                    format!(
-                        "⚠ RE-READ: You already read this file. Content unchanged. \
-                         STOP re-reading and ACT on what you already know.\n\
-                         Preview (first 5 lines):\n{}",
-                        preview
-                    )
-                } else {
-                    format!("File contents of {}:\n{}", path, content)
-                };
-                // Update cache
-                {
-                    let mut cache = self.read_cache.lock().unwrap();
-                    cache.insert(cache_key, (content, self.step_count));
-                }
-                Ok(ActionResult {
-                    output: truncate_output(&output),
-                    done: false,
-                })
-            }
-            SgrAction::WriteFile { path, content } => {
-                let resolved = self.resolve_path(path);
-                let is_new = !std::path::Path::new(&resolved).exists();
-                write_file(&resolved, content).await?;
-                // Invalidate read cache for this file
-                self.read_cache.lock().unwrap().remove(&resolved);
-                let label = if is_new { "Created" } else { "Wrote" };
-                let lines = content.lines().count();
-                Ok(ActionResult {
-                    output: format!("{} {} ({} lines)", label, path, lines),
-                    done: false,
-                })
-            }
-            SgrAction::EditFile {
-                path,
-                old_string,
-                new_string,
-            } => {
-                let resolved = self.resolve_path(path);
-                match crate::tools::edit_file(&resolved, old_string, new_string).await {
-                    Ok(()) => {
-                        // Reset failure counter and invalidate read cache on success
-                        self.edit_failures.lock().unwrap().remove(path.as_str());
-                        self.read_cache.lock().unwrap().remove(&resolved);
-                        let old_lines: Vec<&str> = old_string.lines().collect();
-                        let new_lines: Vec<&str> = new_string.lines().collect();
-                        let mut diff = format!(
-                            "Edited {} ({}→{} lines)\n",
-                            path,
-                            old_lines.len(),
-                            new_lines.len()
-                        );
-                        for l in &old_lines {
-                            diff.push_str(&format!("- {}\n", l));
-                        }
-                        for l in &new_lines {
-                            diff.push_str(&format!("+ {}\n", l));
-                        }
-                        Ok(ActionResult {
-                            output: diff,
-                            done: false,
-                        })
-                    }
-                    Err(e) => {
-                        let count = {
-                            let mut failures = self.edit_failures.lock().unwrap();
-                            let c = failures.entry(path.to_string()).or_insert(0);
-                            *c += 1;
-                            *c
-                        };
-                        let mut err_msg = format!("{}", e);
-                        if count >= 2 {
-                            err_msg.push_str(&format!(
-                                "\n\n⚠ edit_file has failed {} times on this file. \
-                                 STOP trying edit_file. Instead: use read_file to get the EXACT current content, \
-                                 then use write_file with the complete modified content.",
-                                count
-                            ));
-                        }
-                        Err(anyhow::anyhow!("{}", err_msg))
-                    }
-                }
-            }
-            SgrAction::ApplyPatch { patch } => {
-                let current_cwd = self.cwd.lock().unwrap().clone();
-                match sgr_agent::app_tools::apply_patch::apply_patch_to_files(patch, &current_cwd)
-                    .await
-                {
-                    Ok(result) => {
-                        let mut summary = String::new();
-                        for p in &result.added {
-                            summary.push_str(&format!("A {}\n", p.display()));
-                        }
-                        for p in &result.modified {
-                            summary.push_str(&format!("M {}\n", p.display()));
-                        }
-                        for p in &result.deleted {
-                            summary.push_str(&format!("D {}\n", p.display()));
-                        }
-                        if summary.is_empty() {
-                            summary = "Patch applied (no changes).".to_string();
-                        }
 
-                        // Show updated content so agent has fresh state for subsequent patches.
-                        // Limit: first 3 files, max 200 lines each.
-                        let changed: Vec<&std::path::Path> = result
-                            .modified
-                            .iter()
-                            .chain(result.added.iter())
-                            .take(3)
-                            .map(|p| p.as_path())
-                            .collect();
-                        for p in &changed {
-                            let abs = if p.is_absolute() {
-                                p.to_path_buf()
-                            } else {
-                                current_cwd.join(p)
-                            };
-                            if let Ok(content) = tokio::fs::read_to_string(&abs).await {
-                                let lines: Vec<&str> = content.lines().collect();
-                                let display = if lines.len() > 200 {
-                                    format!(
-                                        "{}\n... ({} more lines)",
-                                        lines[..200].join("\n"),
-                                        lines.len() - 200
-                                    )
-                                } else {
-                                    content
-                                };
-                                summary.push_str(&format!(
-                                    "\n--- Updated {} ---\n{}\n",
-                                    p.display(),
-                                    display
-                                ));
-                            }
-                        }
+        // Convert SgrAction to (tool_name, args_json) and dispatch through registry
+        let (tool_name, args_json) = action_to_tool_call(action);
+        let tool = self
+            .tool_registry
+            .get(&tool_name)
+            .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", tool_name))?;
 
-                        // Invalidate read cache for changed files
-                        {
-                            let mut cache = self.read_cache.lock().unwrap();
-                            for p in result
-                                .modified
-                                .iter()
-                                .chain(result.added.iter())
-                                .chain(result.deleted.iter())
-                            {
-                                let key = p.to_string_lossy().to_string();
-                                cache.remove(&key);
-                                // Also remove with cwd prefix
-                                let abs = current_cwd.join(p);
-                                cache.remove(&abs.to_string_lossy().to_string());
-                            }
-                        }
-
-                        Ok(ActionResult {
-                            output: summary,
-                            done: false,
-                        })
-                    }
-                    Err(e) => Err(anyhow::anyhow!(
-                        "apply_patch error: {}\n\n\
-                         IMPORTANT: If context lines don't match, use read_file FIRST to see the current file content, then retry.\n\n\
-                         CORRECT FORMAT:\n\
-                         *** Begin Patch\n\
-                         *** Update File: path/to/file.ts\n\
-                         @@ function_name\n\
-                          context line (must match file exactly)\n\
-                         -old line\n\
-                         +new line\n\
-                          context line\n\
-                         *** End Patch\n\n\
-                         Do NOT use unified diff (@@ -N,N +N,N @@). Use *** Add/Update/Delete File: headers.",
-                        e
-                    )),
-                }
-            }
-            SgrAction::Bash {
-                command, timeout, ..
-            } => {
-                let timeout_ms = timeout.map(|t| (t as u64).min(600_000));
-                let current_cwd = self.cwd.lock().unwrap().clone();
-                let result = crate::tools::run_command_in(command, &current_cwd, timeout_ms).await;
-                *self.cwd.lock().unwrap() = result.cwd;
-                let output_text = if result.exit_code == 0 {
-                    if result.output.trim().is_empty() {
-                        "Command completed successfully (no output).".to_string()
-                    } else {
-                        truncate_output(&format!("Command output:\n{}", result.output))
-                    }
-                } else {
-                    truncate_output(&format!(
-                        "Command output:\n{}\n[exit code: {}]",
-                        result.output, result.exit_code
-                    ))
-                };
-                Ok(ActionResult {
-                    output: output_text,
-                    done: false,
-                })
-            }
-            SgrAction::BashBg { name, command } => {
-                let output = crate::tools::run_command_bg(name, command).await?;
-                Ok(ActionResult {
-                    output: format!("[BG] {}", output),
-                    done: false,
-                })
-            }
-            SgrAction::SearchCode { query } => {
-                let mut result = String::new();
-
-                if let Ok(files) = FuzzySearcher::get_all_files().await {
-                    let mut searcher = FuzzySearcher::new();
-                    let matches = searcher.fuzzy_match_files(query, &files);
-                    if !matches.is_empty() {
-                        result.push_str(&format!("File path matches for '{}':\n", query));
-                        for (score, path) in matches.iter().take(5) {
-                            if *score > 50 {
-                                result.push_str(&format!("- {}\n", path));
-                            }
-                        }
-                        result.push('\n');
-                    }
-                }
-
-                result.push_str(&format!("Content search results for '{}':\n", query));
-                let safe_query = query.replace("'", "'\\''");
-                let search_cmd = format!("rg -n '{}' . || grep -rn '{}' .", safe_query, safe_query);
-                let current_cwd = self.cwd.lock().unwrap().clone();
-                let search_result =
-                    crate::tools::run_command_in(&search_cmd, &current_cwd, None).await;
-                let output = &search_result.output;
-                if search_result.exit_code == 0 && !output.trim().is_empty() {
-                    let lines: Vec<&str> = output.lines().collect();
-                    if lines.len() > 100 {
-                        result.push_str(&lines[..100].join("\n"));
-                        result.push_str(&format!(
-                            "\n...[Truncated {} more lines]...",
-                            lines.len() - 100
-                        ));
-                    } else {
-                        result.push_str(output);
-                    }
-                } else {
-                    result.push_str("No content matches found.");
-                }
-
-                Ok(ActionResult {
-                    output: truncate_output(&result),
-                    done: false,
-                })
-            }
-            SgrAction::GitStatus { .. } => match git_status()? {
-                Some(status) => {
-                    let mut result = format!(
-                        "Git Status:\nBranch: {}\nDirty: {}\n",
-                        status.branch, status.dirty
-                    );
-                    if !status.modified_files.is_empty() {
-                        result.push_str("\nModified files:\n");
-                        for f in &status.modified_files {
-                            result.push_str(&format!("  - {}\n", f));
-                        }
-                    }
-                    if !status.staged_files.is_empty() {
-                        result.push_str("\nStaged files:\n");
-                        for f in &status.staged_files {
-                            result.push_str(&format!("  + {}\n", f));
-                        }
-                    }
-                    if !status.untracked_files.is_empty() {
-                        result.push_str("\nUntracked files:\n");
-                        for f in &status.untracked_files {
-                            result.push_str(&format!("  ? {}\n", f));
-                        }
-                    }
-                    Ok(ActionResult {
-                        output: result,
-                        done: false,
-                    })
-                }
-                None => Ok(ActionResult {
-                    output: "Not in a git repository".into(),
-                    done: false,
-                }),
-            },
-            SgrAction::GitDiff { path, cached } => {
-                let diff = git_diff(path.as_deref(), cached.unwrap_or(false))?;
-                let output = if diff.is_empty() {
-                    "No changes to show".into()
-                } else {
-                    format!("Git Diff:\n{}", diff)
-                };
-                Ok(ActionResult {
-                    output,
-                    done: false,
-                })
-            }
-            SgrAction::GitAdd { paths } => {
-                git_add(paths)?;
-                Ok(ActionResult {
-                    output: format!("Added {} files to staging", paths.len()),
-                    done: false,
-                })
-            }
-            SgrAction::GitCommit { message } => {
-                let cwd = self.cwd.lock().unwrap().clone();
-                // Try commit — if pre-commit hook fails, return full error output
-                // so agent can read it, fix the issue (fmt/test/clippy), and retry.
-                let r = sgr_agent::app_tools::bash::run_command_in(
-                    &format!("git commit -m '{}'", message.replace('\'', "'\\''")),
-                    &cwd,
-                    Some(120_000), // 2 min timeout for pre-commit hook
-                )
-                .await;
-                if r.exit_code == 0 {
-                    Ok(ActionResult {
-                        output: format!("Committed: {}\n{}", message, r.output),
-                        done: false,
-                    })
-                } else {
-                    Ok(ActionResult {
-                        output: format!(
-                            "Commit FAILED (exit {}). Fix the errors below, then retry git_commit.\n\n{}\n\n\
-                             HINT: If format check failed, run the formatter (e.g. `make fmt`). \
-                             If tests failed, fix the test. If lint failed, fix the warning. \
-                             Then git_add the fixes and git_commit again.",
-                            r.exit_code, r.output
-                        ),
-                        done: false,
-                    })
-                }
-            }
-            SgrAction::OpenEditor { path, .. } => Ok(ActionResult {
-                output: format!("Opened {} in editor", path),
-                done: false,
+        let mut ctx = sgr_agent::context::AgentContext::new();
+        match tool.execute(args_json, &mut ctx).await {
+            Ok(output) => Ok(ActionResult {
+                output: output.content,
+                done: output.done || output.waiting,
             }),
-            SgrAction::Finish { summary } => Ok(ActionResult {
-                output: format!("Task finished: {}", summary),
-                done: true,
-            }),
-            SgrAction::AskUser { question } => Ok(ActionResult {
-                output: format!("Question for user: {}", question),
-                done: true,
-            }),
-            SgrAction::Memory {
-                operation,
-                category,
-                section,
-                content,
-                context,
-                confidence,
-            } => {
-                let memory_path = Path::new(AGENT_HOME).join("MEMORY.jsonl");
-                let op = operation.to_lowercase();
-                let cat = category.as_deref().unwrap_or("insight").to_lowercase();
-                let conf = confidence.as_deref().unwrap_or("tentative").to_lowercase();
-
-                match op.as_str() {
-                    "save" => {
-                        let sec = section.as_deref().unwrap_or("general");
-                        let entry = serde_json::json!({
-                            "category": cat,
-                            "section": sec,
-                            "content": content,
-                            "context": context,
-                            "confidence": conf,
-                            "created": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default().as_secs(),
-                        });
-                        let mut file = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&memory_path)
-                            .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
-                        use std::io::Write;
-                        writeln!(file, "{}", entry)
-                            .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
-                        Ok(ActionResult {
-                            output: format!("Memory saved: [{}] {} ({})", cat, sec, conf),
-                            done: false,
-                        })
-                    }
-                    "forget" => {
-                        let sec = section.as_deref().unwrap_or("general");
-                        if memory_path.exists() {
-                            let file_content =
-                                std::fs::read_to_string(&memory_path).unwrap_or_default();
-                            let filtered: Vec<&str> = file_content
-                                .lines()
-                                .filter(|line| {
-                                    serde_json::from_str::<serde_json::Value>(line)
-                                        .map(|v| v["section"].as_str() != Some(sec))
-                                        .unwrap_or(true)
-                                })
-                                .collect();
-                            let removed = file_content.lines().count() - filtered.len();
-                            std::fs::write(&memory_path, filtered.join("\n") + "\n")
-                                .map_err(|e| anyhow::anyhow!("Memory write: {}", e))?;
-                            Ok(ActionResult {
-                                output: format!(
-                                    "Memory: forgot {} entries from '{}'",
-                                    removed, sec
-                                ),
-                                done: false,
-                            })
-                        } else {
-                            Ok(ActionResult {
-                                output: "Memory: nothing to forget (no entries)".into(),
-                                done: false,
-                            })
-                        }
-                    }
-                    _ => Ok(ActionResult {
-                        output: format!("Unknown memory operation: {}", op),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::McpCall {
-                server,
-                tool,
-                arguments,
-            } => {
-                let Some(mcp) = &self.mcp else {
-                    return Ok(ActionResult {
-                        output: "MCP not initialized. No .mcp.json found.".into(),
-                        done: false,
-                    });
-                };
-                let args = arguments.as_ref().and_then(|json_str| {
-                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str)
-                        .ok()
-                });
-                match mcp.call_tool(server, tool, args).await {
-                    Ok(result) => {
-                        let output = crate::tools::mcp::format_tool_result(&result);
-                        Ok(ActionResult {
-                            output: format!("MCP [{}] {}:\n{}", server, tool, output),
-                            done: false,
-                        })
-                    }
-                    Err(e) => Ok(ActionResult {
-                        output: format!("MCP Error [{}] {}: {}", server, tool, e),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::ProjectMap { path } => {
-                let dir = path.as_deref().unwrap_or(".");
-                let map = solograph::generate_repomap(Path::new(dir));
-                Ok(ActionResult {
-                    output: map,
-                    done: false,
-                })
-            }
-            SgrAction::Task {
-                operation,
-                title,
-                task_id,
-                status,
-                priority,
-                notes,
-            } => {
-                let project_root = Path::new(".");
-                let op = operation.to_lowercase();
-                match op.as_str() {
-                    "create" => {
-                        let t = title.as_deref().unwrap_or("Untitled");
-                        let pri = priority
-                            .as_ref()
-                            .and_then(|p| sgr_agent::Priority::parse(&p.to_lowercase()))
-                            .unwrap_or(sgr_agent::Priority::Medium);
-                        let mut task = sgr_agent::create_task(project_root, t, pri);
-                        if let Some(n) = notes {
-                            task.body = n.clone();
-                            sgr_agent::save_task(project_root, &task);
-                        }
-                        Ok(ActionResult {
-                            output: format!(
-                                "Created task #{} [{}] ({}): {}",
-                                task.id, task.status, task.priority, task.title
-                            ),
-                            done: false,
-                        })
-                    }
-                    "list" => {
-                        let tasks = sgr_agent::load_tasks(project_root);
-                        if tasks.is_empty() {
-                            Ok(ActionResult {
-                                output:
-                                    "No tasks found. Use task(operation='create') to create one."
-                                        .into(),
-                                done: false,
-                            })
-                        } else {
-                            let mut output = format!("Tasks ({}):\n", tasks.len());
-                            for t in &tasks {
-                                output.push_str(&format!(
-                                    "  #{} [{}] ({}) {}\n",
-                                    t.id, t.status, t.priority, t.title
-                                ));
-                            }
-                            Ok(ActionResult {
-                                output,
-                                done: false,
-                            })
-                        }
-                    }
-                    "update" => {
-                        let Some(id) = task_id else {
-                            return Ok(ActionResult {
-                                output: "Error: task_id required for update".into(),
-                                done: false,
-                            });
-                        };
-                        let id = *id as u16;
-                        if let Some(status_val) = status {
-                            let status_str = status_val.to_lowercase();
-                            if let Some(s) = sgr_agent::TaskStatus::parse(&status_str) {
-                                sgr_agent::update_status(project_root, id, s);
-                            }
-                        }
-                        if let Some(n) = notes {
-                            sgr_agent::append_notes(project_root, id, n);
-                        }
-                        let tasks = sgr_agent::load_tasks(project_root);
-                        let task = tasks.iter().find(|t| t.id == id);
-                        match task {
-                            Some(t) => Ok(ActionResult {
-                                output: format!(
-                                    "Updated task #{} [{}] ({}): {}",
-                                    t.id, t.status, t.priority, t.title
-                                ),
-                                done: false,
-                            }),
-                            None => Ok(ActionResult {
-                                output: format!("Task #{} not found", id),
-                                done: false,
-                            }),
-                        }
-                    }
-                    "done" => {
-                        let Some(id) = task_id else {
-                            return Ok(ActionResult {
-                                output: "Error: task_id required for done".into(),
-                                done: false,
-                            });
-                        };
-                        match sgr_agent::update_status(
-                            project_root,
-                            *id as u16,
-                            sgr_agent::TaskStatus::Done,
-                        ) {
-                            Some(t) => Ok(ActionResult {
-                                output: format!("Completed task #{}: {}", t.id, t.title),
-                                done: false,
-                            }),
-                            None => Ok(ActionResult {
-                                output: format!("Task #{} not found", id),
-                                done: false,
-                            }),
-                        }
-                    }
-                    _ => Ok(ActionResult {
-                        output: format!("Unknown task operation: {}", op),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::Dependencies { path } => {
-                let manifest = if let Some(p) = path {
-                    std::path::PathBuf::from(p)
-                } else {
-                    ["Cargo.toml", "package.json", "pyproject.toml"]
-                        .iter()
-                        .map(std::path::PathBuf::from)
-                        .find(|p| p.exists())
-                        .unwrap_or_else(|| std::path::PathBuf::from("Cargo.toml"))
-                };
-                let deps = solograph::parse_deps(&manifest);
-                if deps.is_empty() {
-                    Ok(ActionResult {
-                        output: format!("No dependencies found in {}", manifest.display()),
-                        done: false,
-                    })
-                } else {
-                    let output = deps
-                        .iter()
-                        .map(|d| {
-                            let kind = match d.kind {
-                                solograph::DependencyKind::Dev => " [dev]",
-                                solograph::DependencyKind::Build => " [build]",
-                                solograph::DependencyKind::Normal => "",
-                            };
-                            format!("  {} = {}{}", d.name, d.version, kind)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    Ok(ActionResult {
-                        output: format!("Dependencies from {}:\n{}", manifest.display(), output),
-                        done: false,
-                    })
-                }
-            }
-            SgrAction::SpawnAgent {
-                role,
-                task,
-                max_steps,
-            } => {
-                use sgr_agent::swarm::SpawnConfig;
-
-                let agent_role = match role.as_str() {
-                    "explorer" => AgentRole::Explorer,
-                    "worker" => AgentRole::Worker,
-                    "reviewer" => AgentRole::Reviewer,
-                    other => AgentRole::Custom(other.to_string()),
-                };
-
-                let provider = match &self.provider {
-                    Some(p) => p,
-                    None => {
-                        return Ok(ActionResult {
-                            output: "Cannot spawn agent: no LLM provider configured.".into(),
-                            done: false,
-                        });
-                    }
-                };
-
-                // Create sub-agent's LLM client + agent + tools
-                let client = provider.make_llm_client();
-
-                let sub_prompt = format!(
-                    "You are a {} sub-agent. Complete the task efficiently. Respond with JSON only.",
-                    agent_role.name()
-                );
-                let sub_agent =
-                    sgr_agent::agents::flexible::FlexibleAgent::new(client, sub_prompt, 3);
-                let sub_tools = sgr_agent::registry::ToolRegistry::new();
-
-                let mut config = match agent_role {
-                    AgentRole::Explorer => SpawnConfig::explorer(task.clone()),
-                    AgentRole::Worker => SpawnConfig::worker(task.clone()),
-                    AgentRole::Reviewer => SpawnConfig::reviewer(task.clone()),
-                    AgentRole::Custom(_) => SpawnConfig::worker(task.clone()),
-                };
-                if let Some(n) = max_steps {
-                    config.max_steps = *n as usize;
-                }
-
-                let parent_ctx = sgr_agent::context::AgentContext::new();
-                let mut swarm = self.swarm.lock().await;
-                match swarm.spawn(config, Box::new(sub_agent), sub_tools, &parent_ctx) {
-                    Ok(id) => Ok(ActionResult {
-                        output: format!("Spawned {} agent: {}\nTask: {}", agent_role, id, task),
-                        done: false,
-                    }),
-                    Err(e) => Ok(ActionResult {
-                        output: format!("Failed to spawn agent: {}", e),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::WaitAgents {
-                agent_ids,
-                timeout_secs,
-            } => {
-                let timeout =
-                    std::time::Duration::from_secs(timeout_secs.map(|s| s as u64).unwrap_or(300));
-
-                let ids: Vec<AgentId>;
-                {
-                    let swarm = self.swarm.lock().await;
-                    ids = if agent_ids.is_empty() {
-                        swarm.all_agent_ids()
-                    } else {
-                        agent_ids.iter().map(|s| AgentId(s.clone())).collect()
-                    };
-                }
-
-                if ids.is_empty() {
-                    return Ok(ActionResult {
-                        output: "No agents to wait for.".into(),
-                        done: false,
-                    });
-                }
-
-                let mut swarm = self.swarm.lock().await;
-                let results = swarm.wait_with_timeout(&ids, timeout).await;
-                let output = results
-                    .iter()
-                    .map(|(id, result)| format!("[{}] {}", id, result))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                Ok(ActionResult {
-                    output,
-                    done: false,
-                })
-            }
-            SgrAction::AgentStatus { agent_id } => {
-                let swarm = self.swarm.lock().await;
-                let output = if let Some(id) = agent_id {
-                    let aid = AgentId(id.clone());
-                    match swarm.status(&aid).await {
-                        Some(s) => format!("[{}] {}", id, s),
-                        None => format!("Agent '{}' not found", id),
-                    }
-                } else {
-                    swarm.status_all_formatted().await
-                };
-                Ok(ActionResult {
-                    output,
-                    done: false,
-                })
-            }
-            SgrAction::CancelAgent { agent_id } => {
-                let swarm = self.swarm.lock().await;
-                if agent_id == "all" {
-                    swarm.cancel_all();
-                    Ok(ActionResult {
-                        output: "Cancelled all agents.".into(),
-                        done: false,
-                    })
-                } else {
-                    let aid = AgentId(agent_id.clone());
-                    match swarm.cancel(&aid) {
-                        Ok(()) => Ok(ActionResult {
-                            output: format!("Cancelled agent: {}", agent_id),
-                            done: false,
-                        }),
-                        Err(e) => Ok(ActionResult {
-                            output: format!("Failed to cancel: {}", e),
-                            done: false,
-                        }),
-                    }
-                }
-            }
-            SgrAction::Api {
-                action,
-                api_name,
-                query,
-                endpoint,
-                params,
-                body,
-            } => {
-                use sgr_agent::openapi;
-                let mut reg = self.api_registry.lock().await;
-                match action.as_str() {
-                    "list" => {
-                        let apis = reg.list_apis();
-                        let mut out = String::new();
-                        if apis.is_empty() {
-                            out.push_str("No APIs loaded yet.\n");
-                        } else {
-                            out.push_str("Loaded APIs:\n");
-                            for name in &apis {
-                                out.push_str(&format!(
-                                    "  {} ({} endpoints)\n",
-                                    name,
-                                    reg.endpoint_count(name)
-                                ));
-                            }
-                        }
-                        out.push_str("\nAvailable to load:\n");
-                        for spec in openapi::load_api_registry() {
-                            out.push_str(&format!("  {} — {}\n", spec.name, spec.description));
-                        }
-                        Ok(ActionResult {
-                            output: out,
-                            done: false,
-                        })
-                    }
-                    "load" => {
-                        let name = api_name.as_deref().unwrap_or("github");
-                        // Skip if already loaded
-                        let existing = reg.endpoint_count(name);
-                        if existing > 0 {
-                            return Ok(ActionResult {
-                                output: format!(
-                                    "{} API ALREADY loaded ({} endpoints). Do NOT call load again.\n\
-                                     Next step: use api action=search api_name={} query=\"your search\"",
-                                    name, existing, name
-                                ),
-                                done: false,
-                            });
-                        }
-                        match reg.load_popular(name).await {
-                            Ok(count) => Ok(ActionResult {
-                                output: format!(
-                                    "Loaded {} API: {} endpoints.\n\
-                                     Next step: use api action=search api_name={} query=\"your search\"",
-                                    name, count, name
-                                ),
-                                done: false,
-                            }),
-                            Err(e) => {
-                                // Show description from registry — may contain setup hints
-                                let hint = openapi::find_popular(name)
-                                    .map(|a| format!("\nHint: {}", a.description))
-                                    .unwrap_or_default();
-                                Ok(ActionResult {
-                                    output: format!("Failed to load {}: {}{}", name, e, hint),
-                                    done: false,
-                                })
-                            }
-                        }
-                    }
-                    "search" => {
-                        let name = api_name.as_deref().unwrap_or("github");
-                        let q = query.as_deref().unwrap_or("");
-                        if reg.endpoint_count(name) == 0 {
-                            // Auto-load if not loaded yet
-                            if let Err(e) = reg.load_popular(name).await {
-                                return Ok(ActionResult {
-                                    output: format!("Failed to auto-load {}: {}", name, e),
-                                    done: false,
-                                });
-                            }
-                        }
-                        let results = reg.search(name, q, 10);
-                        let out = openapi::format_results(&results);
-                        Ok(ActionResult {
-                            output: format!("Search '{}' in {}:\n{}", q, name, out),
-                            done: false,
-                        })
-                    }
-                    "call" => {
-                        let name = api_name.as_deref().unwrap_or("github");
-                        let ep = endpoint.as_deref().unwrap_or("");
-                        if ep.is_empty() {
-                            return Ok(ActionResult {
-                                output: "Missing 'endpoint' param. Use api search first to find endpoint name.".into(),
-                                done: false,
-                            });
-                        }
-                        // Parse params from "key=val,key2=val2" string
-                        let param_map: std::collections::HashMap<String, String> = params
-                            .as_deref()
-                            .unwrap_or("")
-                            .split(',')
-                            .filter(|s| !s.is_empty())
-                            .filter_map(|pair| {
-                                let mut parts = pair.splitn(2, '=');
-                                let key = parts.next()?.trim().to_string();
-                                let val = parts.next()?.trim().to_string();
-                                Some((key, val))
-                            })
-                            .collect();
-
-                        // Parse body: explicit JSON string, or auto-build from params for POST
-                        let body_val: Option<serde_json::Value> = body
-                            .as_deref()
-                            .filter(|s| !s.is_empty())
-                            .and_then(|s| serde_json::from_str(s).ok())
-                            .or_else(|| {
-                                // For POST/PUT/PATCH: if no body but has params, send params as JSON body
-                                let ep_obj = reg.find_endpoint(name, ep)?;
-                                let method = ep_obj.method.as_str();
-                                if matches!(method, "POST" | "PUT" | "PATCH")
-                                    && !param_map.is_empty()
-                                {
-                                    // Separate path params from body params
-                                    let path_params: std::collections::HashSet<&str> = ep_obj
-                                        .params
-                                        .iter()
-                                        .filter(|p| {
-                                            p.location == sgr_agent::openapi::ParamLocation::Path
-                                        })
-                                        .map(|p| p.name.as_str())
-                                        .collect();
-                                    let body_params: serde_json::Map<String, serde_json::Value> =
-                                        param_map
-                                            .iter()
-                                            .filter(|(k, _)| !path_params.contains(k.as_str()))
-                                            .map(|(k, v)| {
-                                                (k.clone(), serde_json::Value::String(v.clone()))
-                                            })
-                                            .collect();
-                                    if !body_params.is_empty() {
-                                        return Some(serde_json::Value::Object(body_params));
-                                    }
-                                }
-                                None
-                            });
-
-                        match reg.call(name, ep, &param_map, body_val.as_ref()).await {
-                            Ok(response) => {
-                                // Truncate large responses
-                                let out = if response.len() > 8000 {
-                                    format!(
-                                        "{}...\n\n(truncated, {} bytes total)",
-                                        &response[..8000],
-                                        response.len()
-                                    )
-                                } else {
-                                    response
-                                };
-                                Ok(ActionResult {
-                                    output: out,
-                                    done: false,
-                                })
-                            }
-                            Err(e) => Ok(ActionResult {
-                                output: format!("API call failed: {}", e),
-                                done: false,
-                            }),
-                        }
-                    }
-                    other => Ok(ActionResult {
-                        output: format!(
-                            "Unknown api action: '{}'. Use: load, search, call, list",
-                            other
-                        ),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::DelegateTask {
-                agent,
-                task,
-                task_path,
-                cwd,
-            } => {
-                let delegate_agent = match DelegateAgent::from_name(agent) {
-                    Some(a) => a,
-                    None => {
-                        return Ok(ActionResult {
-                            output: format!(
-                                "Unknown delegate agent: '{}'. Use: claude, gemini, codex, opencode, rust-code",
-                                agent
-                            ),
-                            done: false,
-                        });
-                    }
-                };
-                let work_dir = cwd
-                    .as_ref()
-                    .map(|p| std::path::PathBuf::from(self.resolve_path(p)))
-                    .unwrap_or_else(|| self.cwd.lock().unwrap().clone());
-
-                let mut mgr = self.delegate_mgr.lock().await;
-                match mgr
-                    .spawn(
-                        delegate_agent,
-                        task.as_deref(),
-                        task_path.as_deref(),
-                        &work_dir,
-                    )
-                    .await
-                {
-                    Ok(id) => {
-                        let label = task_path
-                            .as_deref()
-                            .unwrap_or(task.as_deref().unwrap_or("(no task)"));
-                        Ok(ActionResult {
-                            output: format!(
-                                "Delegated to {} (id: {})\nTask: {}\nCwd: {}\n\n\
-                                 Use delegate_status to check progress, delegate_result to get output.",
-                                agent,
-                                id,
-                                label,
-                                work_dir.display()
-                            ),
-                            done: false,
-                        })
-                    }
-                    Err(e) => Ok(ActionResult {
-                        output: format!("Failed to delegate: {}", e),
-                        done: false,
-                    }),
-                }
-            }
-            SgrAction::DelegateStatus { id } => {
-                let mgr = self.delegate_mgr.lock().await;
-                if let Some(id) = id {
-                    match mgr.status(id).await {
-                        Some((status, elapsed)) => Ok(ActionResult {
-                            output: format!("[{}] {} ({}s elapsed)", id, status, elapsed.as_secs()),
-                            done: false,
-                        }),
-                        None => Ok(ActionResult {
-                            output: format!("Delegate '{}' not found", id),
-                            done: false,
-                        }),
-                    }
-                } else {
-                    let all = mgr.status_all().await;
-                    if all.is_empty() {
-                        return Ok(ActionResult {
-                            output: "No delegates running.".into(),
-                            done: false,
-                        });
-                    }
-                    let output = all
-                        .iter()
-                        .map(|(id, agent, status, elapsed)| {
-                            format!("[{}] {} — {} ({}s)", id, agent, status, elapsed.as_secs())
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    Ok(ActionResult {
-                        output,
-                        done: false,
-                    })
-                }
-            }
-            SgrAction::DelegateResult { id } => {
-                let mgr = self.delegate_mgr.lock().await;
-                match mgr.result(id).await {
-                    Ok(output) => Ok(ActionResult {
-                        output: truncate_output(&format!("[{}] result:\n{}", id, output)),
-                        done: false,
-                    }),
-                    Err(e) => Ok(ActionResult {
-                        output: format!("Error getting result for {}: {}", id, e),
-                        done: false,
-                    }),
-                }
-            }
+            Err(e) => Err(anyhow::anyhow!("{}", e)),
         }
     }
+}
+
+/// Convert an SgrAction enum variant into (tool_name, serde_json::Value args).
+/// This bridges the legacy SgrAction wire format with the Tool trait dispatch.
+fn action_to_tool_call(action: &SgrAction) -> (String, serde_json::Value) {
+    // Serialize via serde -- SgrAction is tagged with #[serde(tag = "tool_name")]
+    // so serializing gives us {"tool_name": "read_file", "path": "...", ...}
+    // We strip "tool_name" to get pure args.
+    let mut val = serde_json::to_value(action).unwrap_or_default();
+    let tool_name = val
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    if let Some(obj) = val.as_object_mut() {
+        obj.remove("tool_name");
+    }
+    (tool_name, val)
 }
 
 /// SgrAgent implementation — used by run_loop_stream in headless mode.
@@ -1618,11 +688,10 @@ impl SgrAgent for Agent {
             .any(|a| matches!(a, Action::Finish { .. } | Action::AskUser { .. }));
 
         let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
-        let mcp_names: Vec<&str> = self
-            .mcp
-            .as_ref()
-            .map(|m| m.server_names())
-            .unwrap_or_default();
+        let mcp_names: Vec<&str> = match self.mcp.as_ref().as_ref() {
+            Some(m) => m.server_names(),
+            None => vec![],
+        };
 
         let ctx = HintContext {
             intent: self.intent,
@@ -1812,11 +881,10 @@ impl SgrAgentStream for Agent {
                 .any(|a| matches!(a, Action::Finish { .. } | Action::AskUser { .. }));
 
             let action_kinds: Vec<ActionKind> = step.actions.iter().map(action_kind).collect();
-            let mcp_names: Vec<&str> = self
-                .mcp
-                .as_ref()
-                .map(|m| m.server_names())
-                .unwrap_or_default();
+            let mcp_names: Vec<&str> = match self.mcp.as_ref().as_ref() {
+                Some(m) => m.server_names(),
+                None => vec![],
+            };
 
             let ctx = HintContext {
                 intent: self.intent,

@@ -3,6 +3,7 @@ pub mod app;
 pub mod backend;
 pub mod config;
 pub mod preview;
+pub mod rc_state;
 pub mod tools;
 pub mod tui;
 
