@@ -42,3 +42,28 @@ impl<B: FileBackend> Tool for MoveTool<B> {
         Ok(ToolOutput::text(format!("Moved {} → {}", a.from, a.to)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_move_file() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("old.txt", "data");
+        let tool = MoveTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(
+                serde_json::json!({"from": "old.txt", "to": "new.txt"}),
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert!(result.content.contains("Moved old.txt"));
+        assert!(!fs.exists("old.txt"));
+        assert_eq!(fs.content("new.txt").unwrap(), "data");
+    }
+}

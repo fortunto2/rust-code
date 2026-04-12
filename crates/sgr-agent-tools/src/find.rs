@@ -64,3 +64,26 @@ impl<B: FileBackend> Tool for FindTool<B> {
             .map_err(backend_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_find_by_name() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("src/main.rs", "fn main() {}");
+        fs.add_file("src/lib.rs", "pub mod foo;");
+        fs.add_file("readme.md", "hi");
+        let tool = FindTool(fs.clone());
+        let ctx = AgentContext::new();
+        let result = tool
+            .execute_readonly(serde_json::json!({"root": "/", "name": "main"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("main.rs"));
+        assert!(!result.content.contains("lib.rs"));
+    }
+}

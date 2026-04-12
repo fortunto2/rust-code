@@ -78,3 +78,39 @@ impl<B: FileBackend> Tool for ReadAllTool<B> {
         Ok(ToolOutput::text(output))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_read_all_returns_all_files() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("inbox/msg1.txt", "hello");
+        fs.add_file("inbox/msg2.txt", "world");
+        let tool = ReadAllTool(fs.clone());
+        let ctx = AgentContext::new();
+        let result = tool
+            .execute_readonly(serde_json::json!({"path": "inbox"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("inbox/msg1.txt"));
+        assert!(result.content.contains("hello"));
+        assert!(result.content.contains("inbox/msg2.txt"));
+        assert!(result.content.contains("world"));
+    }
+
+    #[tokio::test]
+    async fn test_read_all_empty_dir() {
+        let fs = Arc::new(MockFs::new());
+        let tool = ReadAllTool(fs.clone());
+        let ctx = AgentContext::new();
+        let result = tool
+            .execute_readonly(serde_json::json!({"path": "empty"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("no files found"));
+    }
+}

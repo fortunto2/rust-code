@@ -83,3 +83,45 @@ impl<B: FileBackend> Tool for WriteTool<B> {
         Ok(ToolOutput::text(msg))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_write_new_file() {
+        let fs = Arc::new(MockFs::new());
+        let tool = WriteTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": "out.txt", "content": "hello"}),
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert!(result.content.contains("Written to out.txt"));
+        assert_eq!(fs.content("out.txt").unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_write_json_repair() {
+        let fs = Arc::new(MockFs::new());
+        let tool = WriteTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        // Broken JSON: missing closing brace
+        let result = tool
+            .execute(
+                serde_json::json!({"path": "data.json", "content": "{\"key\": \"value\""}),
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert!(result.content.contains("Written to data.json"));
+        let stored = fs.content("data.json").unwrap();
+        // Repaired JSON should be valid
+        assert!(serde_json::from_str::<serde_json::Value>(&stored).is_ok());
+    }
+}

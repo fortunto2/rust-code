@@ -37,3 +37,22 @@ impl<B: FileBackend> Tool for MkDirTool<B> {
         Ok(ToolOutput::text(format!("Created directory {}", a.path)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_mkdir_no_error() {
+        let fs = Arc::new(MockFs::new());
+        let tool = MkDirTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(serde_json::json!({"path": "new_dir"}), &mut ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("Created directory new_dir"));
+    }
+}

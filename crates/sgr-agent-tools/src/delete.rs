@@ -70,3 +70,53 @@ impl<B: FileBackend> Tool for DeleteTool<B> {
         Ok(ToolOutput::text(out))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_single_delete() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("tmp.txt", "bye");
+        let tool = DeleteTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(serde_json::json!({"path": "tmp.txt"}), &mut ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("Deleted tmp.txt"));
+        assert!(!fs.exists("tmp.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_delete() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("a.txt", "1");
+        fs.add_file("b.txt", "2");
+        let tool = DeleteTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(serde_json::json!({"paths": ["a.txt", "b.txt"]}), &mut ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("Deleted a.txt"));
+        assert!(result.content.contains("Deleted b.txt"));
+        assert!(!fs.exists("a.txt"));
+        assert!(!fs.exists("b.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent() {
+        let fs = Arc::new(MockFs::new());
+        let tool = DeleteTool(fs.clone());
+        let mut ctx = AgentContext::new();
+        let result = tool
+            .execute(serde_json::json!({"path": "ghost.txt"}), &mut ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("FAILED ghost.txt"));
+    }
+}

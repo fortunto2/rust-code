@@ -55,3 +55,27 @@ impl<B: FileBackend> Tool for ListTool<B> {
             .map_err(backend_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock_fs::MockFs;
+    use sgr_agent_core::agent_tool::Tool;
+
+    #[tokio::test]
+    async fn test_list_directory() {
+        let fs = Arc::new(MockFs::new());
+        fs.add_file("docs/a.txt", "aaa");
+        fs.add_file("docs/b.txt", "bbb");
+        fs.add_file("src/main.rs", "fn main() {}");
+        let tool = ListTool(fs.clone());
+        let ctx = AgentContext::new();
+        let result = tool
+            .execute_readonly(serde_json::json!({"path": "docs"}), &ctx)
+            .await
+            .unwrap();
+        assert!(result.content.contains("a.txt"));
+        assert!(result.content.contains("b.txt"));
+        assert!(!result.content.contains("main.rs"));
+    }
+}

@@ -5,11 +5,18 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// Modifier that a tool can return to change agent runtime behavior.
+///
+/// Attach to `ToolOutput` via `.with_modifier()`. The agent loop applies
+/// these after tool execution — injecting system messages, adjusting token limits, etc.
 #[derive(Debug, Clone, Default)]
 pub struct ContextModifier {
+    /// Inject a message into context for the next LLM call.
     pub system_injection: Option<String>,
+    /// Override max_tokens for subsequent calls.
     pub max_tokens_override: Option<u32>,
+    /// Add key-value pairs to `AgentContext.custom`.
     pub custom_context: Vec<(String, serde_json::Value)>,
+    /// Adjust remaining max_steps (positive = more steps allowed).
     pub max_steps_delta: Option<i32>,
 }
 
@@ -51,6 +58,9 @@ impl ContextModifier {
 }
 
 /// Output from a tool execution.
+///
+/// Construct via `ToolOutput::text("result")`, `ToolOutput::done("finished")`,
+/// or `ToolOutput::waiting("question for user")`.
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
     pub content: String,
@@ -120,24 +130,39 @@ impl ToolError {
     }
 }
 
-/// Parse JSON args into a typed struct.
+/// Parse JSON args into a typed struct. Use inside `Tool::execute`.
+///
+/// ```rust,ignore
+/// let args: MyArgs = parse_args(&args)?;
+/// ```
 pub fn parse_args<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
     serde_json::from_value(args.clone()).map_err(|e| ToolError::InvalidArgs(e.to_string()))
 }
 
 /// A tool that an agent can invoke.
+///
+/// Implement this trait for each capability you want to expose to the LLM agent.
+/// Tools are registered in a `ToolRegistry` and dispatched by the agent loop.
+///
+/// Read-only tools (`is_read_only() -> true`) can execute in parallel.
+/// Write tools execute sequentially with exclusive `&mut AgentContext`.
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
+    /// Unique tool name (used as discriminator in LLM function calling).
     fn name(&self) -> &str;
+    /// Human-readable description shown to the LLM.
     fn description(&self) -> &str;
 
+    /// System tools are always visible (not subject to progressive discovery).
     fn is_system(&self) -> bool {
         false
     }
+    /// Read-only tools can execute in parallel via `execute_readonly`.
     fn is_read_only(&self) -> bool {
         false
     }
 
+    /// JSON Schema for the tool's parameters (generated via `json_schema_for::<Args>()`).
     fn parameters_schema(&self) -> Value;
 
     async fn execute(
