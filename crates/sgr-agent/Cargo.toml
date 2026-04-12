@@ -75,7 +75,7 @@ anyhow = "1"
 
 [[example]]
 name = "agent_demo"
-required-features = ["agent", "gemini"]
+required-features = ["agent", "tools-all", "tools-local-fs"]
 
 [[example]]
 name = "oxide_agent_test"

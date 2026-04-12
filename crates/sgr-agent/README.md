@@ -48,10 +48,13 @@ Build autonomous agents that reason and act.
 # Cargo.toml
 
 # Client only (structured output + function calling)
-sgr-agent = "0.4"
+sgr-agent = "0.7"
 
 # Full agent framework
-sgr-agent = { version = "0.2", features = ["agent"] }
+sgr-agent = { version = "0.7", features = ["agent"] }
+
+# Agent + file tools + shell + patch
+sgr-agent = { version = "0.7", features = ["tools-all"] }
 ```
 
 ### Structured output (client only)
@@ -609,7 +612,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sgr-agent = { version = "0.2", features = ["agent", "gemini"] }
+sgr-agent = { version = "0.7", features = ["agent", "tools-all"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
