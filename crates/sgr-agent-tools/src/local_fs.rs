@@ -8,15 +8,28 @@
 //! let read = ReadTool(fs.clone());
 //! ```
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 use crate::backend::FileBackend;
 
+/// Known binary extensions — skip during search to avoid wasted I/O.
+const BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "mp4", "mov", "avi", "mkv", "mp3",
+    "wav", "flac", "ogg", "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "pdf", "doc", "docx",
+    "xls", "xlsx", "ppt", "pptx", "onnx", "bin", "wasm", "so", "dylib", "dll", "exe", "o", "a",
+    "pyc", "class", "jar", "db", "sqlite", "sqlite3",
+];
+
+/// Max recursion depth for find (prevent runaway on deeply nested dirs).
+const MAX_FIND_DEPTH: usize = 20;
+
 /// Local filesystem backend rooted at a workspace directory.
 ///
-/// All paths are resolved relative to `root`. Absolute paths are rejected.
+/// All paths are resolved relative to `root`. Path traversal (`..`) and symlink
+/// escapes are blocked.
 pub struct LocalFs {
     root: PathBuf,
 }
@@ -27,46 +40,48 @@ impl LocalFs {
     }
 
     /// Resolve a workspace-relative path to absolute, preventing traversal outside root.
+    /// Checks both literal `..` and post-canonicalization containment (symlink safety).
     fn resolve(&self, path: &str) -> Result<PathBuf> {
         let path = path.trim_start_matches('/');
         if path.contains("..") {
             bail!("path traversal blocked: {path}");
         }
-        Ok(self.root.join(path))
+        let full = self.root.join(path);
+        // For existing paths, canonicalize and verify containment (catches symlinks).
+        // For new paths (write/mkdir), canonicalize parent.
+        let canonical = std::fs::canonicalize(&full).or_else(|_| {
+            if let Some(parent) = full.parent() {
+                std::fs::canonicalize(parent).map(|p| p.join(full.file_name().unwrap_or_default()))
+            } else {
+                Ok(full.clone())
+            }
+        }).unwrap_or_else(|_| full.clone());
+        let root_canonical = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        if !canonical.starts_with(&root_canonical) {
+            bail!("path escapes workspace root: {path}");
+        }
+        Ok(full)
     }
 }
 
 #[async_trait::async_trait]
 impl FileBackend for LocalFs {
-    async fn read(
-        &self,
-        path: &str,
-        number: bool,
-        start_line: i32,
-        end_line: i32,
-    ) -> Result<String> {
+    async fn read(&self, path: &str, number: bool, start_line: i32, end_line: i32) -> Result<String> {
         let full = self.resolve(path)?;
         let content = tokio::fs::read_to_string(&full)
             .await
             .with_context(|| format!("read {}", full.display()))?;
 
         let lines: Vec<&str> = content.lines().collect();
-        let start = if start_line > 0 {
-            (start_line - 1) as usize
-        } else {
-            0
-        };
-        let end = if end_line > 0 {
-            end_line as usize
-        } else {
-            lines.len()
-        };
+        let start = if start_line > 0 { (start_line - 1) as usize } else { 0 };
+        let end = if end_line > 0 { end_line as usize } else { lines.len() };
         let end = end.min(lines.len());
 
         let mut out = String::new();
         for (i, line) in lines[start..end].iter().enumerate() {
             if number {
-                out.push_str(&format!("{}\t{}\n", start + i + 1, line));
+                use std::fmt::Write;
+                let _ = write!(out, "{}\t{}\n", start + i + 1, line);
             } else {
                 out.push_str(line);
                 out.push('\n');
@@ -80,9 +95,7 @@ impl FileBackend for LocalFs {
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-
         if start_line > 0 && end_line > 0 {
-            // Ranged write: replace lines
             let existing = tokio::fs::read_to_string(&full).await.unwrap_or_default();
             let mut lines: Vec<&str> = existing.lines().collect();
             let start = (start_line - 1) as usize;
@@ -106,13 +119,16 @@ impl FileBackend for LocalFs {
     async fn search(&self, root: &str, pattern: &str, limit: i32) -> Result<String> {
         let dir = self.resolve(root)?;
         let re = regex::Regex::new(pattern).with_context(|| format!("invalid regex: {pattern}"))?;
-
-        let mut results = String::new();
-        let mut count = 0;
         let max = if limit > 0 { limit as usize } else { 500 };
+        let ws_root = self.root.clone();
 
-        search_dir_recursive(&dir, &self.root, &re, max, &mut count, &mut results)?;
-        Ok(results)
+        tokio::task::spawn_blocking(move || {
+            let mut results = String::new();
+            let mut count = 0;
+            search_dir_recursive(&dir, &ws_root, &re, max, &mut count, &mut results)?;
+            Ok(results)
+        })
+        .await?
     }
 
     async fn list(&self, path: &str) -> Result<String> {
@@ -142,9 +158,15 @@ impl FileBackend for LocalFs {
 
     async fn tree(&self, root: &str, level: i32) -> Result<String> {
         let dir = self.resolve(root)?;
-        let mut out = String::new();
-        tree_recursive(&dir, &self.root, "", level as usize, 0, &mut out)?;
-        Ok(out)
+        let ws_root = self.root.clone();
+        let max_depth = level as usize;
+
+        tokio::task::spawn_blocking(move || {
+            let mut out = String::new();
+            tree_recursive(&dir, &ws_root, "", max_depth, 0, &mut out)?;
+            Ok(out)
+        })
+        .await?
     }
 
     async fn context(&self) -> Result<String> {
@@ -172,13 +194,36 @@ impl FileBackend for LocalFs {
     async fn find(&self, root: &str, name: &str, file_type: &str, limit: i32) -> Result<String> {
         let dir = self.resolve(root)?;
         let max = if limit > 0 { limit as usize } else { 100 };
-        let mut results = Vec::new();
-        find_recursive(&dir, &self.root, name, file_type, max, &mut results)?;
-        Ok(results.join("\n"))
+        let ws_root = self.root.clone();
+        let name = name.to_string();
+        let file_type = file_type.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let mut results = Vec::new();
+            find_recursive(&dir, &ws_root, &name, &file_type, max, MAX_FIND_DEPTH, 0, &mut results)?;
+            Ok(results.join("\n"))
+        })
+        .await?
     }
 }
 
-/// Recursive grep: search files for regex matches.
+/// Read directory entries, skipping hidden (dot-prefixed) entries.
+fn read_dir_visible(dir: &Path) -> Result<Vec<std::fs::DirEntry>> {
+    Ok(std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .collect())
+}
+
+/// Check if file extension is known binary.
+fn is_binary_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| BINARY_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Recursive grep: search files for regex matches using BufReader (no full-file read).
 fn search_dir_recursive(
     dir: &Path,
     root: &Path,
@@ -187,27 +232,21 @@ fn search_dir_recursive(
     count: &mut usize,
     out: &mut String,
 ) -> Result<()> {
-    let entries = std::fs::read_dir(dir)?;
-    for entry in entries.flatten() {
-        if *count >= max {
-            return Ok(());
-        }
+    for entry in read_dir_visible(dir)? {
+        if *count >= max { return Ok(()); }
         let path = entry.path();
         if path.is_dir() {
-            // Skip hidden dirs
-            if entry.file_name().to_string_lossy().starts_with('.') {
-                continue;
-            }
             search_dir_recursive(&path, root, re, max, count, out)?;
-        } else if path.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+        } else if path.is_file() && !is_binary_ext(&path) {
+            if let Ok(file) = std::fs::File::open(&path) {
+                let reader = BufReader::new(file);
                 let rel = path.strip_prefix(root).unwrap_or(&path);
-                for (i, line) in content.lines().enumerate() {
-                    if *count >= max {
-                        return Ok(());
-                    }
-                    if re.is_match(line) {
-                        out.push_str(&format!("{}:{}:{}\n", rel.display(), i + 1, line));
+                for (i, line_result) in reader.lines().enumerate() {
+                    if *count >= max { return Ok(()); }
+                    let Ok(line) = line_result else { break }; // non-UTF8 → likely binary, stop
+                    if re.is_match(&line) {
+                        use std::fmt::Write;
+                        let _ = write!(out, "{}:{}:{}\n", rel.display(), i + 1, line);
                         *count += 1;
                     }
                 }
@@ -226,14 +265,9 @@ fn tree_recursive(
     depth: usize,
     out: &mut String,
 ) -> Result<()> {
-    if max_depth > 0 && depth >= max_depth {
-        return Ok(());
-    }
+    if max_depth > 0 && depth >= max_depth { return Ok(()); }
 
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-        .collect();
+    let mut entries = read_dir_visible(dir)?;
     entries.sort_by_key(|e| e.file_name());
 
     for (i, entry) in entries.iter().enumerate() {
@@ -244,51 +278,43 @@ fn tree_recursive(
 
         if depth == 0 && i == 0 {
             let rel = dir.strip_prefix(root).unwrap_or(dir);
-            out.push_str(&format!("{}/\n", rel.display()));
+            use std::fmt::Write;
+            let _ = write!(out, "{}/\n", rel.display());
         }
 
-        out.push_str(&format!(
-            "{prefix}{connector}{}{}\n",
-            name,
-            if is_dir { "/" } else { "" }
-        ));
+        use std::fmt::Write;
+        let _ = write!(out, "{prefix}{connector}{}{}\n", name, if is_dir { "/" } else { "" });
 
         if is_dir {
             let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-            tree_recursive(
-                &entry.path(),
-                root,
-                &child_prefix,
-                max_depth,
-                depth + 1,
-                out,
-            )?;
+            tree_recursive(&entry.path(), root, &child_prefix, max_depth, depth + 1, out)?;
         }
     }
     Ok(())
 }
 
-/// Recursive find: match files/dirs by name pattern.
+/// Recursive find: match files/dirs by name pattern, with depth limit.
 fn find_recursive(
     dir: &Path,
     root: &Path,
     pattern: &str,
     file_type: &str,
     max: usize,
+    max_depth: usize,
+    depth: usize,
     results: &mut Vec<String>,
 ) -> Result<()> {
-    let entries = std::fs::read_dir(dir)?;
-    for entry in entries.flatten() {
-        if results.len() >= max {
-            return Ok(());
-        }
+    if max_depth > 0 && depth >= max_depth { return Ok(()); }
+
+    for entry in read_dir_visible(dir)? {
+        if results.len() >= max { return Ok(()); }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
 
         let type_match = match file_type {
-            "files" => !is_dir,
-            "dirs" => is_dir,
+            "files" | "f" => !is_dir,
+            "dirs" | "d" => is_dir,
             _ => true,
         };
 
@@ -297,8 +323,8 @@ fn find_recursive(
             results.push(rel.display().to_string());
         }
 
-        if is_dir && !name.starts_with('.') {
-            find_recursive(&path, root, pattern, file_type, max, results)?;
+        if is_dir {
+            find_recursive(&path, root, pattern, file_type, max, max_depth, depth + 1, results)?;
         }
     }
     Ok(())
@@ -315,27 +341,19 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
 
         let fs = LocalFs::new(&tmp);
+        fs.write("test.txt", "line1\nline2\nline3\n", 0, 0).await.unwrap();
 
-        // Write
-        fs.write("test.txt", "line1\nline2\nline3\n", 0, 0)
-            .await
-            .unwrap();
-
-        // Read full
         let content = fs.read("test.txt", false, 0, 0).await.unwrap();
         assert!(content.contains("line1"));
         assert!(content.contains("line3"));
 
-        // Read with line numbers
         let numbered = fs.read("test.txt", true, 0, 0).await.unwrap();
         assert!(numbered.contains("1\tline1"));
 
-        // Read range
         let range = fs.read("test.txt", false, 2, 2).await.unwrap();
         assert!(range.contains("line2"));
         assert!(!range.contains("line1"));
 
-        // Delete
         fs.delete("test.txt").await.unwrap();
         assert!(fs.read("test.txt", false, 0, 0).await.is_err());
 
@@ -420,6 +438,46 @@ mod tests {
         assert!(fs.read("orig.txt", false, 0, 0).await.is_err());
         let content = fs.read("newdir/moved.txt", false, 0, 0).await.unwrap();
         assert!(content.contains("data"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn search_skips_binary() {
+        let tmp = std::env::temp_dir().join("sgr_localfs_test7");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("data.txt"), "needle here").unwrap();
+        std::fs::write(tmp.join("image.png"), "needle hidden in binary").unwrap();
+
+        let fs = LocalFs::new(&tmp);
+        let results = fs.search("/", "needle", 10).await.unwrap();
+        assert!(results.contains("data.txt"));
+        assert!(!results.contains("image.png"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn hidden_dirs_skipped() {
+        let tmp = std::env::temp_dir().join("sgr_localfs_test8");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".hidden")).unwrap();
+        std::fs::create_dir_all(tmp.join("visible")).unwrap();
+        std::fs::write(tmp.join(".hidden/secret.txt"), "secret").unwrap();
+        std::fs::write(tmp.join("visible/public.txt"), "public").unwrap();
+
+        let fs = LocalFs::new(&tmp);
+
+        // search skips hidden
+        let results = fs.search("/", ".", 100).await.unwrap();
+        assert!(!results.contains(".hidden"));
+        assert!(results.contains("visible"));
+
+        // find skips hidden
+        let found = fs.find("/", "txt", "", 100).await.unwrap();
+        assert!(!found.contains(".hidden"));
+        assert!(found.contains("visible"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
