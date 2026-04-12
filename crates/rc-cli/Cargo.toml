@@ -23,12 +23,9 @@ serde.workspace = true
 serde_json.workspace = true
 ratatui = "0.29.0"
 syntect = "5.3.0"
-syntect-tui = "3.0.6"
-tokio-util = "0.7.18"
 textwrap = "0.16.2"
 tracing.workspace = true
 ignore.workspace = true
-nucleo.workspace = true
 nucleo-matcher.workspace = true
 rmcp.workspace = true
 solograph = { version = "0.1.0", path = "../solograph" }
