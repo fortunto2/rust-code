@@ -292,6 +292,7 @@ impl Agent {
             .register(editor_tool::OpenEditorTool)
             .register(finish_tool::AskUserTool)
             .register(finish_tool::FinishTool)
+            .register(sgr_agent::tools::UpdatePlanTool)
             .register(mcp_tool::McpCallTool { mcp })
             .register(memory_tool::MemoryTool)
             .register(project_tools::ProjectMapTool)
@@ -817,6 +818,7 @@ impl SgrAgent for Agent {
             }
             Action::DelegateStatus { id } => format!("delegate_status:{:?}", id),
             Action::DelegateResult { id } => format!("delegate_result:{}", id),
+            Action::UpdatePlan { .. } => "update_plan".to_string(),
         }
     }
 }
@@ -839,7 +841,8 @@ pub fn action_kind(action: &Action) -> ActionKind {
         Action::AskUser { .. }
         | Action::Finish { .. }
         | Action::Memory { .. }
-        | Action::Task { .. } => ActionKind::Plan,
+        | Action::Task { .. }
+        | Action::UpdatePlan { .. } => ActionKind::Plan,
         Action::McpCall { .. } => ActionKind::External,
         Action::SpawnAgent { .. }
         | Action::WaitAgents { .. }

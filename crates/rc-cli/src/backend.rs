@@ -39,6 +39,12 @@ The `apply_patch` tool uses a patch format:
 - Use space prefix for unchanged context lines, `-` for removals, `+` for additions
 - File paths are relative to working directory
 
+## Planning
+For complex tasks (3+ steps), call `update_plan` FIRST to record your approach:
+- Break the task into steps with status: pending, in_progress, completed
+- Update the plan as you progress (mark steps completed, add new ones)
+- Plan is saved to plan.md for the user to track progress
+
 ## Rules
 - Act directly — don't waste steps on unnecessary setup.
 - Read files before editing. Verify changes with git_status or tests.
@@ -202,6 +208,12 @@ pub enum SgrAction {
     },
     #[serde(rename = "apply_patch")]
     ApplyPatch { patch: String },
+    #[serde(rename = "update_plan")]
+    UpdatePlan {
+        #[serde(default)]
+        explanation: Option<String>,
+        plan: Vec<serde_json::Value>,
+    },
     #[serde(rename = "spawn_agent")]
     SpawnAgent {
         role: String,
@@ -815,6 +827,15 @@ fn tool_call_to_sgr_action(tc: &sgr_agent::ToolCall) -> Option<SgrAction> {
             notes: s_opt("notes"),
         }),
         "apply_patch" => Some(SgrAction::ApplyPatch { patch: s("patch") }),
+        "update_plan" => Some(SgrAction::UpdatePlan {
+            explanation: s_opt("explanation"),
+            plan: tc
+                .arguments
+                .get("plan")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+        }),
         "api" => Some(SgrAction::Api {
             action: s("action"),
             api_name: s_opt("api_name"),
