@@ -18,13 +18,20 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::prelude::*;
 
 /// Global session ID for Phoenix session grouping.
-/// Updated per trial via `set_session_id()`, read by LLM clients on every span.
 static SESSION_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+/// Global task ID — set per trial, attached to every LLM span.
+static TASK_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-/// Set the current session ID (e.g. "t16_Nemotron-Ultra_abc123").
-/// Phoenix groups spans by this value in Sessions tab.
+/// Set the current session ID (e.g. "t16_vm-abc123").
 pub fn set_session_id(id: String) {
     if let Ok(mut lock) = SESSION_ID.write() {
+        *lock = Some(id);
+    }
+}
+
+/// Set the current task ID (e.g. "t16"). Attached to every LLM span.
+pub fn set_task_id(id: String) {
+    if let Ok(mut lock) = TASK_ID.write() {
         *lock = Some(id);
     }
 }
@@ -82,13 +89,8 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
 
     // Optional: OTLP batch exporter (LangSmith, Jaeger, Grafana, etc.)
     let otlp_enabled = if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
-        use opentelemetry_otlp::WithHttpConfig;
-        use std::collections::HashMap;
-
-        // Build custom headers: auth + LangSmith project routing
-        let mut headers = HashMap::new();
-
         // Parse OTEL_EXPORTER_OTLP_HEADERS (key=value,key=value)
+        let mut headers = std::collections::HashMap::new();
         if let Ok(raw) = std::env::var("OTEL_EXPORTER_OTLP_HEADERS") {
             for pair in raw.split(',') {
                 if let Some((k, v)) = pair.split_once('=') {
@@ -96,19 +98,19 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
                 }
             }
         }
-
         // LANGSMITH_PROJECT env var → Langsmith-Project header
         if let Ok(project) = std::env::var("LANGSMITH_PROJECT") {
             headers.insert("Langsmith-Project".to_string(), project);
         }
 
+        use opentelemetry_otlp::WithHttpConfig;
         match opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_headers(headers)
             .build()
         {
             Ok(exporter) => {
-                builder = builder.with_batch_exporter(exporter);
+                builder = builder.with_simple_exporter(exporter);
                 let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap();
                 let project = std::env::var("LANGSMITH_PROJECT").unwrap_or_default();
                 eprintln!(
@@ -173,19 +175,170 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
     }
 }
 
-/// Emit a test span to verify OTLP export works.
-pub fn emit_test_span() {
+/// Token usage from an LLM response.
+pub struct LlmUsage {
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub response_model: String,
+}
+
+/// Record a single LLM span with OpenInference (Phoenix) + GenAI (LangSmith) conventions.
+///
+/// All three LLM clients (OxideClient, OxideChatClient, GenaiClient) call this after
+/// receiving a response. One function, one set of attributes, one place to maintain.
+pub fn record_llm_span(
+    span_name: &str,
+    model: &str,
+    input: &str,
+    output: &str,
+    tool_calls: &[(String, String)],
+    usage: &LlmUsage,
+) {
     use opentelemetry::trace::{Span, Tracer, TracerProvider};
+
     let provider = opentelemetry::global::tracer_provider();
-    let tracer = provider.tracer("test");
-    let mut span = tracer.start("test.startup");
+    let tracer = provider.tracer("sgr-agent");
+    let mut span = tracer.start(span_name.to_string());
+
+    let sid = session_id();
+    if let Some(ref s) = sid {
+        span.set_attribute(opentelemetry::KeyValue::new("session.id", s.clone()));
+    }
+    // task_id: explicit > parsed from session_id (part before first '_') > omit
+    let tid = TASK_ID.read().ok().and_then(|l| l.clone()).or_else(|| {
+        sid.as_ref()
+            .and_then(|s| s.split('_').next().map(String::from))
+    });
+    if let Some(t) = tid {
+        span.set_attribute(opentelemetry::KeyValue::new("metadata.task_id", t));
+    }
+
+    // OpenInference conventions (Phoenix)
     span.set_attribute(opentelemetry::KeyValue::new(
         "openinference.span.kind",
-        "CHAIN",
+        "LLM",
     ));
-    span.set_attribute(opentelemetry::KeyValue::new("input.value", "test startup"));
-    span.set_attribute(opentelemetry::KeyValue::new("output.value", "ok"));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.model_name",
+        model.to_string(),
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.prompt",
+        usage.prompt_tokens,
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.completion",
+        usage.completion_tokens,
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "llm.token_count.total",
+        usage.prompt_tokens + usage.completion_tokens,
+    ));
+    if usage.cached_tokens > 0 {
+        span.set_attribute(opentelemetry::KeyValue::new(
+            "llm.token_count.cached",
+            usage.cached_tokens,
+        ));
+    }
+
+    // GenAI conventions (LangSmith)
+    span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.request.model",
+        model.to_string(),
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.response.model",
+        usage.response_model.clone(),
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.usage.prompt_tokens",
+        usage.prompt_tokens,
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "gen_ai.usage.completion_tokens",
+        usage.completion_tokens,
+    ));
+
+    // Input (last user/tool message, truncated)
+    if !input.is_empty() {
+        span.set_attribute(opentelemetry::KeyValue::new(
+            "input.value",
+            input.to_string(),
+        ));
+    }
+
+    // Output: text content or tool calls as JSON
+    let output_display = if !output.is_empty() {
+        serde_json::json!({"role": "assistant", "content": output}).to_string()
+    } else if !tool_calls.is_empty() {
+        let calls: Vec<serde_json::Value> = tool_calls
+            .iter()
+            .map(|(name, args)| {
+                let a = truncate_str(args, 200);
+                serde_json::json!({"name": name, "arguments": a})
+            })
+            .collect();
+        serde_json::json!({"role": "assistant", "tool_calls": calls}).to_string()
+    } else {
+        String::new()
+    };
+    if !output_display.is_empty() {
+        span.set_attribute(opentelemetry::KeyValue::new("output.value", output_display));
+        span.set_attribute(opentelemetry::KeyValue::new(
+            "output.mime_type",
+            "application/json",
+        ));
+    }
+
     span.end();
+}
+
+/// Record a trial result as an OTEL span with metadata attributes.
+///
+/// Creates a lightweight "trial.result" span with score, outcome, task_id, and steps
+/// as span attributes. Phoenix shows these in the Attributes tab and they're searchable.
+pub fn annotate_session(task_id: &str, score: f32, outcome: &str, steps: u32) {
+    use opentelemetry::trace::{Span, Tracer, TracerProvider};
+
+    let provider = opentelemetry::global::tracer_provider();
+    let tracer = provider.tracer("sgr-agent");
+    let mut span = tracer.start("trial.result".to_string());
+
+    if let Some(sid) = session_id() {
+        span.set_attribute(opentelemetry::KeyValue::new("session.id", sid));
+    }
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "openinference.span.kind",
+        "EVALUATOR",
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new("task_id", task_id.to_string()));
+    span.set_attribute(opentelemetry::KeyValue::new("score", score as f64));
+    span.set_attribute(opentelemetry::KeyValue::new("outcome", outcome.to_string()));
+    span.set_attribute(opentelemetry::KeyValue::new("steps", steps as i64));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "input.value",
+        format!("task: {task_id}"),
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "output.value",
+        serde_json::json!({"score": score, "outcome": outcome, "steps": steps}).to_string(),
+    ));
+    span.set_attribute(opentelemetry::KeyValue::new(
+        "output.mime_type",
+        "application/json",
+    ));
+    span.end();
+}
+
+/// Truncate a string to `max_len` bytes, appending "..." if truncated.
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() > max_len {
+        format!("{}...", &s[..max_len])
+    } else {
+        s.to_string()
+    }
 }
 
 /// Must be held alive for the duration of the program.

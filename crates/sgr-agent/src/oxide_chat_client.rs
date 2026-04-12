@@ -11,6 +11,80 @@ use openai_oxide::config::ClientConfig;
 use openai_oxide::types::chat::*;
 use serde_json::Value;
 
+/// Record OTEL span for Chat Completions API call via shared telemetry helper.
+/// AI-NOTE: OxideChatClient is the primary client for Nemotron (Cloudflare Workers AI).
+#[cfg(feature = "telemetry")]
+fn record_chat_otel(
+    model: &str,
+    messages: &[Message],
+    usage: Option<&openai_oxide::types::chat::Usage>,
+    tool_calls: &[ToolCall],
+    text_output: &str,
+) {
+    let (pt, ct, cached) = usage
+        .map(|u| {
+            let pt = u.prompt_tokens.unwrap_or(0);
+            let ct = u.completion_tokens.unwrap_or(0);
+            let cached = u
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
+            (pt, ct, cached)
+        })
+        .unwrap_or((0, 0, 0));
+
+    let input = last_user_content(messages, 500);
+    let output = truncate_str(text_output, 500);
+    let tc: Vec<(String, String)> = tool_calls
+        .iter()
+        .map(|tc| (tc.name.clone(), tc.arguments.to_string()))
+        .collect();
+
+    crate::telemetry::record_llm_span(
+        "chat.completions.api",
+        model,
+        &input,
+        &output,
+        &tc,
+        &crate::telemetry::LlmUsage {
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            cached_tokens: cached,
+            response_model: model.to_string(),
+        },
+    );
+}
+
+#[cfg(not(feature = "telemetry"))]
+fn record_chat_otel(
+    _model: &str,
+    _messages: &[Message],
+    _usage: Option<&openai_oxide::types::chat::Usage>,
+    _tool_calls: &[ToolCall],
+    _text: &str,
+) {
+}
+
+#[cfg(feature = "telemetry")]
+fn last_user_content(messages: &[Message], max_len: usize) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, Role::User | Role::Tool))
+        .map(|m| truncate_str(&m.content, max_len))
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "telemetry")]
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() > max_len {
+        format!("{}...", &s[..max_len])
+    } else {
+        s.to_string()
+    }
+}
+
 /// LlmClient backed by openai-oxide Chat Completions API.
 pub struct OxideChatClient {
     client: OpenAI,
@@ -239,6 +313,13 @@ impl LlmClient for OxideChatClient {
             }
         }
 
+        record_chat_otel(
+            &self.model,
+            messages,
+            response.usage.as_ref(),
+            &tool_calls,
+            &raw_text,
+        );
         Ok((parsed, tool_calls, raw_text))
     }
 
@@ -300,6 +381,7 @@ impl LlmClient for OxideChatClient {
         }
 
         let calls = Self::extract_tool_calls(&response);
+        record_chat_otel(&self.model, messages, response.usage.as_ref(), &calls, "");
         // Don't synthesize finish — empty tool_calls signals completion to ToolCallingAgent.
         Ok(calls)
     }
@@ -320,10 +402,12 @@ impl LlmClient for OxideChatClient {
 
         tracing::info!(model = %response.model, "oxide_chat.complete");
 
-        Ok(response
+        let text = response
             .choices
             .first()
             .and_then(|c| c.message.content.clone())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        record_chat_otel(&self.model, messages, response.usage.as_ref(), &[], &text);
+        Ok(text)
     }
 }

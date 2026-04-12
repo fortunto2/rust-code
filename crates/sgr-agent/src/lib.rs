@@ -115,6 +115,10 @@ pub mod tasks;
 #[cfg(feature = "app-tools")]
 pub mod app_tools;
 
+// Universal file-system tools (behind feature gate)
+#[cfg(feature = "tools")]
+pub use sgr_agent_tools as tools;
+
 pub mod benchmark;
 pub mod evolution;
 pub mod openapi;
@@ -174,7 +178,10 @@ pub use tasks::{
     tasks_dir, tasks_summary, update_status,
 };
 #[cfg(feature = "telemetry")]
-pub use telemetry::{TelemetryGuard, init_telemetry, set_session_id};
+pub use telemetry::{
+    LlmUsage, TelemetryGuard, annotate_session, init_telemetry, record_llm_span, set_session_id,
+    set_task_id,
+};
 
 pub use coerce::coerce_value;
 pub use flexible_parser::{parse_flexible, parse_flexible_coerced};

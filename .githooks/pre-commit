@@ -6,7 +6,7 @@ echo "Running tests..."
 cargo test --workspace --quiet --exclude genai
 
 echo "Running clippy..."
-cargo clippy -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings
+cargo clippy -p sgr-agent-core -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings
 
 echo "Checking format..."
 cargo fmt -p sgr-agent -p sgr-agent-tui -p rust-code -p solograph -- --check

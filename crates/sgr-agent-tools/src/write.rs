@@ -1,0 +1,91 @@
+//! WriteTool — write content to a file with JSON auto-repair.
+//!
+//! Core write logic: JSON repair for .json files via llm_json.
+//! PAC1-specific behavior (outbox injection, README schema validation, workflow guards)
+//! should be added via wrapping or hooks at the call site.
+
+use std::sync::Arc;
+
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::Value;
+use sgr_agent_core::agent_tool::{Tool, ToolError, ToolOutput, parse_args};
+use sgr_agent_core::context::AgentContext;
+use sgr_agent_core::schema::json_schema_for;
+
+use crate::backend::FileBackend;
+use crate::helpers::backend_err;
+
+pub struct WriteTool<B: FileBackend>(pub Arc<B>);
+
+#[derive(Deserialize, JsonSchema)]
+struct WriteArgs {
+    /// File path
+    path: String,
+    /// File content to write
+    content: String,
+    /// Start line for ranged overwrite (1-indexed)
+    #[serde(default)]
+    start_line: i32,
+    /// End line for ranged overwrite
+    #[serde(default)]
+    end_line: i32,
+}
+
+/// Auto-repair broken JSON content via llm_json.
+/// Returns repaired content or original if not JSON / already valid.
+fn maybe_repair_json(path: &str, content: &str) -> String {
+    if !path.ends_with(".json") || path.contains("README") {
+        return content.to_string();
+    }
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(_) => content.to_string(),
+        Err(_) => {
+            let opts = llm_json::RepairOptions::default();
+            match llm_json::repair_json(content, &opts) {
+                Ok(fixed) => {
+                    eprintln!("    sgr-tools: auto-fixed JSON via llm_json in {}", path);
+                    fixed
+                }
+                Err(_) => content.to_string(),
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<B: FileBackend> Tool for WriteTool<B> {
+    fn name(&self) -> &str {
+        "write"
+    }
+    fn description(&self) -> &str {
+        "Write content to a file. Without start_line/end_line: overwrites entire file. \
+         With start_line and end_line: replaces only those lines (like sed). \
+         Example: start_line=5, end_line=7 replaces lines 5-7 with content. \
+         Use read with number=true first to see line numbers."
+    }
+    fn parameters_schema(&self) -> Value {
+        json_schema_for::<WriteArgs>()
+    }
+    async fn execute(&self, args: Value, _ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
+        let a: WriteArgs = parse_args(&args)?;
+        let content = maybe_repair_json(&a.path, &a.content);
+
+        self.0
+            .write(&a.path, &content, a.start_line, a.end_line)
+            .await
+            .map_err(backend_err)?;
+
+        let msg = if a.start_line > 0 && a.end_line > 0 {
+            format!(
+                "Replaced lines {}-{} in {}",
+                a.start_line, a.end_line, a.path
+            )
+        } else if a.start_line > 0 {
+            format!("Replaced from line {} in {}", a.start_line, a.path)
+        } else {
+            format!("Written to {}", a.path)
+        };
+        Ok(ToolOutput::text(msg))
+    }
+}

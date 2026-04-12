@@ -2,7 +2,9 @@
 members = [
     "crates/rc-cli",
     "crates/solograph",
+    "crates/sgr-agent-core",
     "crates/sgr-agent",
+    "crates/sgr-agent-tools",
     "crates/sgr-agent-tui",
     "crates/autoresearch",
 ]

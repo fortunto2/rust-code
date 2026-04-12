@@ -12,22 +12,9 @@ use openai_oxide::config::ClientConfig;
 use openai_oxide::types::responses::*;
 use serde_json::Value;
 
-/// Record OTEL attributes on the current span for Phoenix/OpenInference.
-///
-/// `messages` — input messages (for input.value display in Phoenix).
+/// Record OTEL span for Responses API call via shared telemetry helper.
 #[cfg(feature = "telemetry")]
 fn record_otel_usage(response: &Response, model: &str, messages: &[Message]) {
-    use opentelemetry::trace::{Span, Tracer, TracerProvider};
-
-    let provider = opentelemetry::global::tracer_provider();
-    let tracer = provider.tracer("sgr-agent");
-    let mut otel_span = tracer.start("oxide.responses.api");
-
-    // AI-NOTE: session.id — Phoenix Sessions tab groups spans by this value
-    if let Some(sid) = crate::telemetry::session_id() {
-        otel_span.set_attribute(opentelemetry::KeyValue::new("session.id", sid));
-    }
-
     let pt = response
         .usage
         .as_ref()
@@ -38,7 +25,6 @@ fn record_otel_usage(response: &Response, model: &str, messages: &[Message]) {
         .as_ref()
         .and_then(|u| u.output_tokens)
         .unwrap_or(0);
-
     let cached = response
         .usage
         .as_ref()
@@ -46,140 +32,51 @@ fn record_otel_usage(response: &Response, model: &str, messages: &[Message]) {
         .and_then(|d| d.cached_tokens)
         .unwrap_or(0);
 
-    // OpenInference conventions (Phoenix)
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "openinference.span.kind",
-        "LLM",
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "llm.model_name",
-        model.to_string(),
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new("llm.token_count.prompt", pt));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "llm.token_count.completion",
-        ct,
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "llm.token_count.total",
-        pt + ct,
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "llm.token_count.cached",
-        cached,
-    ));
-
-    // AI-NOTE: input.value + output.value — required by Phoenix to show I/O in span list
-    // AI-NOTE: mime_type = application/json — Phoenix renders formatted JSON in detail view
-
-    // Build input as JSON: last user/tool message
-    let input_json = messages
-        .iter()
-        .rev()
-        .find(|m| matches!(m.role, Role::User | Role::Tool))
-        .map(|m| {
-            let content = if m.content.len() > 2000 {
-                format!("{}...", &m.content[..2000])
-            } else {
-                m.content.clone()
-            };
-            serde_json::json!({
-                "role": format!("{:?}", m.role).to_lowercase(),
-                "content": content
-            })
-        });
-    if let Some(input) = &input_json {
-        otel_span.set_attribute(opentelemetry::KeyValue::new(
-            "input.value",
-            input.to_string(),
-        ));
-        otel_span.set_attribute(opentelemetry::KeyValue::new(
-            "input.mime_type",
-            "application/json",
-        ));
-    }
-
-    // Build output as JSON: text response or tool calls
+    let input = last_user_content(messages, 500);
     let output_text = response.output_text();
-    let fcs = response.function_calls();
-    let output_json = if !output_text.is_empty() {
-        let text = if output_text.len() > 2000 {
-            format!("{}...", &output_text[..2000])
-        } else {
-            output_text
-        };
-        Some(serde_json::json!({"role": "assistant", "content": text}))
-    } else if !fcs.is_empty() {
-        let calls: Vec<serde_json::Value> = fcs
-            .iter()
-            .map(|fc| serde_json::json!({"name": fc.name, "arguments": fc.arguments}))
-            .collect();
-        Some(serde_json::json!({"role": "assistant", "tool_calls": calls}))
-    } else {
-        None
-    };
-    if let Some(output) = &output_json {
-        otel_span.set_attribute(opentelemetry::KeyValue::new(
-            "output.value",
-            output.to_string(),
-        ));
-        otel_span.set_attribute(opentelemetry::KeyValue::new(
-            "output.mime_type",
-            "application/json",
-        ));
-    }
-
-    // llm.input_messages / llm.output_messages as JSON for Phoenix detail view
-    let input_msgs: Vec<serde_json::Value> = messages
+    let output = truncate_str(&output_text, 500);
+    let tool_calls: Vec<(String, String)> = response
+        .function_calls()
         .iter()
-        .map(|m| {
-            let content = if m.content.len() > 1000 {
-                format!("{}...", &m.content[..1000])
-            } else {
-                m.content.clone()
-            };
-            serde_json::json!({"message": {"role": format!("{:?}", m.role).to_lowercase(), "content": content}})
-        })
+        .map(|fc| (fc.name.clone(), fc.arguments.to_string()))
         .collect();
-    if let Ok(json) = serde_json::to_string(&input_msgs) {
-        otel_span.set_attribute(opentelemetry::KeyValue::new("llm.input_messages", json));
-    }
-    if let Some(output) = &output_json {
-        let out_msgs = serde_json::json!([{"message": output}]);
-        otel_span.set_attribute(opentelemetry::KeyValue::new(
-            "llm.output_messages",
-            out_msgs.to_string(),
-        ));
-    }
 
-    // GenAI conventions (LangSmith)
-    otel_span.set_attribute(opentelemetry::KeyValue::new("langsmith.span.kind", "LLM"));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "gen_ai.request.model",
-        model.to_string(),
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "gen_ai.response.model",
-        response.model.clone(),
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "gen_ai.usage.prompt_tokens",
-        pt,
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "gen_ai.usage.completion_tokens",
-        ct,
-    ));
-    otel_span.set_attribute(opentelemetry::KeyValue::new(
-        "gen_ai.usage.cached_tokens",
-        cached,
-    ));
-
-    otel_span.end();
+    crate::telemetry::record_llm_span(
+        "oxide.responses.api",
+        model,
+        &input,
+        &output,
+        &tool_calls,
+        &crate::telemetry::LlmUsage {
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            cached_tokens: cached,
+            response_model: response.model.clone(),
+        },
+    );
 }
 
 #[cfg(not(feature = "telemetry"))]
 fn record_otel_usage(_response: &Response, _model: &str, _messages: &[Message]) {}
+
+#[cfg(feature = "telemetry")]
+fn last_user_content(messages: &[Message], max_len: usize) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, Role::User | Role::Tool))
+        .map(|m| truncate_str(&m.content, max_len))
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "telemetry")]
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() > max_len {
+        format!("{}...", &s[..max_len])
+    } else {
+        s.to_string()
+    }
+}
 
 /// LlmClient backed by openai-oxide (Responses API).
 ///

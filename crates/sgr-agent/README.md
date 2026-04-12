@@ -180,14 +180,130 @@ async fn main() {
 | `oxide` | no | **openai-oxide backend — fastest for OpenAI models** (Responses API, HTTP/2, gzip) |
 | `oxide-ws` | no | WebSocket mode for oxide (-20% latency on agent loops) |
 | `genai` | no | Multi-provider via genai crate (Gemini, Anthropic, OpenRouter, Ollama) |
-| `async-openai-backend` | no | async-openai backend for comparison/migration |
 | `agent` | no | Full agent framework (traits, loop, registry, routing) |
+| **`tools`** | no | **11 universal file-system tools** via [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — generic over `FileBackend` |
+| **`tools-eval`** | no | `tools` + JavaScript eval via Boa engine |
 | `session` | no | Session persistence, 4-tier loop detection, memory context, hints, tasks, intent guard |
 | `app-tools` | no | Shared tools: bash, fs (read/write/edit), git, apply_patch |
 | `providers` | no | Provider config (TOML), auth, CLI proxy, Codex proxy |
 | `telemetry` | no | OTEL telemetry → Phoenix / LangSmith (OpenInference conventions) |
 | `logging` | no | File-based JSONL logging |
 | `search` | no | Fuzzy session search (nucleo-matcher) |
+
+## Crate structure
+
+```
+sgr-agent-core    ← Tool trait, AgentContext, schema (5 lightweight deps)
+    ↑         ↑
+sgr-agent-tools   sgr-agent (this crate)
+(FileBackend)     re-exports core, optional tools via feature "tools"
+```
+
+- [`sgr-agent-core`](https://crates.io/crates/sgr-agent-core) — minimal types, use when building tool crates
+- [`sgr-agent-tools`](https://crates.io/crates/sgr-agent-tools) — 11 tools: read, write, delete, search, list, tree, eval, read_all, mkdir, move, find
+- `sgr-agent` (this crate) — framework + re-exports everything
+
+## Using file-system tools
+
+```toml
+sgr-agent = { version = "0.7", features = ["tools"] }
+```
+
+```rust
+use std::sync::Arc;
+use sgr_agent::tools::{FileBackend, ReadTool, WriteTool, SearchTool, TreeTool, ListTool, DeleteTool, ReadAllTool};
+use sgr_agent::registry::ToolRegistry;
+
+// 1. Implement FileBackend for your runtime
+struct LocalFs;
+
+#[async_trait::async_trait]
+impl FileBackend for LocalFs {
+    async fn read(&self, path: &str, number: bool, start: i32, end: i32) -> anyhow::Result<String> {
+        Ok(std::fs::read_to_string(path)?)
+    }
+    async fn write(&self, path: &str, content: &str, _s: i32, _e: i32) -> anyhow::Result<()> {
+        Ok(std::fs::write(path, content)?)
+    }
+    async fn delete(&self, path: &str) -> anyhow::Result<()> {
+        Ok(std::fs::remove_file(path)?)
+    }
+    async fn search(&self, _root: &str, _pattern: &str, _limit: i32) -> anyhow::Result<String> {
+        Ok(String::new()) // use ripgrep or walkdir
+    }
+    async fn list(&self, path: &str) -> anyhow::Result<String> {
+        let entries: Vec<_> = std::fs::read_dir(path)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        Ok(entries.join("\n"))
+    }
+    async fn tree(&self, _root: &str, _level: i32) -> anyhow::Result<String> { Ok(String::new()) }
+    async fn context(&self) -> anyhow::Result<String> { Ok(chrono::Local::now().to_rfc3339()) }
+    async fn mkdir(&self, path: &str) -> anyhow::Result<()> { Ok(std::fs::create_dir_all(path)?) }
+    async fn move_file(&self, from: &str, to: &str) -> anyhow::Result<()> { Ok(std::fs::rename(from, to)?) }
+    async fn find(&self, _root: &str, _name: &str, _ft: &str, _limit: i32) -> anyhow::Result<String> { Ok(String::new()) }
+}
+
+// 2. Create tools and register
+let fs = Arc::new(LocalFs);
+let tools = ToolRegistry::new()
+    .register(ReadTool(fs.clone()))
+    .register(WriteTool(fs.clone()))
+    .register(DeleteTool(fs.clone()))
+    .register(SearchTool(fs.clone()))
+    .register(ListTool(fs.clone()))
+    .register(TreeTool(fs.clone()))
+    .register(ReadAllTool(fs.clone()));
+```
+
+## Creating custom tools
+
+Tools implement the `Tool` trait from `sgr-agent-core`:
+
+```rust
+use sgr_agent::agent_tool::{Tool, ToolOutput, ToolError, parse_args};
+use sgr_agent::context::AgentContext;
+use sgr_agent::schema::json_schema_for;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+#[derive(Deserialize, JsonSchema)]
+struct GitStatusArgs {
+    /// Repository path (default: current directory)
+    #[serde(default)]
+    path: Option<String>,
+}
+
+struct GitStatusTool;
+
+#[async_trait::async_trait]
+impl Tool for GitStatusTool {
+    fn name(&self) -> &str { "git_status" }
+    fn description(&self) -> &str { "Show git repository status" }
+    fn is_read_only(&self) -> bool { true }
+    fn parameters_schema(&self) -> serde_json::Value { json_schema_for::<GitStatusArgs>() }
+
+    async fn execute(&self, args: serde_json::Value, _ctx: &mut AgentContext) -> Result<ToolOutput, ToolError> {
+        let a: GitStatusArgs = parse_args(&args)?;
+        let path = a.path.unwrap_or_else(|| ".".into());
+        let output = tokio::process::Command::new("git")
+            .args(["status", "--short"])
+            .current_dir(&path)
+            .output()
+            .await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+        Ok(ToolOutput::text(String::from_utf8_lossy(&output.stdout)))
+    }
+}
+```
+
+Key patterns:
+- Use `#[derive(Deserialize, JsonSchema)]` for args — schema auto-generated
+- Use `parse_args(&args)` for typed deserialization with error handling
+- Use `json_schema_for::<T>()` for parameter schema
+- `is_read_only() -> true` enables parallel execution
+- `ToolOutput::text()` for normal results, `ToolOutput::done()` to signal completion
 
 ## Architecture
 

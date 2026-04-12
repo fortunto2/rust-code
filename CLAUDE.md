@@ -11,15 +11,32 @@ AI-powered terminal coding agent written in Rust.
 - tmux (background task execution)
 
 ## Architecture
+- `crates/sgr-agent-core/` — minimal core: Tool trait, ToolDef, AgentContext, schema helpers (5 deps)
+- `crates/sgr-agent-tools/` — 11 reusable file-system tools generic over `FileBackend` trait
+- `crates/sgr-agent/` — LLM client + agent framework + session/memory/providers/OpenAPI (re-exports core + tools)
 - `crates/rc-cli/` — main binary: TUI (app.rs), headless mode (main.rs), agent loop (agent.rs), 27 tools (backend.rs + tools/)
-- `crates/sgr-agent/` — LLM client + agent framework + session/memory/tools/providers/OpenAPI (all-in-one)
 - `crates/sgr-agent-tui/` — shared TUI shell: chat panel, streaming, agent loop integration, fuzzy picker
 - `crates/solograph/` — MCP server for code intelligence
 - `crates/genai/` — local fork of rust-genai (multi-provider LLM client: Gemini, OpenAI, Anthropic, Ollama, etc.)
 
+### Crate dependency graph
+```
+sgr-agent-core          ← Tool trait, ToolDef, AgentContext, schema (5 deps, no heavy deps)
+    ↑              ↑
+sgr-agent-tools    sgr-agent
+(11 tools,         (framework, re-exports core, optional re-export tools via feature "tools")
+ FileBackend)           ↑
+                   rc-cli, agent-bit, etc.
+```
+
 Agent loop: user message → Agent::decide() → model returns `Decision { situation, task, tool_calls }` → execute tools → feed result back → repeat until `finish_task` or completion.
 
 ## sgr-agent Framework
+- **Core** (`sgr-agent-core`): `Tool` trait, `ToolOutput`, `ToolError`, `AgentContext`, `ToolDef`, `json_schema_for`
+- **Tools** (`sgr-agent-tools`, or `sgr-agent` feature `"tools"`): 11 universal file-system tools generic over `FileBackend`:
+  - Core: `ReadTool`, `WriteTool`, `DeleteTool`, `SearchTool`, `ListTool`, `TreeTool`, `ReadAllTool`
+  - Deferred: `MkDirTool`, `MoveTool`, `FindTool`
+  - Optional: `EvalTool` (Boa JS engine, feature `"eval"`)
 - **LLM Client**: `GeminiClient`, `OpenAIClient` — structured output + function calling + flexible parse
 - **Agent framework** (`feature = "agent"`):
   - `Tool` trait → `ToolRegistry` (builder, case-insensitive lookup, fuzzy resolve)
@@ -109,7 +126,12 @@ gh release upload vX.Y.Z rust-code-macos-aarch64.tar.gz rust-code-macos-aarch64.
 | `crates/rc-cli/src/agent.rs` | Agent struct, SgrAgent impl |
 | `crates/sgr-agent/src/lib.rs` | LLM client + agent framework + session exports |
 | `crates/sgr-agent/src/agent.rs` | Agent trait, Decision, AgentError |
-| `crates/sgr-agent/src/agent_tool.rs` | Tool trait, ToolOutput, ToolError |
+| `crates/sgr-agent-core/src/agent_tool.rs` | Tool trait, ToolOutput, ToolError (canonical source) |
+| `crates/sgr-agent-core/src/context.rs` | AgentContext, AgentState (canonical source) |
+| `crates/sgr-agent-core/src/schema.rs` | json_schema_for, response_schema_for (canonical source) |
+| `crates/sgr-agent-tools/src/backend.rs` | FileBackend trait (10 async methods) |
+| `crates/sgr-agent-tools/src/search.rs` | SearchTool: smart_search, expand_query, fuzzy_regex, auto_expand |
+| `crates/sgr-agent/src/agent_tool.rs` | Re-exports from sgr-agent-core |
 | `crates/sgr-agent/src/registry.rs` | ToolRegistry (builder, lookup, fuzzy resolve) |
 | `crates/sgr-agent/src/agent_loop.rs` | Generic agent loop + 4-tier loop detection |
 | `crates/sgr-agent/src/agents/` | SgrAgent, ToolCallingAgent, FlexibleAgent, HybridAgent, Clarification, Planning |
