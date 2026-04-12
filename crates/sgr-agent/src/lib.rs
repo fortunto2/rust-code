@@ -17,8 +17,6 @@
 //! - **Agent loop** — decide → execute → feed back, with 3-tier loop detection
 //! - **Progressive discovery** — filter tools by relevance (TF-IDF scoring)
 
-pub mod baml_parser;
-pub mod codegen;
 pub mod coerce;
 pub mod flexible_parser;
 pub mod model_info;

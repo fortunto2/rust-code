@@ -44,8 +44,54 @@ pub fn unique_files_from_search(output: &str, max: usize) -> Vec<String> {
     files
 }
 
+// ─── Output truncation (shared across all tool projects) ────────────────────
+
+const MAX_OUTPUT_CHARS: usize = 30_000;
+const PREFIX_LINES: usize = 200;
+const SUFFIX_LINES: usize = 100;
+
+/// Truncate tool output: keep first 200 + last 100 lines, omit middle.
+///
+/// Strategy from Codex: prefix has the most important info,
+/// suffix has errors/summaries. Middle is expendable.
+pub fn truncate_output(output: &str) -> String {
+    if output.chars().count() <= MAX_OUTPUT_CHARS {
+        return output.to_string();
+    }
+    let lines: Vec<&str> = output.lines().collect();
+    let total = lines.len();
+    if total <= PREFIX_LINES + SUFFIX_LINES {
+        let prefix: String = output.chars().take(MAX_OUTPUT_CHARS / 2).collect();
+        let suffix: String = output
+            .chars()
+            .rev()
+            .take(MAX_OUTPUT_CHARS / 4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        return format!(
+            "{}\n\n...[{} chars omitted]...\n\n{}",
+            prefix,
+            output.chars().count() - MAX_OUTPUT_CHARS / 2 - MAX_OUTPUT_CHARS / 4,
+            suffix
+        );
+    }
+    let prefix = &lines[..PREFIX_LINES];
+    let suffix = &lines[total - SUFFIX_LINES..];
+    let omitted = total - PREFIX_LINES - SUFFIX_LINES;
+    format!(
+        "Total output: {} lines\n\n{}\n\n...[{} lines omitted]...\n\n{}",
+        total,
+        prefix.join("\n"),
+        omitted,
+        suffix.join("\n"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    use super::truncate_output;
     use super::*;
 
     #[test]
@@ -80,5 +126,23 @@ mod tests {
         let output = "$ rg test\n\nfile.txt:1:match";
         let files = unique_files_from_search(output, 10);
         assert_eq!(files, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn truncate_short_unchanged() {
+        assert_eq!(truncate_output("hello\nworld"), "hello\nworld");
+    }
+
+    #[test]
+    fn truncate_long_output() {
+        let lines: Vec<String> = (0..500)
+            .map(|i| format!("line {:04}: {}", i, "x".repeat(90)))
+            .collect();
+        let input = lines.join("\n");
+        let result = truncate_output(&input);
+        assert!(result.len() < input.len());
+        assert!(result.contains("lines omitted"));
+        assert!(result.contains("line 0000"));
+        assert!(result.contains("line 0499"));
     }
 }
