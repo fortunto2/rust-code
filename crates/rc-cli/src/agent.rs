@@ -332,6 +332,14 @@ impl Agent {
     }
 
     /// Initialize MCP servers from .mcp.json configs.
+    /// Graceful shutdown: stop MCP servers before runtime drops.
+    pub async fn shutdown(&mut self) {
+        // Take MCP out of Arc to get ownership for shutdown
+        if let Some(mcp) = Arc::get_mut(&mut self.mcp).and_then(Option::take) {
+            mcp.shutdown().await;
+        }
+    }
+
     pub async fn init_mcp(&mut self) -> Result<()> {
         let config = McpManager::load_configs();
         if config.mcp_servers.is_empty() {

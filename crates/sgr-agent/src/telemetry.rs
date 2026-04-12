@@ -117,7 +117,9 @@ pub fn init_telemetry(log_dir: &str, prefix: &str) -> TelemetryGuard {
             .build()
         {
             Ok(exporter) => {
-                builder = builder.with_simple_exporter(exporter);
+                // Use batch exporter — simple exporter calls reqwest::blocking inside async
+                // context which creates a nested runtime and panics on drop.
+                builder = builder.with_batch_exporter(exporter);
                 let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap();
                 let project = std::env::var("LANGSMITH_PROJECT").unwrap_or_default();
                 eprintln!(

@@ -10,7 +10,7 @@ pub mod tui;
 use crate::agent::Agent;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sgr_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop_stream};
+use sgr_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop, run_loop_stream};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -1119,8 +1119,10 @@ fn run_task_command(action: TaskAction) -> Result<()> {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Setup panic hook to restore terminal
-    setup_panic_hook();
+    // Setup panic hook to restore terminal (TUI mode only)
+    if args.prompt.is_none() && args.command.is_none() {
+        setup_panic_hook();
+    }
 
     // Handle subcommands first (no init needed)
     if let Some(command) = args.command {
@@ -1157,7 +1159,9 @@ async fn main() -> Result<()> {
     // Initialize OTEL-aware structured telemetry (JSONL + span context)
     // TUI mode redirects stderr to file (prevents log output from corrupting ratatui)
     let is_headless = args.prompt.is_some();
-    let _telemetry: Box<dyn std::any::Any> = if is_headless {
+    // Telemetry: MUST be dropped explicitly before tokio exits (agent-bit pattern).
+    // If guard drops during tokio runtime shutdown → panic (OTEL blocking exporter).
+    let telemetry_guard: Box<dyn std::any::Any> = if is_headless {
         Box::new(init_telemetry_headless())
     } else {
         Box::new(init_telemetry_tui())
@@ -1340,7 +1344,7 @@ async fn main() -> Result<()> {
                 loop_abort_threshold: 12,
             };
 
-            // Extract session for run_loop_stream (needs &Agent + &mut Session separately)
+            // Extract session for run_loop (needs &Agent + &mut Session separately)
             let mut session = std::mem::replace(
                 agent.session_mut(),
                 sgr_agent::Session::new(".rust-code-tmp", 60).expect("tmp session dir"),
@@ -1349,7 +1353,7 @@ async fn main() -> Result<()> {
             use std::io::Write as _;
             // Collect run stats for self-evolution eval
             let mut run_stats = sgr_agent::evolution::RunStats::default();
-            let result = run_loop_stream(&agent, &mut session, &config, |event| match event {
+            let result = run_loop(&agent, &mut session, &config, |event| match event {
                 LoopEvent::StepStart(n) => {
                     run_stats.steps = n;
                     print!("\n[Step {}] Thinking...", n);
@@ -1404,10 +1408,7 @@ async fn main() -> Result<()> {
                 LoopEvent::MaxStepsReached(n) => {
                     eprintln!("[ERR] Max steps ({}) reached", n);
                 }
-                LoopEvent::StreamToken(token) => {
-                    print!("{}", token);
-                    std::io::stdout().flush().ok();
-                }
+                _ => {}
             })
             .await;
 
@@ -1552,6 +1553,10 @@ async fn main() -> Result<()> {
             }
             break 'outer;
         } // end 'outer loop
+
+        // Explicit shutdown: MCP + telemetry BEFORE tokio runtime drops
+        agent.shutdown().await;
+        drop(telemetry_guard);
     } else {
         // Interactive TUI mode
         let mut terminal = tui::init()?;
@@ -1575,6 +1580,7 @@ async fn main() -> Result<()> {
         if let Err(err) = result {
             println!("Error running TUI: {:?}", err);
         }
+        drop(telemetry_guard);
     }
 
     Ok(())
