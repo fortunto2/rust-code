@@ -407,13 +407,17 @@ fn post_session_annotations(
         .send();
 
     // Trace annotations (visible in Traces tab) — annotate all traces in this session
-    let trace_ids: Vec<String> = db.prepare(
-        "SELECT DISTINCT t.trace_id FROM traces t
+    let trace_ids: Vec<String> = db
+        .prepare(
+            "SELECT DISTINCT t.trace_id FROM traces t
          JOIN project_sessions ps ON t.project_session_rowid = ps.id
-         WHERE ps.session_id = ?1"
-    ).unwrap()
-    .query_map([session_id], |row| row.get(0))
-    .unwrap().filter_map(|r| r.ok()).collect();
+         WHERE ps.session_id = ?1",
+        )
+        .unwrap()
+        .query_map([session_id], |row| row.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
 
     if !trace_ids.is_empty() {
         let mut trace_data = Vec::new();

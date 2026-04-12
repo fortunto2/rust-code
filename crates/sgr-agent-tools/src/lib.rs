@@ -40,6 +40,9 @@ pub mod search;
 pub mod tree;
 pub mod write;
 
+// Dynamic context injection for skills
+pub mod skill_context;
+
 // Deferred tools
 pub mod find;
 pub mod mkdir;
