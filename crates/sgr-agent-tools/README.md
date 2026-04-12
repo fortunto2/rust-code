@@ -144,6 +144,35 @@ impl<B: FileBackend> Tool for MyReadTool<B> {
 }
 ```
 
+## Skills (project-level prompts)
+
+Tools are Rust code. **Skills** are markdown prompts that guide the agent's workflow — they live in your project, not in the crate.
+
+Create `skills/{name}/SKILL.md` in your project:
+
+```yaml
+---
+name: plan
+description: Research codebase and create implementation plan
+triggers: [plan, spec, feature]
+priority: 10
+keywords: [plan, spec, refactor, implement]
+---
+
+WORKFLOW:
+  1. READ CLAUDE.md — architecture
+  2. TREE root — project structure
+  3. SEARCH for keywords — find affected files
+  4. WRITE docs/plan/{trackId}/spec.md
+  5. WRITE docs/plan/{trackId}/plan.md
+  6. UPDATE_PLAN with phases
+  7. FINISH with summary
+```
+
+Load skills via `sgr_agent::load_skills_from_dir("skills/")`. The `UpdatePlanTool` works with plan skills — writes `plan.md` to disk so `/build` can pick it up.
+
+See [rc-cli skills](https://github.com/fortunto2/rust-code/tree/master/skills) for examples.
+
 ## Features
 
 | Feature | Default | Adds |
