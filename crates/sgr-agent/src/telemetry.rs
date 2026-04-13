@@ -17,30 +17,59 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::prelude::*;
 
-/// Global session ID for Phoenix session grouping.
-static SESSION_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
-/// Global task ID — set per trial, attached to every LLM span.
-static TASK_ID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+use std::cell::RefCell;
+use std::future::Future;
+
 /// Global JSONL log path — set during init, used by record_llm_span for file-based export.
 static SPANS_LOG: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
+// AI-NOTE: task-local only — no global fallback. Every task MUST run inside with_telemetry_scope().
+tokio::task_local! {
+    static TASK_SESSION_ID: RefCell<Option<String>>;
+    static TASK_TASK_ID: RefCell<Option<String>>;
+}
+
 /// Set the current session ID (e.g. "t16_vm-abc123").
+/// Panics if called outside `with_telemetry_scope`.
 pub fn set_session_id(id: String) {
-    if let Ok(mut lock) = SESSION_ID.write() {
-        *lock = Some(id);
-    }
+    TASK_SESSION_ID.with(|cell| {
+        cell.replace(Some(id));
+    });
 }
 
 /// Set the current task ID (e.g. "t16"). Attached to every LLM span.
+/// Panics if called outside `with_telemetry_scope`.
 pub fn set_task_id(id: String) {
-    if let Ok(mut lock) = TASK_ID.write() {
-        *lock = Some(id);
-    }
+    TASK_TASK_ID.with(|cell| {
+        cell.replace(Some(id));
+    });
 }
 
 /// Get current session ID (if set).
 pub fn session_id() -> Option<String> {
-    SESSION_ID.read().ok().and_then(|lock| lock.clone())
+    TASK_SESSION_ID
+        .try_with(|cell| cell.borrow().clone())
+        .ok()
+        .flatten()
+}
+
+/// Get current task ID (if set).
+fn task_id() -> Option<String> {
+    TASK_TASK_ID
+        .try_with(|cell| cell.borrow().clone())
+        .ok()
+        .flatten()
+}
+
+/// Wrap an async future with per-task telemetry scope.
+/// Every tokio::spawn that uses set_session_id/set_task_id MUST be wrapped in this.
+pub async fn with_telemetry_scope<F: Future>(fut: F) -> F::Output {
+    TASK_SESSION_ID
+        .scope(
+            RefCell::new(None),
+            TASK_TASK_ID.scope(RefCell::new(None), fut),
+        )
+        .await
 }
 
 /// Initialize OTEL-aware file telemetry + optional OTLP export.
@@ -215,7 +244,7 @@ pub fn record_llm_span(
         span.set_attribute(opentelemetry::KeyValue::new("session.id", s.clone()));
     }
     // task_id: explicit > parsed from session_id (part before first '_') > omit
-    let tid = TASK_ID.read().ok().and_then(|l| l.clone()).or_else(|| {
+    let tid = task_id().or_else(|| {
         sid.as_ref()
             .and_then(|s| s.split('_').next().map(String::from))
     });
@@ -326,7 +355,7 @@ fn write_span_to_file(
         "span": span_name,
         "model": model,
         "session_id": session_id().unwrap_or_default(),
-        "task_id": TASK_ID.read().ok().and_then(|l| l.clone()).unwrap_or_default(),
+        "task_id": task_id().unwrap_or_default(),
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
         "cached_tokens": usage.cached_tokens,

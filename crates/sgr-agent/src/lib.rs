@@ -178,7 +178,7 @@ pub use tasks::{
 #[cfg(feature = "telemetry")]
 pub use telemetry::{
     LlmUsage, TelemetryGuard, annotate_session, init_telemetry, record_llm_span, set_session_id,
-    set_task_id,
+    set_task_id, with_telemetry_scope,
 };
 
 pub use coerce::coerce_value;
