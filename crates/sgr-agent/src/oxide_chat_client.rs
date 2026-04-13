@@ -229,6 +229,10 @@ impl OxideChatClient {
         if let Some(ref key) = self.prompt_cache_key {
             req.prompt_cache_key = Some(key.clone());
         }
+        // Anthropic prompt caching via OpenRouter: top-level cache_control
+        if self.model.contains("anthropic/") || self.model.contains("claude") {
+            req.cache_control = Some(serde_json::json!({"type": "ephemeral"}));
+        }
         req
     }
 
