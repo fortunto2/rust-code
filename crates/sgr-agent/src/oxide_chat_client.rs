@@ -244,7 +244,7 @@ impl OxideChatClient {
             .map(|tc| ToolCall {
                 id: tc.id.clone(),
                 name: tc.function.name.clone(),
-                arguments: serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null),
+                arguments: crate::str_ext::parse_tool_args(&tc.function.arguments),
             })
             .collect()
     }

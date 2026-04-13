@@ -13,6 +13,8 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+// Tool args parsing with llm_json repair — see str_ext::parse_tool_args
+
 /// OpenAI-compatible API client.
 pub struct OpenAIClient {
     config: ProviderConfig,
@@ -364,7 +366,7 @@ impl OpenAIClient {
                             .get("arguments")
                             .and_then(|a| a.as_str())
                             .unwrap_or("{}");
-                        let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                        let args: Value = crate::str_ext::parse_tool_args(args_str);
                         tool_calls.push(ToolCall {
                             id,
                             name,
@@ -429,7 +431,7 @@ impl OpenAIClient {
                                 .get("arguments")
                                 .and_then(|a| a.as_str())
                                 .unwrap_or("{}");
-                            let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                            let args: Value = crate::str_ext::parse_tool_args(args_str);
                             calls.push(ToolCall {
                                 id,
                                 name,

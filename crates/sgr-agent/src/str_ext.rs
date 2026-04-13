@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::fmt;
 
 /// UTF-8 safe string operations missing from stdlib.
@@ -41,4 +42,15 @@ impl fmt::Display for Ellipsis<'_> {
         }
         Ok(())
     }
+}
+
+/// Parse tool call arguments JSON with llm_json repair fallback.
+/// Handles common LLM mistakes: escaped quotes, trailing commas, missing braces.
+pub fn parse_tool_args(args_str: &str) -> Value {
+    serde_json::from_str(args_str).unwrap_or_else(|_| {
+        match llm_json::repair_json(args_str, &llm_json::RepairOptions::default()) {
+            Ok(fixed) => serde_json::from_str(&fixed).unwrap_or(Value::Object(Default::default())),
+            Err(_) => Value::Object(Default::default()),
+        }
+    })
 }
