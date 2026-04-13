@@ -522,8 +522,10 @@ fn post_session_annotations(
 
 /// Truncate a string to `max_len` bytes, appending "..." if truncated.
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len])
+    use crate::str_ext::StrExt;
+    let t = s.trunc(max_len);
+    if t.len() < s.len() {
+        format!("{t}...")
     } else {
         s.to_string()
     }

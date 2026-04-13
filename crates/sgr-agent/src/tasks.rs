@@ -350,7 +350,8 @@ fn slugify(title: &str) -> String {
     if full.len() <= MAX_SLUG_LEN {
         return full;
     }
-    let truncated = &full[..MAX_SLUG_LEN];
+    use crate::str_ext::StrExt;
+    let truncated = full.trunc(MAX_SLUG_LEN);
     // Cut at last '-' to avoid partial words
     match truncated.rfind('-') {
         Some(pos) if pos > 5 => truncated[..pos].to_string(),

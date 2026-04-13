@@ -71,8 +71,10 @@ fn last_user_content(messages: &[Message], max_len: usize) -> String {
 
 #[cfg(feature = "telemetry")]
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len])
+    use crate::str_ext::StrExt;
+    let t = s.trunc(max_len);
+    if t.len() < s.len() {
+        format!("{t}...")
     } else {
         s.to_string()
     }
@@ -237,7 +239,8 @@ impl OxideClient {
                         for tc in &msg.tool_calls {
                             let args = tc.arguments.to_string();
                             let preview = if args.len() > 200 {
-                                &args[..200]
+                                use crate::str_ext::StrExt;
+                                args.trunc(200)
                             } else {
                                 &args
                             };
@@ -561,10 +564,10 @@ impl LlmClient for OxideClient {
 
         let raw_text = response.output_text();
         if std::env::var("SGR_DEBUG").is_ok() {
-            eprintln!(
-                "[sgr] Raw response: {}",
-                &raw_text[..raw_text.len().min(500)]
-            );
+            eprintln!("[sgr] Raw response: {}", {
+                use crate::str_ext::StrExt;
+                raw_text.trunc(500)
+            });
         }
         let tool_calls = Self::extract_tool_calls(&response);
         let parsed = serde_json::from_str::<Value>(&raw_text).ok();

@@ -78,8 +78,10 @@ fn last_user_content(messages: &[Message], max_len: usize) -> String {
 
 #[cfg(feature = "telemetry")]
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len])
+    use crate::str_ext::StrExt;
+    let t = s.trunc(max_len);
+    if t.len() < s.len() {
+        format!("{t}...")
     } else {
         s.to_string()
     }

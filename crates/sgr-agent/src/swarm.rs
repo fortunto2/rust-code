@@ -524,10 +524,13 @@ impl SwarmManager {
                         result.status,
                         result.role,
                         result.steps,
-                        if result.summary.len() > 500 {
-                            format!("{}...", &result.summary[..500])
-                        } else {
-                            result.summary.clone()
+                        {
+                            use crate::str_ext::StrExt;
+                            if result.summary.len() > 500 {
+                                format!("{}...", result.summary.trunc(500))
+                            } else {
+                                result.summary.clone()
+                            }
                         }
                     );
                     self.agents.remove(id);

@@ -221,7 +221,8 @@ fn find_closest_lines(content: &str, old_string: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    use crate::str_ext::StrExt;
+    s.trunc(max)
 }
 
 #[cfg(test)]

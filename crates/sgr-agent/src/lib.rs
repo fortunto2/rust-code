@@ -21,6 +21,7 @@ pub mod coerce;
 pub mod flexible_parser;
 pub mod model_info;
 pub mod schema;
+pub mod str_ext;
 pub mod tool;
 pub mod types;
 

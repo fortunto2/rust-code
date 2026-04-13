@@ -165,7 +165,8 @@ fn simple_base64(data: &[u8]) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    use crate::str_ext::StrExt;
+    s.trunc(max)
 }
 
 #[cfg(test)]
