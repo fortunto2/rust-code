@@ -229,9 +229,12 @@ impl OxideChatClient {
         if let Some(ref key) = self.prompt_cache_key {
             req.prompt_cache_key = Some(key.clone());
         }
-        // Anthropic prompt caching via OpenRouter: top-level cache_control
+        // Anthropic prompt caching via OpenRouter: 1h TTL, pin to Anthropic provider for cache hits
         if self.model.contains("anthropic/") || self.model.contains("claude") {
-            req.cache_control = Some(serde_json::json!({"type": "ephemeral"}));
+            req.cache_control = Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"}));
+            if let Ok(prefs) = openai_oxide::openrouter::ProviderPreferences::pinned("Anthropic").to_value() {
+                req.provider = Some(prefs);
+            }
         }
         req
     }
