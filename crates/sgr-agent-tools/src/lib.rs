@@ -51,6 +51,7 @@ pub mod copy;
 pub mod find;
 pub mod mkdir;
 pub mod move_file;
+pub mod prepend;
 
 // Optional: eval (heavy dep on boa_engine)
 #[cfg(feature = "eval")]
@@ -82,6 +83,7 @@ pub use mock_fs::MockFs;
 pub use copy::CopyTool;
 pub use delete::DeleteTool;
 pub use find::FindTool;
+pub use prepend::PrependTool;
 pub use list::ListTool;
 pub use mkdir::MkDirTool;
 pub use move_file::MoveTool;
