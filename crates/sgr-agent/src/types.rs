@@ -330,6 +330,17 @@ pub struct LlmConfig {
     /// Set per-trial to group all LLM calls in the same session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+
+    // ── Provider capabilities (auto-detected from model name, overridable in TOML) ──
+    /// Reject assistant message as last in conversation. Auto: true for Anthropic Opus/Sonnet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_assistant_prefill: Option<bool>,
+    /// Prompt cache TTL (e.g. "5m", "1h"). Auto: "1h" for Anthropic models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_ttl: Option<String>,
+    /// Pin to specific provider on OpenRouter (e.g. "Anthropic"). Auto-detected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_provider: Option<String>,
 }
 
 fn default_temperature() -> f64 {
@@ -353,6 +364,9 @@ impl Default for LlmConfig {
             use_genai: false,
             use_cli: false,
             session_id: None,
+            no_assistant_prefill: None,
+            cache_ttl: None,
+            pin_provider: None,
         }
     }
 }
@@ -423,9 +437,41 @@ impl LlmConfig {
         self
     }
 
-    /// True if model targets Anthropic (via OpenRouter prefix or direct Claude model).
+    /// True if model targets Anthropic (auto-detect from model name).
     pub fn is_anthropic(&self) -> bool {
         self.model.starts_with("anthropic/") || self.model.starts_with("claude")
+    }
+
+    /// Whether assistant prefill is rejected. TOML override > auto-detect.
+    pub fn rejects_prefill(&self) -> bool {
+        self.no_assistant_prefill.unwrap_or_else(|| {
+            // Anthropic Opus/Sonnet reject prefill; Haiku via Bedrock allows it
+            self.is_anthropic() && !self.model.contains("haiku")
+        })
+    }
+
+    /// Prompt cache TTL, if any. TOML override > auto-detect.
+    pub fn resolved_cache_ttl(&self) -> Option<&str> {
+        if self.cache_ttl.is_some() {
+            return self.cache_ttl.as_deref();
+        }
+        if self.is_anthropic() {
+            Some("1h")
+        } else {
+            None
+        }
+    }
+
+    /// Provider to pin on OpenRouter, if any. TOML override > auto-detect.
+    pub fn resolved_pin_provider(&self) -> Option<&str> {
+        if self.pin_provider.is_some() {
+            return self.pin_provider.as_deref();
+        }
+        if self.is_anthropic() {
+            Some("Anthropic")
+        } else {
+            None
+        }
     }
 
     /// Apply extra_headers to an openai-oxide ClientConfig.

@@ -99,8 +99,10 @@ pub struct OxideChatClient {
     pub(crate) prompt_cache_key: Option<String>,
     /// Session ID for sticky routing and trace grouping.
     pub(crate) session_id: Option<String>,
-    /// Computed once from LlmConfig::is_anthropic() at creation time.
-    is_anthropic: bool,
+    /// Prompt cache TTL (resolved from config).
+    cache_ttl: Option<String>,
+    /// Provider to pin on OpenRouter (resolved from config).
+    pin_provider: Option<String>,
 }
 
 impl OxideChatClient {
@@ -144,7 +146,8 @@ impl OxideChatClient {
             reasoning_effort,
             prompt_cache_key: config.prompt_cache_key.clone(),
             session_id: config.session_id.clone(),
-            is_anthropic: config.is_anthropic(),
+            cache_ttl: config.resolved_cache_ttl().map(String::from),
+            pin_provider: config.resolved_pin_provider().map(String::from),
         })
     }
 
@@ -241,14 +244,15 @@ impl OxideChatClient {
         if let Some(ref sid) = self.session_id {
             req.session_id = Some(sid.clone());
         }
-        // Anthropic-specific: 1h cache TTL, pin to Anthropic provider for cache hits
-        if self.is_anthropic {
-            req.cache_control = Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"}));
-            if let Ok(prefs) =
-                openai_oxide::openrouter::ProviderPreferences::pinned("Anthropic").to_value()
-            {
-                req.provider = Some(prefs);
-            }
+        // Provider capabilities (resolved from LlmConfig, not string checks)
+        if let Some(ref ttl) = self.cache_ttl {
+            req.cache_control = Some(serde_json::json!({"type": "ephemeral", "ttl": ttl}));
+        }
+        if let Some(ref provider) = self.pin_provider
+            && let Ok(prefs) =
+                openai_oxide::openrouter::ProviderPreferences::pinned(provider).to_value()
+        {
+            req.provider = Some(prefs);
         }
         req
     }
