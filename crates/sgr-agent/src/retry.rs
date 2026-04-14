@@ -23,7 +23,7 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: 3,
+            max_retries: 5,
             base_delay_ms: 500,
             max_delay_ms: 30_000,
         }
@@ -49,6 +49,10 @@ pub fn is_retryable(err: &SgrError) -> bool {
     }
 }
 
+/// Fibonacci-like delay sequence for rate limits (1, 2, 3, 5, 8, 13... seconds).
+/// More patient than exponential, avoids hammering the API.
+const FIBO_DELAYS_MS: &[u64] = &[1000, 2000, 3000, 5000, 8000, 13000, 21000, 30000];
+
 /// Calculate delay for attempt N, honoring rate limit headers.
 pub fn delay_for_attempt(attempt: usize, config: &RetryConfig, err: &SgrError) -> Duration {
     // Honor retry-after header from rate limit
@@ -58,11 +62,32 @@ pub fn delay_for_attempt(attempt: usize, config: &RetryConfig, err: &SgrError) -
         return Duration::from_secs(secs + 1); // +1s safety margin
     }
 
-    // Exponential backoff: base * 2^attempt, capped at max
+    // Rate limit (429): use Fibonacci-like delays (more patient)
+    let is_rate_limit = matches!(err, SgrError::RateLimit { .. })
+        || matches!(err, SgrError::Api { status: 429, .. })
+        || matches!(err, SgrError::Api { status: 0, body } if body.contains("429") || body.contains("rate limit"));
+    if is_rate_limit {
+        let delay_ms = FIBO_DELAYS_MS
+            .get(attempt)
+            .copied()
+            .unwrap_or(config.max_delay_ms);
+        let jitter = (delay_ms as f64 * 0.15 * fastrand()) as u64;
+        return Duration::from_millis(delay_ms + jitter);
+    }
+
+    // Other errors: exponential backoff (faster retry for transient failures)
     let delay_ms = (config.base_delay_ms * (1 << attempt)).min(config.max_delay_ms);
-    // Add jitter ±10%
     let jitter = (delay_ms as f64 * 0.1 * (attempt as f64 % 2.0 - 0.5)) as u64;
     Duration::from_millis(delay_ms.saturating_add(jitter))
+}
+
+/// Simple pseudo-random 0.0-1.0 (no dep needed).
+fn fastrand() -> f64 {
+    use std::time::SystemTime;
+    let t = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    ((t.subsec_nanos() as f64) / 1_000_000_000.0).fract()
 }
 
 /// LLM client wrapper with automatic retry on transient errors.
