@@ -2298,9 +2298,9 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07994e0d1b73906ece02fd52f2f335f430bba369336a66c069836259e5d2712b"
+checksum = "96ad81ec19dcc72b40921a964f42beb32a25745b4619a871f28a6aaa5537a5ab"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2323,9 +2323,9 @@ dependencies = [
 
 [[package]]
 name = "openai-types"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64413cb80060f0aebfc6adbe972cf3297f61b0b6c249e5a7964cbbcae9629061"
+checksum = "68c8c435e7aa9a2346fab0f214f0c3df44663f09d6931259e66527eca1495ef3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3494,6 +3494,7 @@ dependencies = [
  "futures",
  "genai",
  "indexmap 2.13.0",
+ "llm_json",
  "nucleo-matcher",
  "openai-oxide",
  "opentelemetry",

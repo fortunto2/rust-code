@@ -97,6 +97,8 @@ pub struct OxideChatClient {
     pub(crate) reasoning_effort: Option<openai_oxide::types::chat::ReasoningEffort>,
     /// Server-side prompt prefix caching key (DeepInfra, OpenAI).
     pub(crate) prompt_cache_key: Option<String>,
+    /// Session ID for sticky routing and trace grouping.
+    pub(crate) session_id: Option<String>,
 }
 
 impl OxideChatClient {
@@ -139,11 +141,12 @@ impl OxideChatClient {
             max_tokens: config.max_tokens,
             reasoning_effort,
             prompt_cache_key: config.prompt_cache_key.clone(),
+            session_id: config.session_id.clone(),
         })
     }
 
     fn build_messages(&self, messages: &[Message]) -> Vec<ChatCompletionMessageParam> {
-        messages
+        let result: Vec<ChatCompletionMessageParam> = messages
             .iter()
             .map(|m| match m.role {
                 Role::System => ChatCompletionMessageParam::System {
@@ -188,7 +191,14 @@ impl OxideChatClient {
                     tool_call_id: m.tool_call_id.clone().unwrap_or_default(),
                 },
             })
-            .collect()
+            .collect();
+
+        result
+    }
+
+    /// Check if the model targets Anthropic API (directly or via OpenRouter).
+    fn is_anthropic(&self) -> bool {
+        self.model.contains("anthropic/") || self.model.contains("claude")
     }
 
     fn build_request(&self, messages: &[Message]) -> ChatCompletionRequest {
@@ -229,10 +239,26 @@ impl OxideChatClient {
         if let Some(ref key) = self.prompt_cache_key {
             req.prompt_cache_key = Some(key.clone());
         }
-        // Anthropic prompt caching via OpenRouter: 1h TTL, pin to Anthropic provider for cache hits
-        if self.model.contains("anthropic/") || self.model.contains("claude") {
+        // Session ID: config → telemetry fallback → sticky routing + trace grouping
+        let sid = self.session_id.clone().or_else(|| {
+            #[cfg(feature = "telemetry")]
+            {
+                crate::telemetry::session_id()
+            }
+            #[cfg(not(feature = "telemetry"))]
+            {
+                None
+            }
+        });
+        if let Some(sid) = sid {
+            req.session_id = Some(sid);
+        }
+        // Anthropic-specific: 1h cache TTL, pin to Anthropic provider for cache hits
+        if self.is_anthropic() {
             req.cache_control = Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"}));
-            if let Ok(prefs) = openai_oxide::openrouter::ProviderPreferences::pinned("Anthropic").to_value() {
+            if let Ok(prefs) =
+                openai_oxide::openrouter::ProviderPreferences::pinned("Anthropic").to_value()
+            {
                 req.provider = Some(prefs);
             }
         }

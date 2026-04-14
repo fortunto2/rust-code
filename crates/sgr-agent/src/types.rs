@@ -326,6 +326,10 @@ pub struct LlmConfig {
     /// Uses CLI's own auth (subscription credits, no API key).
     #[serde(default)]
     pub use_cli: bool,
+    /// Session ID for request grouping (sticky routing, trace correlation).
+    /// Set per-trial to group all LLM calls in the same session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 fn default_temperature() -> f64 {
@@ -348,6 +352,7 @@ impl Default for LlmConfig {
             reasoning_effort: None,
             use_genai: false,
             use_cli: false,
+            session_id: None,
         }
     }
 }

@@ -428,14 +428,13 @@ impl JsonRepairParser {
             self.skip_comments();
             self.skip_whitespace();
 
-            if needs_comma && !expecting_key {
-                if let Some(ch) = self.current_char() {
-                    if ch == '"' || ch == '\'' || ch.is_alphabetic() || ch == '_' {
-                        self.append_char(',');
-                        expecting_key = true;
-                        needs_comma = false;
-                    }
-                }
+            if needs_comma && !expecting_key
+                && let Some(ch) = self.current_char()
+                && (ch == '"' || ch == '\'' || ch.is_alphabetic() || ch == '_')
+            {
+                self.append_char(',');
+                expecting_key = true;
+                needs_comma = false;
             }
 
             match self.current_char() {
@@ -580,14 +579,13 @@ impl JsonRepairParser {
         let input_str: String = self.input.iter().collect();
 
         // Handle markdown code blocks
-        if let Some(start) = input_str.find("```json") {
-            if let Some(end) = input_str.rfind("```") {
-                if end > start + 7 {
-                    let json_content = &input_str[start + 7..end];
-                    self.input = json_content.chars().collect();
-                    self.pos = 0;
-                }
-            }
+        if let Some(start) = input_str.find("```json")
+            && let Some(end) = input_str.rfind("```")
+            && end > start + 7
+        {
+            let json_content = &input_str[start + 7..end];
+            self.input = json_content.chars().collect();
+            self.pos = 0;
         }
 
         self.skip_whitespace();
@@ -697,21 +695,20 @@ pub fn repair_json(json_str: &str, options: &RepairOptions) -> Result<String, Js
     }
 
     // First try to parse as-is if skip_json_loads is false
-    if !options.skip_json_loads {
-        if let Ok(value) = serde_json::from_str::<Value>(json_str) {
-            // Already valid — return compact format
-            return Ok(serde_json::to_string(&value)?);
-        }
+    if !options.skip_json_loads
+        && let Ok(value) = serde_json::from_str::<Value>(json_str)
+    {
+        return Ok(serde_json::to_string(&value)?);
     }
 
     // Pre-process: escape literal control characters inside JSON string values.
     // LLMs often emit raw newlines/tabs inside strings instead of \n/\t.
     let preprocessed = escape_control_chars_in_strings(json_str);
     // If pre-processing made it valid, return early
-    if !options.skip_json_loads {
-        if let Ok(value) = serde_json::from_str::<Value>(&preprocessed) {
-            return Ok(serde_json::to_string(&value)?);
-        }
+    if !options.skip_json_loads
+        && let Ok(value) = serde_json::from_str::<Value>(&preprocessed)
+    {
+        return Ok(serde_json::to_string(&value)?);
     }
 
     let mut parser = JsonRepairParser::new(&preprocessed, options.clone());
