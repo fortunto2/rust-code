@@ -196,9 +196,9 @@ impl OxideChatClient {
         result
     }
 
-    /// Check if the model targets Anthropic API (directly or via OpenRouter).
+    /// Delegate to LlmConfig::is_anthropic logic (starts_with, not contains).
     fn is_anthropic(&self) -> bool {
-        self.model.contains("anthropic/") || self.model.contains("claude")
+        self.model.starts_with("anthropic/") || self.model.starts_with("claude")
     }
 
     fn build_request(&self, messages: &[Message]) -> ChatCompletionRequest {

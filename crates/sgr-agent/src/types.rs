@@ -423,6 +423,11 @@ impl LlmConfig {
         self
     }
 
+    /// True if model targets Anthropic (via OpenRouter prefix or direct Claude model).
+    pub fn is_anthropic(&self) -> bool {
+        self.model.starts_with("anthropic/") || self.model.starts_with("claude")
+    }
+
     /// Apply extra_headers to an openai-oxide ClientConfig.
     /// Used by both OxideClient and OxideChatClient.
     pub fn apply_headers(&self, config: &mut openai_oxide::config::ClientConfig) {
