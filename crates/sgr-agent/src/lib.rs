@@ -72,6 +72,8 @@ pub mod factory;
 #[cfg(feature = "agent")]
 pub mod prompt_loader;
 #[cfg(feature = "agent")]
+pub mod reasoning_tool;
+#[cfg(feature = "agent")]
 pub mod registry;
 #[cfg(feature = "agent")]
 pub mod retry;
@@ -85,7 +87,6 @@ pub mod streaming;
 pub mod swarm;
 #[cfg(feature = "agent")]
 pub mod swarm_tools;
-#[cfg(feature = "agent")]
 pub mod union_schema;
 
 // Session / app modules (from baml-agent migration)
