@@ -102,10 +102,9 @@ pub fn routed_reasoning(name: &str, task_types: &[&str], security_levels: &[&str
         .description("Reason about the task. ALWAYS call this AND an action tool together.")
         .field("task_type", json!({"type": "string", "enum": tt_enum}))
         .field("security", json!({"type": "string", "enum": sec_enum}))
-        .field("plan", json!({"type": "string", "description": "What you are doing and why"}))
-        .optional("reflection", json!({"type": "string", "description": "Self-check: Am I repeating? Right file? Evidence for security assessment?"}))
+        .field("reasoning", json!({"type": "string", "description": "What you observe + self-check (Am I repeating? Right file? Evidence?)"}))
+        .field("next_action", json!({"type": "string", "description": "What you will do now and why"}))
         .optional("confidence", json!({"type": "number", "description": "0.0-1.0 how sure you are"}))
-        .optional("done", json!({"type": "boolean"}))
         .build()
 }
 
