@@ -1,0 +1,18 @@
+[package]
+name = "sgr-agent-ml"
+version = "0.1.0"
+edition = "2024"
+description = "ML primitives for sgr-agent — ONNX embeddings, centroid classifier, k-NN store"
+license = "MIT"
+repository = "https://github.com/fortunto2/rust-code"
+keywords = ["onnx", "embeddings", "classifier", "knn"]
+categories = ["science::ml"]
+
+[dependencies]
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+ndarray = "0.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"

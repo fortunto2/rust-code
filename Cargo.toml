@@ -6,6 +6,7 @@ members = [
     "crates/sgr-agent",
     "crates/sgr-agent-tools",
     "crates/sgr-agent-tui",
+    "crates/sgr-agent-ml",
     "crates/autoresearch",
 ]
 default-members = ["crates/rc-cli"]
