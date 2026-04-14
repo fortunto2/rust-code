@@ -239,19 +239,9 @@ impl OxideChatClient {
         if let Some(ref key) = self.prompt_cache_key {
             req.prompt_cache_key = Some(key.clone());
         }
-        // Session ID: config → telemetry fallback → sticky routing + trace grouping
-        let sid = self.session_id.clone().or_else(|| {
-            #[cfg(feature = "telemetry")]
-            {
-                crate::telemetry::session_id()
-            }
-            #[cfg(not(feature = "telemetry"))]
-            {
-                None
-            }
-        });
-        if let Some(sid) = sid {
-            req.session_id = Some(sid);
+        // Session ID for sticky routing + trace grouping (set via LlmConfig)
+        if let Some(ref sid) = self.session_id {
+            req.session_id = Some(sid.clone());
         }
         // Anthropic-specific: 1h cache TTL, pin to Anthropic provider for cache hits
         if self.is_anthropic() {
