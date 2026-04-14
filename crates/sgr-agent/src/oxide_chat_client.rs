@@ -99,6 +99,8 @@ pub struct OxideChatClient {
     pub(crate) prompt_cache_key: Option<String>,
     /// Session ID for sticky routing and trace grouping.
     pub(crate) session_id: Option<String>,
+    /// Computed once from LlmConfig::is_anthropic() at creation time.
+    is_anthropic: bool,
 }
 
 impl OxideChatClient {
@@ -142,6 +144,7 @@ impl OxideChatClient {
             reasoning_effort,
             prompt_cache_key: config.prompt_cache_key.clone(),
             session_id: config.session_id.clone(),
+            is_anthropic: config.is_anthropic(),
         })
     }
 
@@ -196,11 +199,6 @@ impl OxideChatClient {
         result
     }
 
-    /// Delegate to LlmConfig::is_anthropic logic (starts_with, not contains).
-    fn is_anthropic(&self) -> bool {
-        self.model.starts_with("anthropic/") || self.model.starts_with("claude")
-    }
-
     fn build_request(&self, messages: &[Message]) -> ChatCompletionRequest {
         self.build_request_with_reasoning(messages, self.reasoning_effort.as_ref())
     }
@@ -244,7 +242,7 @@ impl OxideChatClient {
             req.session_id = Some(sid.clone());
         }
         // Anthropic-specific: 1h cache TTL, pin to Anthropic provider for cache hits
-        if self.is_anthropic() {
+        if self.is_anthropic {
             req.cache_control = Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"}));
             if let Ok(prefs) =
                 openai_oxide::openrouter::ProviderPreferences::pinned("Anthropic").to_value()
