@@ -162,6 +162,16 @@ impl Llm {
             .await
     }
 
+    /// Function calling that returns both tool calls and assistant text.
+    /// Used by single-phase agents that need reasoning + action in one LLM call.
+    pub async fn tools_call_with_text(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<(Vec<ToolCall>, String), SgrError> {
+        self.client().tools_call_with_text(messages, tools).await
+    }
+
     /// Structured output — generates JSON schema from `T`, parses result.
     pub async fn structured<T: JsonSchema + DeserializeOwned>(
         &self,
@@ -216,6 +226,14 @@ impl LlmClient for Llm {
         self.client()
             .tools_call_stateful(messages, tools, previous_response_id)
             .await
+    }
+
+    async fn tools_call_with_text(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<(Vec<ToolCall>, String), SgrError> {
+        self.client().tools_call_with_text(messages, tools).await
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {

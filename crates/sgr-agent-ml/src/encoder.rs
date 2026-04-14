@@ -25,8 +25,11 @@ impl OnnxEncoder {
     ///
     /// Expects `model.onnx` and `tokenizer.json` in `models_dir`.
     pub fn load(models_dir: &Path) -> Result<Self> {
-        let model_path = models_dir.join("model.onnx");
-        let tokenizer_path = models_dir.join("tokenizer.json");
+        Self::load_files(&models_dir.join("model.onnx"), &models_dir.join("tokenizer.json"))
+    }
+
+    /// Load from explicit file paths (e.g. nli_model.onnx, nli_tokenizer.json).
+    pub fn load_files(model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
 
         let session = Session::builder()
             .context("failed to create ONNX session builder")?

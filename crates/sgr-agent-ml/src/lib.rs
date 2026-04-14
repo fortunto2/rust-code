@@ -10,6 +10,8 @@ mod classifier;
 mod knn;
 
 pub use encoder::OnnxEncoder;
+/// Re-export for downstream access to tokenizer types.
+pub use tokenizers;
 pub use classifier::CentroidClassifier;
 pub use knn::{KnnStore, KnnVote};
 

@@ -413,6 +413,79 @@ impl LlmClient for OxideChatClient {
         Ok(calls)
     }
 
+    // AI-NOTE: tools_call_with_text — single-phase agent needs text+tools in one call.
+    // tool_choice="auto" so model can return text reasoning alongside tool calls.
+    async fn tools_call_with_text(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<(Vec<ToolCall>, String), SgrError> {
+        let mut req = self.build_request_no_reasoning(messages);
+
+        let chat_tools: Vec<Tool> = tools
+            .iter()
+            .map(|t| {
+                Tool::function(
+                    &t.name,
+                    if t.description.is_empty() {
+                        "No description"
+                    } else {
+                        &t.description
+                    },
+                    t.parameters.clone(),
+                )
+            })
+            .collect();
+        req.tools = Some(chat_tools);
+        // "auto" not "required" — model can return text + tools or just text
+        req.tool_choice = Some(openai_oxide::types::chat::ToolChoice::Mode("auto".into()));
+
+        let response = self
+            .client
+            .chat()
+            .completions()
+            .create(req)
+            .await
+            .map_err(|e| SgrError::Api {
+                status: 0,
+                body: e.to_string(),
+            })?;
+
+        if let Some(ref usage) = response.usage {
+            let input = usage.prompt_tokens.unwrap_or(0);
+            let cached = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
+            let output = usage.completion_tokens.unwrap_or(0);
+            if cached > 0 {
+                let pct = if input > 0 { cached * 100 / input } else { 0 };
+                eprintln!(
+                    "    💰 {}in/{}out (cached: {}, {}%)",
+                    input, output, cached, pct
+                );
+            } else {
+                eprintln!("    💰 {}in/{}out", input, output);
+            }
+        }
+
+        let text = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default();
+        let calls = Self::extract_tool_calls(&response);
+        record_chat_otel(
+            &self.model,
+            messages,
+            response.usage.as_ref(),
+            &calls,
+            &text,
+        );
+        Ok((calls, text))
+    }
+
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
         let req = self.build_request(messages);
 

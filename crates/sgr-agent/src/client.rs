@@ -40,6 +40,18 @@ pub trait LlmClient: Send + Sync {
         Ok((calls, None))
     }
 
+    /// Function calling that also returns assistant text content.
+    /// Single-phase agents need both reasoning (text) and actions (tool calls) in one call.
+    /// Default: delegate to tools_call, return empty text.
+    async fn tools_call_with_text(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<(Vec<ToolCall>, String), SgrError> {
+        let calls = self.tools_call(messages, tools).await?;
+        Ok((calls, String::new()))
+    }
+
     /// Plain text completion (no schema, no tools).
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError>;
 }
