@@ -622,15 +622,20 @@ impl LlmClient for OxideClient {
         // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
             .iter()
-            .map(|t| ResponseTool::Function {
-                name: t.name.clone(),
-                description: if t.description.is_empty() {
-                    None
-                } else {
-                    Some(t.description.clone())
-                },
-                parameters: Some(t.parameters.clone()),
-                strict: None,
+            .map(|t| {
+                // Ensure strict-mode compatible schema for OpenAI
+                let mut params = t.parameters.clone();
+                openai_oxide::parsing::ensure_strict(&mut params);
+                ResponseTool::Function {
+                    name: t.name.clone(),
+                    description: if t.description.is_empty() {
+                        None
+                    } else {
+                        Some(t.description.clone())
+                    },
+                    parameters: Some(params),
+                    strict: Some(true),
+                }
             })
             .collect();
         req = req.tools(response_tools);
