@@ -175,6 +175,11 @@ impl ToolRegistry {
         defs
     }
 
+    /// Core tools only (no deferred stubs). For single-phase mode where fewer tools = better parallel FC.
+    pub fn core_defs(&self) -> Vec<ToolDef> {
+        self.tools.values().map(|t| t.to_def()).collect()
+    }
+
     /// Fuzzy resolve: exact match first, then Levenshtein distance.
     /// Returns `Err(message)` if the tool is deferred (schema not yet loaded).
     pub fn resolve(&self, name: &str) -> Result<&dyn Tool, ResolveError> {
