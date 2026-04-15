@@ -56,6 +56,8 @@ pub mod agent;
 #[cfg(feature = "agent")]
 pub mod agent_loop;
 #[cfg(feature = "agent")]
+pub mod agent_runtime;
+#[cfg(feature = "agent")]
 pub mod agent_tool;
 #[cfg(feature = "agent")]
 pub mod agents;

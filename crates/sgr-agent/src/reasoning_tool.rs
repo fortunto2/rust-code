@@ -108,6 +108,49 @@ pub fn routed_reasoning(name: &str, task_types: &[&str], security_levels: &[&str
         .build()
 }
 
+/// Build reasoning tool from AgentRuntime context.
+/// Adapts schema based on runtime signals (inbox, threats, OTP).
+pub fn from_runtime(name: &str, runtime: &dyn crate::agent_runtime::AgentRuntime) -> ToolDef {
+    let ctx = runtime.context_summary();
+    let desc = if ctx.is_empty() {
+        "Reason about the task. ALWAYS call this AND an action tool together.".to_string()
+    } else {
+        format!(
+            "Reason about the task [{}]. ALWAYS call this AND an action tool together.",
+            ctx
+        )
+    };
+
+    let mut b = ReasoningToolBuilder::new(name)
+        .description(desc)
+        .field(
+            "reasoning",
+            json!({"type": "string", "description": "What you observe + self-check"}),
+        )
+        .field(
+            "next_action",
+            json!({"type": "string", "description": "What you will do now"}),
+        );
+
+    if runtime.has_otp() {
+        b = b.optional(
+            "otp_action",
+            json!({"type": "string", "enum": ["verify", "process", "deny"]}),
+        );
+    }
+    if runtime.has_threat() {
+        b = b.optional(
+            "threat_assessment",
+            json!({"type": "string", "enum": ["safe", "suspicious", "blocked"]}),
+        );
+    }
+    b = b.optional(
+        "confidence",
+        json!({"type": "number", "description": "0.0-1.0"}),
+    );
+    b.build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
