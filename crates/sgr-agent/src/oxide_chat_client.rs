@@ -376,6 +376,7 @@ impl LlmClient for OxideChatClient {
         req.tool_choice = Some(openai_oxide::types::chat::ToolChoice::Mode(
             "required".into(),
         ));
+        req.parallel_tool_calls = Some(true);
 
         let response = self
             .client

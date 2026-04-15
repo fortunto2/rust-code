@@ -640,6 +640,9 @@ impl LlmClient for OxideClient {
         req = req.tool_choice(openai_oxide::types::responses::ResponseToolChoice::Mode(
             "required".into(),
         ));
+        // AI-NOTE: explicit parallel_tool_calls=true — smaller models (gpt-5.4-mini) default
+        // to single tool per call despite API default. Forces model to call plan_next + action together.
+        req = req.parallel_tool_calls(true);
 
         let response = self.send_request_auto(req).await?;
 
@@ -699,6 +702,77 @@ impl LlmClient for OxideClient {
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
         self.tools_call_stateful_impl(messages, tools, previous_response_id)
             .await
+    }
+
+    /// tool_choice=auto so model can emit reasoning text ALONGSIDE tool calls in one response.
+    /// Returns (tool_calls, reasoning_text). Used by single-phase agent to get 1 LLM call/step.
+    async fn tools_call_with_text(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDef],
+    ) -> Result<(Vec<ToolCall>, String), SgrError> {
+        let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
+
+        let response_tools: Vec<ResponseTool> = tools
+            .iter()
+            .map(|t| ResponseTool::Function {
+                name: t.name.clone(),
+                description: if t.description.is_empty() {
+                    None
+                } else {
+                    Some(t.description.clone())
+                },
+                parameters: Some(t.parameters.clone()),
+                strict: None,
+            })
+            .collect();
+        req = req.tools(response_tools);
+        // AI-NOTE: tool_choice=auto (not required) — model can return text+tools in same response.
+        // This is the key for single-phase: reasoning in text, action in tool calls, 1 LLM call.
+        req = req.tool_choice(openai_oxide::types::responses::ResponseToolChoice::Mode(
+            "auto".into(),
+        ));
+        req = req.parallel_tool_calls(true);
+
+        let response = self.send_request_auto(req).await?;
+
+        record_otel_usage(&response, &self.model, messages);
+        Self::check_truncation(&response)?;
+
+        let input_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens)
+            .unwrap_or(0);
+        let cached_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0);
+        let cache_pct = if input_tokens > 0 {
+            (cached_tokens * 100) / input_tokens
+        } else {
+            0
+        };
+        let output_tokens = response
+            .usage
+            .as_ref()
+            .and_then(|u| u.output_tokens)
+            .unwrap_or(0);
+        if cached_tokens > 0 {
+            eprintln!(
+                "    💰 {}in/{}out (cached: {}, {}%)",
+                input_tokens, output_tokens, cached_tokens, cache_pct
+            );
+        } else {
+            eprintln!("    💰 {}in/{}out", input_tokens, output_tokens);
+        }
+
+        let text = response.output_text();
+        let calls = Self::extract_tool_calls(&response);
+        Ok((calls, text))
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
