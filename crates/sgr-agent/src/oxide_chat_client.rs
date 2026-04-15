@@ -376,7 +376,11 @@ impl LlmClient for OxideChatClient {
         req.tool_choice = Some(openai_oxide::types::chat::ToolChoice::Mode(
             "required".into(),
         ));
-        req.parallel_tool_calls = Some(true);
+        // AI-NOTE: OpenRouter returns 404 for parallel_tool_calls on Anthropic models.
+        // Anthropic uses disable_parallel_tool_use (different API), so skip for anthropic/.
+        if !self.model.contains("anthropic/") {
+            req.parallel_tool_calls = Some(true);
+        }
 
         let response = self
             .client
