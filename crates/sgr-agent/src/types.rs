@@ -341,6 +341,14 @@ pub struct LlmConfig {
     /// Pin to specific provider on OpenRouter (e.g. "Anthropic"). Auto-detected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_provider: Option<String>,
+    /// Enable WebSocket for Responses API (lower latency, persistent connection).
+    /// Default: true for Responses API (Oxide backend), ignored for Chat/genai/CLI.
+    #[serde(default = "default_websocket")]
+    pub websocket: bool,
+}
+
+fn default_websocket() -> bool {
+    true
 }
 
 fn default_temperature() -> f64 {
@@ -367,6 +375,7 @@ impl Default for LlmConfig {
             no_assistant_prefill: None,
             cache_ttl: None,
             pin_provider: None,
+            websocket: default_websocket(),
         }
     }
 }

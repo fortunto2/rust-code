@@ -240,8 +240,12 @@ impl OxideChatClient {
         if let Some(ref key) = self.prompt_cache_key {
             req.prompt_cache_key = Some(key.clone());
         }
-        // Session ID for sticky routing + trace grouping (set via LlmConfig)
-        if let Some(ref sid) = self.session_id {
+        // Session ID for sticky routing + trace grouping — OpenRouter only.
+        // AI-NOTE: OpenAI Chat API rejects unknown param 'session_id'.
+        // Only set when OpenRouter features are present (cache_ttl or pin_provider).
+        if let Some(ref sid) = self.session_id
+            && (self.cache_ttl.is_some() || self.pin_provider.is_some())
+        {
             req.session_id = Some(sid.clone());
         }
         // Provider capabilities (resolved from LlmConfig, not string checks)
@@ -358,9 +362,14 @@ impl LlmClient for OxideChatClient {
         // No reasoning for tool execution — faster + better cache hit
         let mut req = self.build_request_no_reasoning(messages);
 
+        // AI-NOTE: OpenRouter routes to Azure which enforces OpenAI strict mode on ALL tools.
+        // ensure_strict adds additionalProperties:false + all properties in required.
+        // Safe for non-strict providers (just adds redundant fields).
         let chat_tools: Vec<Tool> = tools
             .iter()
             .map(|t| {
+                let mut params = t.parameters.clone();
+                openai_oxide::parsing::ensure_strict(&mut params);
                 Tool::function(
                     &t.name,
                     if t.description.is_empty() {
@@ -368,7 +377,7 @@ impl LlmClient for OxideChatClient {
                     } else {
                         &t.description
                     },
-                    t.parameters.clone(),
+                    params,
                 )
             })
             .collect();
@@ -430,6 +439,8 @@ impl LlmClient for OxideChatClient {
         let chat_tools: Vec<Tool> = tools
             .iter()
             .map(|t| {
+                let mut params = t.parameters.clone();
+                openai_oxide::parsing::ensure_strict(&mut params);
                 Tool::function(
                     &t.name,
                     if t.description.is_empty() {
@@ -437,7 +448,7 @@ impl LlmClient for OxideChatClient {
                     } else {
                         &t.description
                     },
-                    t.parameters.clone(),
+                    params,
                 )
             })
             .collect();

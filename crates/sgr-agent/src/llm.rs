@@ -112,8 +112,20 @@ impl Llm {
         }
     }
 
+    /// Create from config + auto-connect WebSocket if `config.websocket` is true.
+    /// Convenience async constructor — equivalent to `new()` + `connect_ws()`.
+    pub async fn new_async(config: &LlmConfig) -> Self {
+        let llm = Self::new(config);
+        if config.websocket
+            && let Err(e) = llm.connect_ws().await
+        {
+            tracing::warn!("WebSocket upgrade skipped: {}", e);
+        }
+        llm
+    }
+
     /// Upgrade to WebSocket mode for lower latency (oxide backend only).
-    /// No-op for genai.
+    /// No-op for genai/chat/cli. Prefer `new_async()` which auto-connects based on config.
     pub async fn connect_ws(&self) -> Result<(), SgrError> {
         #[cfg(feature = "oxide-ws")]
         if let Backend::Oxide(c) = &self.inner {
