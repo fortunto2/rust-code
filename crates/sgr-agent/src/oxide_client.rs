@@ -640,9 +640,11 @@ impl LlmClient for OxideClient {
         req = req.tool_choice(openai_oxide::types::responses::ResponseToolChoice::Mode(
             "required".into(),
         ));
-        // AI-NOTE: explicit parallel_tool_calls=true — smaller models (gpt-5.4-mini) default
-        // to single tool per call despite API default. Forces model to call plan_next + action together.
-        req = req.parallel_tool_calls(true);
+        // AI-NOTE: explicit parallel_tool_calls=true for OpenAI. Anthropic models on OpenRouter
+        // reject this param (404); they use `disable_parallel_tool_use` natively, not exposed here.
+        if !self.model.contains("anthropic/") && !self.model.starts_with("claude") {
+            req = req.parallel_tool_calls(true);
+        }
 
         let response = self.send_request_auto(req).await?;
 
