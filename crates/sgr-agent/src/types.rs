@@ -9,6 +9,13 @@ pub struct ImagePart {
     pub mime_type: String,
 }
 
+impl ImagePart {
+    /// `data:<mime>;base64,<data>` URL form consumed by OpenAI vision APIs.
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.mime_type, self.data)
+    }
+}
+
 /// A chat message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {

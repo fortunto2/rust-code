@@ -38,6 +38,10 @@ pub(crate) mod genai_client;
 pub mod oxide_client;
 pub use oxide_client::OxideClient;
 
+/// Shared helpers for building multimodal (text + image) content parts
+/// consumed by both Responses API and Chat Completions backends.
+pub mod multimodal;
+
 // Oxide Chat — Chat Completions API for compat endpoints (Cloudflare, OpenRouter, etc.)
 pub mod oxide_chat_client;
 pub use oxide_chat_client::OxideChatClient;

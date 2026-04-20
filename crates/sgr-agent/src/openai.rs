@@ -6,6 +6,7 @@
 //!
 //! Both can be used together in a single request.
 
+use crate::multimodal;
 use crate::schema::response_schema_for;
 use crate::tool::ToolDef;
 use crate::types::*;
@@ -278,23 +279,14 @@ impl OpenAIClient {
                     Role::Assistant => "assistant",
                     Role::Tool => "tool",
                 };
-                // Multimodal: if message has images, use content array format
+                // Multimodal: if message has images, use content array format.
+                // Shared shape via `multimodal::chat_parts` — same helper the
+                // typed OxideChatClient uses, so every backend emits identical JSON.
                 let content = if !msg.images.is_empty()
                     && (msg.role == Role::User || msg.role == Role::System)
                 {
-                    let mut parts: Vec<Value> = vec![json!({
-                        "type": "text",
-                        "text": msg.content,
-                    })];
-                    for img in &msg.images {
-                        parts.push(json!({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": format!("data:{};base64,{}", img.mime_type, img.data),
-                            }
-                        }));
-                    }
-                    json!(parts)
+                    serde_json::to_value(multimodal::chat_parts(&msg.content, &msg.images))
+                        .unwrap_or_else(|_| json!(msg.content))
                 } else {
                     json!(msg.content)
                 };

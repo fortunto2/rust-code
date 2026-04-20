@@ -4,6 +4,7 @@
 //! Cloudflare AI Gateway compat, OpenRouter, local models, Workers AI.
 
 use crate::client::LlmClient;
+use crate::multimodal;
 use crate::tool::ToolDef;
 use crate::types::{LlmConfig, Message, Role, SgrError, ToolCall};
 use openai_oxide::OpenAI;
@@ -159,10 +160,20 @@ impl OxideChatClient {
                     content: m.content.clone(),
                     name: None,
                 },
-                Role::User => ChatCompletionMessageParam::User {
-                    content: UserContent::Text(m.content.clone()),
-                    name: None,
-                },
+                Role::User => {
+                    // Multimodal (text + image) if the caller attached images;
+                    // otherwise plain text. `chat_parts` is the same helper the
+                    // legacy `OpenAIClient` uses — identical wire shape.
+                    let content = if m.images.is_empty() {
+                        UserContent::Text(m.content.clone())
+                    } else {
+                        UserContent::Parts(multimodal::chat_parts(&m.content, &m.images))
+                    };
+                    ChatCompletionMessageParam::User {
+                        content,
+                        name: None,
+                    }
+                }
                 Role::Assistant => {
                     let tc = if m.tool_calls.is_empty() {
                         None

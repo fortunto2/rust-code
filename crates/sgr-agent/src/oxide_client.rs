@@ -5,6 +5,7 @@
 //! Supports: structured output (json_schema), function calling, multi-turn (previous_response_id).
 
 use crate::client::LlmClient;
+use crate::multimodal;
 use crate::tool::ToolDef;
 use crate::types::{LlmConfig, Message, Role, SgrError, ToolCall};
 use openai_oxide::OpenAI;
@@ -226,9 +227,15 @@ impl OxideClient {
                     });
                 }
                 Role::User => {
+                    let content = if msg.images.is_empty() {
+                        Value::String(msg.content.clone())
+                    } else {
+                        serde_json::to_value(multimodal::responses_parts(&msg.content, &msg.images))
+                            .unwrap_or_else(|_| Value::String(msg.content.clone()))
+                    };
                     input_items.push(ResponseInputItem {
                         role: openai_oxide::types::common::Role::User,
-                        content: Value::String(msg.content.clone()),
+                        content,
                     });
                 }
                 Role::Assistant => {
@@ -334,10 +341,16 @@ impl OxideClient {
                     }));
                 }
                 Role::User => {
+                    let content = if msg.images.is_empty() {
+                        serde_json::json!(msg.content)
+                    } else {
+                        serde_json::to_value(multimodal::responses_parts(&msg.content, &msg.images))
+                            .unwrap_or_else(|_| serde_json::json!(msg.content))
+                    };
                     items.push(serde_json::json!({
                         "type": "message",
                         "role": "user",
-                        "content": msg.content
+                        "content": content,
                     }));
                 }
                 Role::Assistant => {
@@ -806,6 +819,7 @@ impl LlmClient for OxideClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ImagePart;
 
     #[test]
     fn oxide_client_from_config() {
@@ -881,6 +895,57 @@ mod tests {
         assert!(
             req.previous_response_id.is_none(),
             "build_request must be stateless when no explicit ID"
+        );
+    }
+
+    #[test]
+    fn build_request_multimodal_user() {
+        let config = LlmConfig::with_key("sk-test", "gpt-5.4");
+        let client = OxideClient::from_config(&config).unwrap();
+        let img = ImagePart {
+            data: "AAAA".into(),
+            mime_type: "image/jpeg".into(),
+        };
+        let messages = vec![Message::user_with_images("Describe this", vec![img])];
+        let req = client.build_request(&messages, None, None);
+
+        // Single user with images must serialize as content-parts array, not string
+        let input = req.input.as_ref().expect("input missing");
+        let serialized = serde_json::to_value(input).unwrap();
+        let s = serde_json::to_string(&serialized).unwrap();
+        assert!(s.contains("input_text"), "missing input_text part: {s}");
+        assert!(s.contains("input_image"), "missing input_image part: {s}");
+        assert!(
+            s.contains("data:image/jpeg;base64,AAAA"),
+            "missing data URL: {s}"
+        );
+    }
+
+    #[test]
+    fn build_request_items_multimodal_user() {
+        let config = LlmConfig::with_key("sk-test", "gpt-5.4");
+        let client = OxideClient::from_config(&config).unwrap();
+        let img = ImagePart {
+            data: "BBBB".into(),
+            mime_type: "image/png".into(),
+        };
+        let messages = vec![Message::user_with_images("What's on screen?", vec![img])];
+        // previous_response_id triggers items-format path
+        let req = client.build_request(&messages, None, Some("resp_prev"));
+
+        let input = req.input.as_ref().expect("input missing");
+        let s = serde_json::to_string(input).unwrap();
+        assert!(
+            s.contains("input_text"),
+            "items path missing input_text: {s}"
+        );
+        assert!(
+            s.contains("input_image"),
+            "items path missing input_image: {s}"
+        );
+        assert!(
+            s.contains("data:image/png;base64,BBBB"),
+            "items path missing data URL: {s}"
         );
     }
 }
