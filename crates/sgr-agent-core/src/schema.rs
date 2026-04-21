@@ -19,6 +19,17 @@ pub fn json_schema_for<T: JsonSchema>() -> Value {
     value
 }
 
+/// Like `json_schema_for` but inlines every `$ref` from `definitions`.
+/// Use this when the target LLM provider rejects `#/definitions/...`
+/// pointers in tool-call schemas (e.g. CF gemma-4 via Oxide).
+pub fn json_schema_for_inline<T: JsonSchema>() -> Value {
+    let schema = schema_for!(T);
+    let mut value = serde_json::to_value(schema).unwrap_or_default();
+    inline_refs(&mut value);
+    clean_schema(&mut value);
+    value
+}
+
 /// Generate a response schema for type `T` (for structured output).
 ///
 /// Wraps in the format expected by Gemini `responseSchema` or OpenAI `json_schema`.
