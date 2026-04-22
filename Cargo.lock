@@ -3821,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "rust-code"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4222,7 +4222,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-tui"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "crossterm 0.27.0",
