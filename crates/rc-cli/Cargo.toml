@@ -30,7 +30,7 @@ neo_frizbee.workspace = true
 rmcp.workspace = true
 fff-search.workspace = true
 solograph = { version = "0.1.0", path = "../solograph" }
-sgr-agent = { version = "0.7.4", path = "../sgr-agent", features = ["agent", "session", "app-tools", "providers", "telemetry", "search", "genai", "oxide", "tools-all", "tools-local-fs"] }
+sgr-agent = { version = "0.7.4", path = "../sgr-agent", features = ["agent", "session", "app-tools", "providers", "telemetry", "search", "oxide", "tools-all", "tools-local-fs"] }
 sgr-agent-tui = { version = "0.4.3", path = "../sgr-agent-tui" }
 async-trait = "0.1"
 schemars = "0.8"
