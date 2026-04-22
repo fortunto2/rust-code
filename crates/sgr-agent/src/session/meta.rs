@@ -101,29 +101,34 @@ pub fn list_sessions(session_dir: &str) -> Vec<SessionMeta> {
 /// Returns matches sorted by score (best first). Requires the `search` feature.
 #[cfg(feature = "search")]
 pub fn search_sessions(session_dir: &str, query: &str) -> Vec<(u32, SessionMeta)> {
-    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    use neo_frizbee::{Config, match_list};
 
     let sessions = list_sessions(session_dir);
     if sessions.is_empty() || query.is_empty() {
         return sessions.into_iter().map(|s| (0, s)).collect();
     }
 
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-    let mut matcher = Matcher::new(Config::DEFAULT);
+    let topics: Vec<&str> = sessions.iter().map(|s| s.topic.as_str()).collect();
+    let cfg = Config {
+        max_typos: Some(2),
+        sort: true,
+        ..Default::default()
+    };
 
-    let mut matches: Vec<(u32, SessionMeta)> = sessions
+    // Collect scores by original index first, so we can move session items
+    // out of `sessions` without cloning.
+    let scored: Vec<(u32, usize)> = match_list(query, &topics, &cfg)
         .into_iter()
-        .filter_map(|s| {
-            let haystack = Utf32Str::Ascii(s.topic.as_bytes());
-            pattern
-                .score(haystack, &mut matcher)
-                .map(|score| (score, s))
-        })
+        .map(|m| (m.score as u32, m.index as usize))
         .collect();
 
-    matches.sort_by(|a, b| b.0.cmp(&a.0));
-    matches
+    // match_list sorts descending already; we just need to project back to
+    // the owned SessionMeta values.
+    let mut taken: Vec<Option<SessionMeta>> = sessions.into_iter().map(Some).collect();
+    scored
+        .into_iter()
+        .filter_map(|(score, idx)| taken[idx].take().map(|s| (score, s)))
+        .collect()
 }
 
 /// Import a Claude Code session JSONL into our session directory.

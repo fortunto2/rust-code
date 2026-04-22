@@ -1,4 +1,4 @@
-//! Fuzzy search over API endpoints using nucleo.
+//! Fuzzy search over API endpoints using [`neo_frizbee`].
 //!
 //! Agent calls `api search "create issue"` → gets top-K matching endpoints.
 
@@ -18,49 +18,40 @@ pub struct SearchResult {
 ///
 /// Builds a searchable string for each endpoint:
 /// `name method path description param_names`
-/// Then fuzzy-matches the query against it using nucleo.
+/// Then fuzzy-matches the query against it using neo_frizbee.
 #[cfg(feature = "search")]
 pub fn search_endpoints(endpoints: &[Endpoint], query: &str, limit: usize) -> Vec<SearchResult> {
-    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    use neo_frizbee::{Config, match_list};
 
     if query.is_empty() || endpoints.is_empty() {
         return Vec::new();
     }
 
-    let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let haystacks: Vec<String> = endpoints.iter().map(build_searchable_str).collect();
+    let haystack_refs: Vec<&str> = haystacks.iter().map(String::as_str).collect();
+    let cfg = Config {
+        max_typos: Some(2),
+        sort: true,
+        ..Default::default()
+    };
 
-    let mut scored: Vec<(u32, usize)> = Vec::new();
-    let mut buf = Vec::new();
-
-    for (i, ep) in endpoints.iter().enumerate() {
-        let searchable = build_searchable_str(ep);
-        let haystack = Utf32Str::new(&searchable, &mut buf);
-        if let Some(score) = pattern.score(haystack, &mut matcher) {
-            scored.push((score, i));
-        }
-    }
-
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.truncate(limit);
-
-    scored
+    match_list(query, &haystack_refs, &cfg)
         .into_iter()
-        .map(|(score, idx)| {
-            let ep = &endpoints[idx];
+        .take(limit)
+        .map(|m| {
+            let ep = &endpoints[m.index as usize];
             SearchResult {
                 name: ep.name.clone(),
                 method: ep.method.clone(),
                 path: ep.path.clone(),
                 description: ep.description.clone(),
-                score,
+                score: m.score as u32,
             }
         })
         .collect()
 }
 
-/// Simple substring search fallback (no nucleo dependency).
+/// Simple substring search fallback when the `search` feature is off.
 #[cfg(not(feature = "search"))]
 pub fn search_endpoints(endpoints: &[Endpoint], query: &str, limit: usize) -> Vec<SearchResult> {
     if query.is_empty() || endpoints.is_empty() {

@@ -1,11 +1,9 @@
 use anyhow::{Result, anyhow};
-use nucleo_matcher::{
-    Config, Matcher, Utf32Str,
-    pattern::{CaseMatching, Normalization, Pattern},
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use crate::fuzzy;
 
 /// Global skill directories (relative to $HOME).
 const GLOBAL_SKILL_DIRS: &[&str] = &[
@@ -517,35 +515,22 @@ pub fn load_skill_full(name: &str) -> Result<String> {
 
 /// Fuzzy-search installed skills by query.
 /// Returns (score, skill) sorted by score descending.
-/// Scores name and description separately, takes the best.
+/// Scores name and description separately, takes the best — a hit on the
+/// short name shouldn't be drowned out by a longer but irrelevant description.
 pub fn fuzzy_search_skills(query: &str) -> Vec<(u32, InstalledSkill)> {
     let skills = collect_installed_skills();
     if query.trim().is_empty() {
         return skills.into_iter().map(|s| (0, s)).collect();
     }
 
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let mut results = Vec::new();
-
-    for skill in skills {
-        // Score name separately (short string → higher scores for good matches)
-        let name_score = pattern
-            .score(Utf32Str::Ascii(skill.name.as_bytes()), &mut matcher)
-            .unwrap_or(0);
-
-        // Score description
-        let desc_score = skill
-            .description
-            .as_ref()
-            .and_then(|desc| pattern.score(Utf32Str::Ascii(desc.as_bytes()), &mut matcher))
-            .unwrap_or(0);
-
-        let best = name_score.max(desc_score);
-        if best > 0 {
-            results.push((best, skill));
-        }
-    }
+    let mut results: Vec<(u32, InstalledSkill)> = skills
+        .into_iter()
+        .filter_map(|skill| {
+            let desc = skill.description.as_deref().unwrap_or("");
+            let best = fuzzy::score_best(query, &[&skill.name, desc])?;
+            (best > 0).then_some((best, skill))
+        })
+        .collect();
 
     results.sort_by(|a, b| b.0.cmp(&a.0));
     results
@@ -853,27 +838,14 @@ pub fn fuzzy_search_catalog(query: &str, catalog: &[CatalogEntry]) -> Vec<(u32, 
     if query.trim().is_empty() {
         return catalog.iter().map(|e| (0, e.clone())).collect();
     }
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let mut results = Vec::new();
-
-    for entry in catalog {
-        let name_score = pattern
-            .score(Utf32Str::Ascii(entry.name.as_bytes()), &mut matcher)
-            .unwrap_or(0);
-        let desc_score = entry
-            .description
-            .as_ref()
-            .and_then(|d| pattern.score(Utf32Str::Ascii(d.as_bytes()), &mut matcher))
-            .unwrap_or(0);
-        let repo_score = pattern
-            .score(Utf32Str::Ascii(entry.repo.as_bytes()), &mut matcher)
-            .unwrap_or(0);
-        let best = name_score.max(desc_score).max(repo_score);
-        if best > 0 {
-            results.push((best, entry.clone()));
-        }
-    }
+    let mut results: Vec<(u32, CatalogEntry)> = catalog
+        .iter()
+        .filter_map(|entry| {
+            let desc = entry.description.as_deref().unwrap_or("");
+            let best = fuzzy::score_best(query, &[&entry.name, desc, &entry.repo])?;
+            (best > 0).then(|| (best, entry.clone()))
+        })
+        .collect();
     results.sort_by(|a, b| b.0.cmp(&a.0));
     results
 }
@@ -896,7 +868,6 @@ pub fn match_skills_for_message(message: &str) -> Vec<InstalledSkill> {
     let skills = collect_installed_skills();
     let mut matched = Vec::new();
     let mut matched_names = HashSet::new();
-    let mut matcher = Matcher::new(Config::DEFAULT);
 
     // Extract query words from message (3+ chars, no stop words)
     let msg_words: Vec<&str> = msg_lower
@@ -907,14 +878,11 @@ pub fn match_skills_for_message(message: &str) -> Vec<InstalledSkill> {
     for skill in &skills {
         // Phase 1: fuzzy match each message word against skill name
         let name_lower = skill.name.to_lowercase();
-        let mut best_name_score: u32 = 0;
-        for word in &msg_words {
-            let pattern = Pattern::parse(word, CaseMatching::Ignore, Normalization::Smart);
-            if let Some(score) = pattern.score(Utf32Str::Ascii(name_lower.as_bytes()), &mut matcher)
-            {
-                best_name_score = best_name_score.max(score);
-            }
-        }
+        let best_name_score: u32 = msg_words
+            .iter()
+            .filter_map(|w| fuzzy::score_one(w, &name_lower))
+            .max()
+            .unwrap_or(0);
 
         // Strong name match → include
         if best_name_score >= 60 {

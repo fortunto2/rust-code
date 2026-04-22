@@ -1,5 +1,6 @@
 //! Shared state for rc-cli tools, stored in AgentContext typed store.
 
+use crate::fff_state::FffState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -16,15 +17,24 @@ pub struct RcState {
     pub edit_failures: Arc<Mutex<HashMap<String, usize>>>,
     /// Current step number (for cache tracking).
     pub step_count: Arc<Mutex<usize>>,
+    /// Frecency-aware fuzzy file search (fff-search).
+    pub fff: FffState,
 }
 
 impl RcState {
     pub fn new(cwd: PathBuf) -> Self {
+        // LMDB caches live under .rust-code/cache/ inside the project.
+        // Rooting here (not in $HOME) keeps the index per-project, which
+        // matches how frecency is expected to behave.
+        let cache_dir = cwd.join(".rust-code").join("cache");
+        let fff = FffState::init(cwd.clone(), cache_dir);
+
         Self {
             cwd: Arc::new(Mutex::new(cwd)),
             read_cache: Arc::new(Mutex::new(HashMap::new())),
             edit_failures: Arc::new(Mutex::new(HashMap::new())),
             step_count: Arc::new(Mutex::new(0)),
+            fff,
         }
     }
 

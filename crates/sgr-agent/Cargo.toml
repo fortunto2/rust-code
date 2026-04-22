@@ -24,7 +24,7 @@ app-tools = ["session", "dep:anyhow"]
 providers = ["dep:base64"]
 telemetry = ["dep:tracing-subscriber", "dep:tracing-log", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:chrono", "dep:rusqlite", "dep:dirs"]
 logging = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:chrono"]
-search = ["dep:nucleo-matcher"]
+search = ["dep:neo_frizbee"]
 genai = ["dep:genai", "agent", "futures"]
 oxide = ["agent", "futures"]
 oxide-ws = ["openai-oxide/websocket"]
@@ -56,7 +56,7 @@ opentelemetry-otlp = { version = "0.31", optional = true, default-features = fal
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 dirs = { version = "6", optional = true }
-nucleo-matcher = { version = "0.3", optional = true }
+neo_frizbee = { version = "0.10", optional = true }
 sgr-agent-core = { version = "0.2.0", path = "../sgr-agent-core" }
 sgr-agent-tools = { version = "0.4.1", path = "../sgr-agent-tools", optional = true }
 serde_yaml = "0.9"

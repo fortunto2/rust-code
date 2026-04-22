@@ -23,9 +23,10 @@ tracing = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.27"
 tui-textarea = "0.4"
-nucleo = "0.5"
-nucleo-matcher = "0.3"
+# Fuzzy matcher: Smith-Waterman SIMD; shared with fff-search for single engine.
+neo_frizbee = "0.10"
 
 # Tools / Core
 ignore = "0.4" # for fast directory traversal / gitignore support
 rmcp = { version = "0.11.0", features = ["client", "transport-io", "transport-child-process"] }
+fff-search = "0.6.1" # fast fuzzy file finder with frecency + query history (dmtrKovalenko/fff.nvim)

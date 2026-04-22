@@ -1,4 +1,9 @@
 //! SearchCode tool — ripgrep + fuzzy file path matching.
+//!
+//! File-path matching goes through [`FffState`](crate::fff_state::FffState)
+//! when enabled — frecency + combo-boost make repeat queries return the
+//! file the agent actually opened last time. Falls back to [`FuzzySearcher`]
+//! (neo_frizbee-based) if fff failed to initialize.
 
 use crate::rc_state::RcState;
 use crate::tools::{FuzzySearcher, truncate_output};
@@ -40,18 +45,34 @@ impl Tool for SearchCodeTool {
         let args: SearchCodeArgs = parse_args(&args)?;
         let mut result = String::new();
 
-        if let Ok(files) = FuzzySearcher::get_all_files().await {
+        let matches = if self.state.fff.enabled() {
+            // fff scoring is a combined (fuzzy + frecency + combo) integer.
+            // No hand-tuned cutoff — trust fff's top-N and cap at 5.
+            self.state
+                .fff
+                .search(&args.query, 5)
+                .into_iter()
+                .map(|s| (s.score, s.path))
+                .collect::<Vec<_>>()
+        } else if let Ok(files) = FuzzySearcher::get_all_files().await {
             let mut searcher = FuzzySearcher::new();
-            let matches = searcher.fuzzy_match_files(&args.query, &files);
-            if !matches.is_empty() {
-                result.push_str(&format!("File path matches for '{}':\n", args.query));
-                for (score, path) in matches.iter().take(5) {
-                    if *score > 50 {
-                        result.push_str(&format!("- {}\n", path));
-                    }
-                }
-                result.push('\n');
+            searcher
+                .fuzzy_match_files(&args.query, &files)
+                .into_iter()
+                .filter(|(score, _)| *score > 50)
+                .map(|(s, p)| (s as i32, p))
+                .take(5)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if !matches.is_empty() {
+            result.push_str(&format!("File path matches for '{}':\n", args.query));
+            for (_score, path) in &matches {
+                result.push_str(&format!("- {}\n", path));
             }
+            result.push('\n');
         }
 
         result.push_str(&format!("Content search results for '{}':\n", args.query));

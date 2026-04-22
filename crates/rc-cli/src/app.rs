@@ -395,24 +395,11 @@ impl<'a> BgTasksState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            use nucleo_matcher::{
-                Utf32Str,
-                pattern::{CaseMatching, Normalization, Pattern},
-            };
-            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-            let mut scored: Vec<(u32, BgTaskItem)> = self
-                .all_items
-                .iter()
-                .filter_map(|item| {
-                    let score = pattern.score(
-                        Utf32Str::Ascii(item.title.as_bytes()),
-                        &mut self.searcher.matcher,
-                    )?;
-                    Some((score, item.clone()))
-                })
+            let titles: Vec<&str> = self.all_items.iter().map(|i| i.title.as_str()).collect();
+            self.filtered_items = crate::fuzzy::match_strings(&query, &titles)
+                .into_iter()
+                .map(|(_, idx)| self.all_items[idx].clone())
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            self.filtered_items = scored.into_iter().map(|(_, item)| item).collect();
         }
         if self.filtered_items.is_empty() {
             self.list_state.select(None);
@@ -505,25 +492,15 @@ impl<'a> TasksSearchState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            use nucleo_matcher::{
-                Utf32Str,
-                pattern::{CaseMatching, Normalization, Pattern},
-            };
-            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-            let mut scored: Vec<(u32, sgr_agent::Task)> = self
+            let haystacks: Vec<String> = self
                 .all_items
                 .iter()
-                .filter_map(|t| {
-                    let search_text = format!("{} {} {}", t.title, t.status, t.priority);
-                    let score = pattern.score(
-                        Utf32Str::Ascii(search_text.as_bytes()),
-                        &mut self.searcher.matcher,
-                    )?;
-                    Some((score, t.clone()))
-                })
+                .map(|t| format!("{} {} {}", t.title, t.status, t.priority))
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            self.filtered_items = scored.into_iter().map(|(_, t)| t).collect();
+            self.filtered_items = crate::fuzzy::match_strings(&query, &haystacks)
+                .into_iter()
+                .map(|(_, idx)| self.all_items[idx].clone())
+                .collect();
         }
         if self.filtered_items.is_empty() {
             self.list_state.select(None);
@@ -606,33 +583,15 @@ impl<'a> SkillsState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            // Fuzzy search against name + description using nucleo
-            use nucleo_matcher::{
-                Utf32Str,
-                pattern::{CaseMatching, Normalization, Pattern},
-            };
-            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-
+            // Score name and `name source` separately, take the best. This
+            // lets a hit on the short name beat the same query against the
+            // longer combined string (more distractor characters → lower score).
             let mut scored: Vec<(u32, SkillEntry)> = self
                 .all_items
                 .iter()
                 .filter_map(|s| {
-                    let name_score = pattern
-                        .score(
-                            Utf32Str::Ascii(s.name.as_bytes()),
-                            &mut self.searcher.matcher,
-                        )
-                        .unwrap_or(0);
-
-                    let haystack = format!("{} {}", s.name, s.source);
-                    let full_score = pattern
-                        .score(
-                            Utf32Str::Ascii(haystack.as_bytes()),
-                            &mut self.searcher.matcher,
-                        )
-                        .unwrap_or(0);
-
-                    let best = name_score.max(full_score);
+                    let combined = format!("{} {}", s.name, s.source);
+                    let best = crate::fuzzy::score_best(&query, &[&s.name, &combined])?;
                     if best > 0 {
                         Some((best, s.clone()))
                     } else {
@@ -703,22 +662,10 @@ impl<'a> GitHistoryState<'a> {
         if query.trim().is_empty() {
             self.filtered_items = self.all_items.clone();
         } else {
-            use nucleo_matcher::{
-                Utf32Str,
-                pattern::{CaseMatching, Normalization, Pattern},
-            };
-            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-            let mut scored: Vec<(u32, String)> = self
-                .all_items
-                .iter()
-                .filter_map(|item| {
-                    let score = pattern
-                        .score(Utf32Str::Ascii(item.as_bytes()), &mut self.searcher.matcher)?;
-                    Some((score, item.clone()))
-                })
+            self.filtered_items = crate::fuzzy::match_strings(&query, &self.all_items)
+                .into_iter()
+                .map(|(_, idx)| self.all_items[idx].clone())
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            self.filtered_items = scored.into_iter().map(|(_, item)| item).collect();
         }
         if self.filtered_items.is_empty() {
             self.list_state.select(None);

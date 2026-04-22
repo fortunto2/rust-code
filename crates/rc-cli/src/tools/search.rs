@@ -1,17 +1,17 @@
 use anyhow::Result;
 use ignore::WalkBuilder;
-use nucleo_matcher::{Config, Matcher};
 use tokio::task;
 
-pub struct FuzzySearcher {
-    pub matcher: Matcher,
-}
+use crate::fuzzy;
+
+/// Legacy fuzzy file matcher. Stateless; the field is kept so callers
+/// can hold a single instance as part of their UI state without changes.
+#[derive(Default)]
+pub struct FuzzySearcher;
 
 impl FuzzySearcher {
     pub fn new() -> Self {
-        Self {
-            matcher: Matcher::new(Config::DEFAULT),
-        }
+        Self
     }
 
     /// Recursively search for files in the current directory, ignoring gitignored files.
@@ -44,27 +44,13 @@ impl FuzzySearcher {
         Ok(files)
     }
 
-    /// Sort a list of files based on a fuzzy search query using nucleo-matcher
+    /// Sort a list of files by fuzzy-search score against the query.
+    /// Returns only matches, descending. Score is u32 for call-site
+    /// compatibility with the previous nucleo-based API.
     pub fn fuzzy_match_files(&mut self, query: &str, files: &[String]) -> Vec<(u32, String)> {
-        let mut matches = Vec::new();
-
-        let pattern = nucleo_matcher::pattern::Pattern::parse(
-            query,
-            nucleo_matcher::pattern::CaseMatching::Ignore,
-            nucleo_matcher::pattern::Normalization::Smart,
-        );
-
-        for file in files {
-            // nucleo needs UTF-32 or ascii
-            let utf32 = nucleo_matcher::Utf32Str::Ascii(file.as_bytes()); // Assuming paths are mostly ASCII for speed
-
-            if let Some(score) = pattern.score(utf32, &mut self.matcher) {
-                matches.push((score, file.clone()));
-            }
-        }
-
-        // Sort by score descending
-        matches.sort_by(|a, b| b.0.cmp(&a.0));
-        matches
+        fuzzy::match_strings(query, files)
+            .into_iter()
+            .map(|(score, idx)| (score, files[idx].clone()))
+            .collect()
     }
 }

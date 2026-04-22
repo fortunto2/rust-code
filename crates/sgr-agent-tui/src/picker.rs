@@ -1,11 +1,10 @@
 //! Generic fuzzy picker widget — reusable overlay for searching and selecting items.
 //!
-//! Uses nucleo-matcher for fuzzy scoring. Channels allow grouping items
-//! (e.g. "music" | "video" | "session") with Tab switching.
+//! Uses [`neo_frizbee`] (SIMD Smith-Waterman) for scoring. Channels allow
+//! grouping items (e.g. "music" | "video" | "session") with Tab switching.
 
 use crate::focus::{FocusLayer, FocusResult};
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
+use neo_frizbee::{Config, match_list};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
@@ -191,41 +190,47 @@ impl FuzzyPicker {
 
     /// Re-filter items based on current query and active channel.
     fn filter(&mut self) {
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let mut buf = Vec::new();
-
         let active_channel = self
             .active_channel
             .and_then(|idx| self.channels.get(idx).cloned());
 
+        // Candidate indices after channel filter.
+        let candidates: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| match &active_channel {
+                Some(ch) => &item.channel == ch,
+                None => true,
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
         self.filtered.clear();
 
-        for (idx, item) in self.items.iter().enumerate() {
-            // Channel filter
-            if let Some(ref ch) = active_channel
-                && &item.channel != ch
-            {
-                continue;
+        if self.query.is_empty() {
+            // No query — include all in insertion order (recent first).
+            let n = candidates.len();
+            for (pos, item_idx) in candidates.into_iter().enumerate() {
+                self.filtered.push(((n - pos) as u32, item_idx));
             }
-
-            // Fuzzy score
-            let score = if self.query.is_empty() {
-                // No query — include all, score by position (recent first).
-                Some((self.items.len() - idx) as u32)
-            } else {
-                let pattern =
-                    Pattern::parse(&self.query, CaseMatching::Ignore, Normalization::Smart);
-                let haystack = Utf32Str::new(&item.label, &mut buf);
-                pattern.score(haystack, &mut matcher)
+        } else {
+            // Fuzzy score against label. match_list returns matches sorted
+            // descending by score, with indices into the haystack slice.
+            let labels: Vec<&str> = candidates
+                .iter()
+                .map(|&i| self.items[i].label.as_str())
+                .collect();
+            let cfg = Config {
+                max_typos: Some(2),
+                sort: true,
+                ..Default::default()
             };
-
-            if let Some(s) = score {
-                self.filtered.push((s, idx));
+            for m in match_list(&self.query, &labels, &cfg) {
+                let item_idx = candidates[m.index as usize];
+                self.filtered.push((m.score as u32, item_idx));
             }
         }
-
-        // Sort by score descending.
-        self.filtered.sort_by(|a, b| b.0.cmp(&a.0));
 
         // Reset selection.
         if self.filtered.is_empty() {

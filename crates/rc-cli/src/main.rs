@@ -2,6 +2,8 @@ pub mod agent;
 pub mod app;
 pub mod backend;
 pub mod config;
+pub mod fff_state;
+pub mod fuzzy;
 pub mod preview;
 pub mod rc_state;
 pub mod tools;

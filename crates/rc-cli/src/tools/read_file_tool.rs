@@ -90,6 +90,12 @@ impl Tool for ReadFileTool {
             cache.insert(cache_key, (content, step));
         }
 
+        // Record access for frecency + combo-boost. Only on first read:
+        // re-reads would double-count the same file for the same query.
+        if !is_reread {
+            self.state.fff.track_read(std::path::Path::new(&resolved));
+        }
+
         Ok(ToolOutput::text(truncate_output(&output)))
     }
 }
