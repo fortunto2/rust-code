@@ -77,7 +77,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish rust-code
-        run: cargo publish -p rust-code --allow-dirty
+        # Hide $CI from the fff-search build gate (see build-linux for details).
+        run: env -u CI cargo publish -p rust-code --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
