@@ -2893,9 +2893,9 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96ad81ec19dcc72b40921a964f42beb32a25745b4619a871f28a6aaa5537a5ab"
+checksum = "3eba564f02114d927bb7183227feacbe97d49d18d8a20f7c03b25a319f10bb8f"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3821,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "rust-code"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4222,7 +4222,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-tools"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-tui"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "crossterm 0.27.0",
