@@ -14,3 +14,4 @@ dist/
 *.tar.gz.sha256
 *.py
 skills/autoresearch/data/
+.claude/
