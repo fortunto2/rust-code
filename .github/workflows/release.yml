@@ -27,8 +27,12 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # fff-search build.rs hard-panics when $CI is set unless the zlob (Zig)
+      # feature is enabled. zlob 1.3.3 is currently incompatible with Zig 0.15.2
+      # (upstream uses stale std API), so we stick to the pure-Rust globset
+      # backend and hide $CI from cargo for this single step.
       - name: Build
-        run: cargo build --release -p rust-code
+        run: env -u CI cargo build --release -p rust-code
 
       - name: Package
         run: |

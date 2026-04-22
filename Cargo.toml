@@ -29,4 +29,4 @@ neo_frizbee = "0.10"
 # Tools / Core
 ignore = "0.4" # for fast directory traversal / gitignore support
 rmcp = { version = "0.11.0", features = ["client", "transport-io", "transport-child-process"] }
-fff-search = "0.6.1" # fast fuzzy file finder with frecency + query history (dmtrKovalenko/fff.nvim)
+fff-search = "0.6.1" # fast fuzzy file finder with frecency + query history (dmtrKovalenko/fff.nvim). Pure-Rust globset backend; zlob (Zig) requires a specific Zig version and is skipped.
