@@ -70,10 +70,7 @@ pub struct KnnStore {
 
 impl KnnStore {
     /// Create with seed examples. Loads adaptive store from disk if exists.
-    pub fn new(
-        seed: Vec<(String, Array1<f32>)>,
-        store_path: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn new(seed: Vec<(String, Array1<f32>)>, store_path: impl Into<PathBuf>) -> Self {
         let store_path = store_path.into();
         let seed = seed
             .into_iter()
@@ -82,7 +79,11 @@ impl KnnStore {
         let adaptive = Self::load_from_disk(&store_path);
         let adaptive_count = adaptive.len();
         if adaptive_count > 0 {
-            tracing::info!("KnnStore: loaded {} adaptive examples from {}", adaptive_count, store_path.display());
+            tracing::info!(
+                "KnnStore: loaded {} adaptive examples from {}",
+                adaptive_count,
+                store_path.display()
+            );
         }
         Self {
             seed,

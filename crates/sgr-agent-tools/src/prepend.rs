@@ -41,12 +41,14 @@ impl<B: FileBackend> Tool for PrependTool<B> {
         let a: PrependArgs = parse_args(&args)?;
 
         // Read existing content
-        let raw = self.0.read(&a.path, false, 0, 0).await.map_err(backend_err)?;
+        let raw = self
+            .0
+            .read(&a.path, false, 0, 0)
+            .await
+            .map_err(backend_err)?;
         // Strip PCM header ("$ cat path\n") if present
         let body = if raw.starts_with("$ ") {
-            raw.find('\n')
-                .map(|i| &raw[i + 1..])
-                .unwrap_or(&raw)
+            raw.find('\n').map(|i| &raw[i + 1..]).unwrap_or(&raw)
         } else {
             &raw
         };

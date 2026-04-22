@@ -81,7 +81,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.content.contains("Copied src.md → dst.md"));
-        assert!(fs.content("dst.md").unwrap().starts_with("# Hello\n\nLong content here..."));
+        assert!(
+            fs.content("dst.md")
+                .unwrap()
+                .starts_with("# Hello\n\nLong content here...")
+        );
         // Source preserved
         assert!(fs.exists("src.md"));
     }
@@ -100,6 +104,10 @@ mod tests {
             .await
             .unwrap();
         assert!(result.content.contains("Copied doc.md → doc.md"));
-        assert!(fs.content("doc.md").unwrap().starts_with("original content"));
+        assert!(
+            fs.content("doc.md")
+                .unwrap()
+                .starts_with("original content")
+        );
     }
 }

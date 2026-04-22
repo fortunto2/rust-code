@@ -428,7 +428,8 @@ impl JsonRepairParser {
             self.skip_comments();
             self.skip_whitespace();
 
-            if needs_comma && !expecting_key
+            if needs_comma
+                && !expecting_key
                 && let Some(ch) = self.current_char()
                 && (ch == '"' || ch == '\'' || ch.is_alphabetic() || ch == '_')
             {

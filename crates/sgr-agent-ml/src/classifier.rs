@@ -25,8 +25,9 @@ pub struct CentroidClassifier {
 impl CentroidClassifier {
     /// Load centroids from JSON file.
     pub fn load(centroids_path: &Path) -> Result<Self> {
-        let data = std::fs::read_to_string(centroids_path)
-            .with_context(|| format!("failed to read centroids from {}", centroids_path.display()))?;
+        let data = std::fs::read_to_string(centroids_path).with_context(|| {
+            format!("failed to read centroids from {}", centroids_path.display())
+        })?;
         let raw: Vec<(String, Vec<f32>)> =
             serde_json::from_str(&data).context("failed to parse centroids JSON")?;
         let centroids = raw

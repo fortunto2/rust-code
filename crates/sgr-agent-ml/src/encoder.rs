@@ -25,12 +25,14 @@ impl OnnxEncoder {
     ///
     /// Expects `model.onnx` and `tokenizer.json` in `models_dir`.
     pub fn load(models_dir: &Path) -> Result<Self> {
-        Self::load_files(&models_dir.join("model.onnx"), &models_dir.join("tokenizer.json"))
+        Self::load_files(
+            &models_dir.join("model.onnx"),
+            &models_dir.join("tokenizer.json"),
+        )
     }
 
     /// Load from explicit file paths (e.g. nli_model.onnx, nli_tokenizer.json).
     pub fn load_files(model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
-
         let session = Session::builder()
             .context("failed to create ONNX session builder")?
             .commit_from_file(&model_path)
@@ -83,11 +85,7 @@ impl OnnxEncoder {
             .iter()
             .map(|&m| m as i64)
             .collect();
-        let type_ids: Vec<i64> = encoding
-            .get_type_ids()
-            .iter()
-            .map(|&t| t as i64)
-            .collect();
+        let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
         let len = ids.len();
 
         let input_ids = Tensor::from_array(([1i64, len as i64], ids.into_boxed_slice()))?;
@@ -139,11 +137,7 @@ impl OnnxEncoder {
             .iter()
             .map(|&m| m as i64)
             .collect();
-        let type_ids: Vec<i64> = encoding
-            .get_type_ids()
-            .iter()
-            .map(|&t| t as i64)
-            .collect();
+        let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
         let len = ids.len();
 
         let input_ids = Tensor::from_array(([1i64, len as i64], ids.into_boxed_slice()))?;
