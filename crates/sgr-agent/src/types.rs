@@ -324,6 +324,12 @@ pub struct LlmConfig {
     /// E.g. DeepInfra Nemotron Super needs "none" for function calling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// `text.verbosity` for OpenAI Responses API: "low" | "medium" | "high".
+    /// "low" suppresses narrative text emitted alongside forced tool calls —
+    /// useful when only the tool args are consumed and the assistant.text is
+    /// wasted output tokens. Currently honored by the oxide (Responses) backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<String>,
     /// Force genai backend (for providers with native API: Anthropic, Gemini).
     /// When false, oxide (OpenAI Responses API) is used by default.
     #[serde(default)]
@@ -376,6 +382,7 @@ impl Default for LlmConfig {
             use_chat_api: false,
             extra_headers: Vec::new(),
             reasoning_effort: None,
+            verbosity: None,
             use_genai: false,
             use_cli: false,
             session_id: None,
@@ -444,6 +451,14 @@ impl LlmConfig {
     /// Set max output tokens.
     pub fn max_tokens(mut self, m: u32) -> Self {
         self.max_tokens = Some(m);
+        self
+    }
+
+    /// Set `text.verbosity` for the OpenAI Responses API.
+    /// Accepts "low" | "medium" | "high". "low" minimizes narrative text the
+    /// model emits alongside a forced tool call.
+    pub fn verbosity(mut self, v: impl Into<String>) -> Self {
+        self.verbosity = Some(v.into());
         self
     }
 

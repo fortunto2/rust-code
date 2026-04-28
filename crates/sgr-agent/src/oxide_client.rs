@@ -90,6 +90,9 @@ pub struct OxideClient {
     pub(crate) model: String,
     pub(crate) temperature: Option<f64>,
     pub(crate) max_tokens: Option<u32>,
+    /// `text.verbosity` for Responses API ("low" | "medium" | "high").
+    /// `None` = let the API default apply.
+    pub(crate) verbosity: Option<String>,
     /// WebSocket session (when oxide-ws feature is enabled and connected).
     #[cfg(feature = "oxide-ws")]
     ws: tokio::sync::Mutex<Option<openai_oxide::websocket::WsSession>>,
@@ -128,6 +131,7 @@ impl OxideClient {
             model: config.model.clone(),
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
+            verbosity: config.verbosity.clone(),
             #[cfg(feature = "oxide-ws")]
             ws: tokio::sync::Mutex::new(None),
             #[cfg(feature = "oxide-ws")]
@@ -296,17 +300,26 @@ impl OxideClient {
             req = req.max_output_tokens(max as i64);
         }
 
-        // Structured output via json_schema
-        if let Some(schema_val) = schema {
-            req = req.text(ResponseTextConfig {
-                format: Some(ResponseTextFormat::JsonSchema {
-                    name: "sgr_response".into(),
-                    description: None,
-                    schema: Some(schema_val.clone()),
-                    strict: Some(true),
-                }),
-                verbosity: None,
-            });
+        // Structured output via json_schema (and/or verbosity passthrough)
+        match (schema, self.verbosity.clone()) {
+            (Some(schema_val), v) => {
+                req = req.text(ResponseTextConfig {
+                    format: Some(ResponseTextFormat::JsonSchema {
+                        name: "sgr_response".into(),
+                        description: None,
+                        schema: Some(schema_val.clone()),
+                        strict: Some(true),
+                    }),
+                    verbosity: v,
+                });
+            }
+            (None, Some(v)) => {
+                req = req.text(ResponseTextConfig {
+                    format: None,
+                    verbosity: Some(v),
+                });
+            }
+            (None, None) => {}
         }
 
         req
@@ -376,6 +389,13 @@ impl OxideClient {
         }
         if let Some(max) = self.max_tokens {
             req = req.max_output_tokens(max as i64);
+        }
+
+        if let Some(v) = self.verbosity.clone() {
+            req = req.text(ResponseTextConfig {
+                format: None,
+                verbosity: Some(v),
+            });
         }
 
         if let Some(prev_id) = previous_response_id {
