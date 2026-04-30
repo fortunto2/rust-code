@@ -101,6 +101,13 @@ pub struct OxideClient {
     ws_enabled: std::sync::atomic::AtomicBool,
 }
 
+/// OpenAI reasoning models reject the `temperature` parameter on the Responses API.
+/// Detect by model id prefix — covers gpt-5, gpt-5.x, o1, o3, o4 families.
+pub(crate) fn model_supports_temperature(model: &str) -> bool {
+    let m = model.strip_prefix("openai/").unwrap_or(model);
+    !(m.starts_with("gpt-5") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4"))
+}
+
 impl OxideClient {
     /// Create from LlmConfig.
     pub fn from_config(config: &LlmConfig) -> Result<Self, SgrError> {
@@ -288,9 +295,11 @@ impl OxideClient {
             req.input = Some(ResponseInput::Messages(input_items));
         }
 
-        // Temperature — skip default to reduce payload
+        // Temperature — skip for reasoning models (gpt-5*, o1/o3/o4) which reject it,
+        // and skip the default 1.0 to reduce payload.
         if let Some(temp) = self.temperature
             && (temp - 1.0).abs() > f64::EPSILON
+            && model_supports_temperature(&self.model)
         {
             req = req.temperature(temp);
         }
@@ -381,9 +390,10 @@ impl OxideClient {
             req.input = Some(ResponseInput::Items(items));
         }
 
-        // Temperature
+        // Temperature — same gating as the structured-output path above.
         if let Some(temp) = self.temperature
             && (temp - 1.0).abs() > f64::EPSILON
+            && model_supports_temperature(&self.model)
         {
             req = req.temperature(temp);
         }
@@ -851,14 +861,52 @@ mod tests {
 
     #[test]
     fn build_request_simple() {
-        let config = LlmConfig::with_key("sk-test", "gpt-5.4").temperature(0.5);
+        let config = LlmConfig::with_key("sk-test", "gpt-4o-mini").temperature(0.5);
         let client = OxideClient::from_config(&config).unwrap();
         let messages = vec![Message::system("Be helpful."), Message::user("Hello")];
         let req = client.build_request(&messages, None, None);
-        assert_eq!(req.model, "gpt-5.4");
+        assert_eq!(req.model, "gpt-4o-mini");
         assert!(req.instructions.is_none());
         assert!(req.input.is_some());
         assert_eq!(req.temperature, Some(0.5));
+    }
+
+    #[test]
+    fn temperature_skipped_for_reasoning_models() {
+        // gpt-5*, o1, o3, o4 reject the `temperature` param on the Responses API.
+        for model in [
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.4",
+            "gpt-5.5",
+            "o1-mini",
+            "o3",
+            "o4-mini",
+        ] {
+            let config = LlmConfig::with_key("sk-test", model).temperature(0.7);
+            let client = OxideClient::from_config(&config).unwrap();
+            let req = client.build_request(&[Message::user("Hi")], None, None);
+            assert_eq!(
+                req.temperature, None,
+                "temperature must be omitted for reasoning model `{model}`"
+            );
+        }
+    }
+
+    #[test]
+    fn model_supports_temperature_classification() {
+        assert!(model_supports_temperature("gpt-4o"));
+        assert!(model_supports_temperature("gpt-4o-mini"));
+        assert!(model_supports_temperature("gpt-4.1"));
+        assert!(model_supports_temperature("anthropic/claude-sonnet-4.6"));
+        assert!(!model_supports_temperature("gpt-5"));
+        assert!(!model_supports_temperature("gpt-5-mini"));
+        assert!(!model_supports_temperature("gpt-5.4"));
+        assert!(!model_supports_temperature("gpt-5.5"));
+        assert!(!model_supports_temperature("openai/gpt-5.5"));
+        assert!(!model_supports_temperature("o1-preview"));
+        assert!(!model_supports_temperature("o3-mini"));
+        assert!(!model_supports_temperature("o4-mini"));
     }
 
     #[test]
