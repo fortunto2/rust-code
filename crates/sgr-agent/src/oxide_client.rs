@@ -418,6 +418,7 @@ impl OxideClient {
     /// Function calling with explicit previous_response_id.
     /// Returns tool calls + new response_id for chaining.
     ///
+    /// Always sets `store(true)` so responses can be referenced by subsequent calls.
     /// When `previous_response_id` is provided, only delta messages need to be sent
     /// (server has full history from previous stored response).
     ///
@@ -432,6 +433,9 @@ impl OxideClient {
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
         let mut req = self.build_request(messages, None, previous_response_id);
+        // Always store so next call can chain via previous_response_id
+        req = req.store(true);
+
         // Convert ToolDefs to ResponseTools with strict mode.
         // strict: true guarantees LLM output matches schema exactly (no parse errors).
         // oxide ensure_strict() handles: additionalProperties, all-required,
@@ -573,7 +577,9 @@ impl LlmClient for OxideClient {
             };
 
         // Stateless — build request with full message history, no chaining.
-        let req = self.build_request(messages, Some(&strict_schema), None);
+        // store(true) enables server-side prompt caching for stable prefix.
+        let mut req = self.build_request(messages, Some(&strict_schema), None);
+        req = req.store(true);
 
         let span = tracing::info_span!(
             "oxide.responses.create",
@@ -651,8 +657,10 @@ impl LlmClient for OxideClient {
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
         // Stateless — no previous_response_id, full message history.
+        // store(true) enables server-side prompt caching: OpenAI auto-caches
         // the stable prefix (system prompt + tools) for requests >1024 tokens.
         let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
 
         // Convert ToolDefs to ResponseTools — no strict mode (faster server-side)
         let response_tools: Vec<ResponseTool> = tools
@@ -749,6 +757,7 @@ impl LlmClient for OxideClient {
         tools: &[ToolDef],
     ) -> Result<(Vec<ToolCall>, String), SgrError> {
         let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
 
         let response_tools: Vec<ResponseTool> = tools
             .iter()
@@ -812,7 +821,8 @@ impl LlmClient for OxideClient {
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
-        let req = self.build_request(messages, None, None);
+        let mut req = self.build_request(messages, None, None);
+        req = req.store(true);
 
         let response = self.send_request_auto(req).await?;
 

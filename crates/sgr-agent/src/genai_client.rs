@@ -444,6 +444,7 @@ impl GenaiClient {
         let genai_tools: Vec<Tool> = tools.iter().map(to_genai_tool).collect();
         req = req.with_tools(genai_tools);
         // Always store for stateful sessions — enables response_id reuse
+        req.store = Some(true);
         if let Some(prev_id) = previous_response_id {
             req.previous_response_id = Some(prev_id.to_string());
         }
