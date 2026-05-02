@@ -93,6 +93,10 @@ pub struct OxideClient {
     /// `text.verbosity` for Responses API ("low" | "medium" | "high").
     /// `None` = let the API default apply.
     pub(crate) verbosity: Option<String>,
+    /// `reasoning.effort` for Responses API on reasoning models.
+    /// "none" | "minimal" | "low" | "medium" | "high" | "xhigh".
+    /// `None` = let the model default apply (gpt-5* default = "medium").
+    pub(crate) reasoning_effort: Option<openai_oxide::types::common::ReasoningEffort>,
     /// WebSocket session (when oxide-ws feature is enabled and connected).
     #[cfg(feature = "oxide-ws")]
     ws: tokio::sync::Mutex<Option<openai_oxide::websocket::WsSession>>,
@@ -133,12 +137,26 @@ impl OxideClient {
         }
         config.apply_headers(&mut client_config);
 
+        let reasoning_effort = config.reasoning_effort.as_deref().and_then(|s| {
+            use openai_oxide::types::common::ReasoningEffort;
+            match s {
+                "none" => Some(ReasoningEffort::None),
+                "minimal" => Some(ReasoningEffort::Minimal),
+                "low" => Some(ReasoningEffort::Low),
+                "medium" => Some(ReasoningEffort::Medium),
+                "high" => Some(ReasoningEffort::High),
+                "xhigh" => Some(ReasoningEffort::Xhigh),
+                _ => None,
+            }
+        });
+
         Ok(Self {
             client: OpenAI::with_config(client_config),
             model: config.model.clone(),
             temperature: Some(config.temp),
             max_tokens: config.max_tokens,
             verbosity: config.verbosity.clone(),
+            reasoning_effort,
             #[cfg(feature = "oxide-ws")]
             ws: tokio::sync::Mutex::new(None),
             #[cfg(feature = "oxide-ws")]
@@ -307,6 +325,16 @@ impl OxideClient {
         // Max tokens
         if let Some(max) = self.max_tokens {
             req = req.max_output_tokens(max as i64);
+        }
+
+        // Reasoning effort (gpt-5*, o-series). Without an explicit effort, gpt-5*
+        // defaults to "medium" which can blow through the output budget on hidden
+        // reasoning before any tool call is emitted.
+        if let Some(ref effort) = self.reasoning_effort {
+            req.reasoning = Some(openai_oxide::types::responses::Reasoning {
+                effort: Some(effort.clone()),
+                summary: None,
+            });
         }
 
         // Structured output via json_schema (and/or verbosity passthrough)
