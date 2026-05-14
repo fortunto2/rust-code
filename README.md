@@ -117,10 +117,34 @@ Supported providers include:
 - **Google AI** via `GEMINI_API_KEY`
 - **Vertex AI** via `VERTEX_PROJECT` (uses Google Cloud ADC or service account)
 - **Anthropic** via `ANTHROPIC_API_KEY`
+- **OpenAI** via `OPENAI_API_KEY`
 - **OpenRouter** via `OPENROUTER_API_KEY`
 - **Ollama** (local via `OLLAMA_HOST`)
+- **Any OpenAI-compatible server** via `base_url` in config (llama.cpp, mistral.rs, vLLM, LM Studio, text-generation-webui, KoboldCpp, …)
 
 At least one provider must be configured before launching `rust-code`.
+
+### Self-hosted / OpenAI-compatible backends
+
+Anything that speaks `POST /v1/chat/completions` works via `base_url`. Set `use_chat_api = true` so `rust-code` routes through Chat Completions instead of OpenAI's newer Responses API (only OpenAI proper implements that):
+
+```toml
+# ~/.rust-code/config.toml
+model = "llama-3.1-8b-instruct"   # whatever your server loaded
+api_key = "sk-no-key-required"    # most local servers ignore it, but a value must be set
+base_url = "http://localhost:8080/v1"
+use_chat_api = true
+```
+
+Typical default endpoints:
+
+| Backend | `base_url` |
+|---|---|
+| llama.cpp (`llama-server`) | `http://localhost:8080/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+| mistral.rs | `http://localhost:1234/v1` |
+| vLLM | `http://localhost:8000/v1` |
+| Ollama (also supported natively via `OLLAMA_HOST` / `--local`) | `http://localhost:11434/v1` |
 
 Examples:
 
