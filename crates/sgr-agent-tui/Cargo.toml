@@ -10,7 +10,7 @@ categories = ["command-line-interface"]
 
 [dependencies]
 sgr-agent = { version = "0.7.7", path = "../sgr-agent", features = ["session", "telemetry"] }
-ratatui = "0.29.0"
+ratatui = "=0.29.0" # pinned: tui-textarea 0.4 ties us to 0.29
 crossterm = "0.27"
 neo_frizbee = "0.10"
 tokio = { version = "1", features = ["sync", "macros", "rt"] }

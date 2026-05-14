@@ -3,7 +3,10 @@
 set -e
 
 echo "Running tests..."
-cargo test --workspace --quiet --exclude genai
+# Exclude:
+# - genai: local fork, vendored
+# - sgr-agent-ml: requires onnxruntime native lib (ort-sys), CI/dev environment varies
+cargo test --workspace --quiet --exclude genai --exclude sgr-agent-ml
 
 echo "Running clippy..."
 cargo clippy -p sgr-agent-core -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings
