@@ -1,6 +1,6 @@
 [package]
 name = "rust-code"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 description = "AI-powered TUI coding agent written in Rust"
 license = "MIT"
@@ -21,7 +21,7 @@ crossterm.workspace = true
 tui-textarea.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-ratatui = "=0.29.0" # pinned: tui-textarea 0.4 ties us to 0.29; see issue #4
+ratatui = "0.29" # transitive constraint also enforced by tui-textarea 0.7 (^0.29)
 syntect = "5.3.0"
 textwrap = "0.16.2"
 tracing.workspace = true

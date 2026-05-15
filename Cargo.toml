@@ -21,8 +21,8 @@ tracing = "0.1"
 
 # UI / CLI
 clap = { version = "4.5", features = ["derive"] }
-crossterm = "0.27"
-tui-textarea = "=0.4.0" # pinned: 0.5+ requires ratatui 0.30 (Block moved to ratatui_widgets); see issue #4
+crossterm = "0.28" # matches tui-textarea 0.7 and ratatui 0.29's crossterm
+tui-textarea = "0.7" # 0.7+ declares ratatui ^0.29 (closed range) — resolver can't pull 0.30; fixes #4 for unlocked installs
 # Fuzzy matcher: Smith-Waterman SIMD; shared with fff-search for single engine.
 neo_frizbee = "0.10"
 
