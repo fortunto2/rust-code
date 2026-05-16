@@ -31,6 +31,11 @@ enum Backend {
     Genai(crate::genai_client::GenaiClient),
     /// CLI subprocess (claude -p / gemini -p / codex exec).
     Cli(crate::cli_client::CliClient),
+    /// Construction failed — returns the captured error on every call.
+    /// Lets `Llm::new` stay infallible while surfacing a clean error at call sites.
+    /// Only reachable when the `genai` feature is off; with `genai` we always have a fallback.
+    #[cfg_attr(feature = "genai", allow(dead_code))]
+    Failed(String),
 }
 
 /// Provider-agnostic LLM client. Construct via `Llm::new(&LlmConfig)`.
@@ -83,32 +88,59 @@ impl Llm {
             };
         }
 
-        if let Ok(client) = crate::oxide_client::OxideClient::from_config(config) {
-            tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
-            Self {
-                inner: Backend::Oxide(RetryClient::new(client)),
+        match crate::oxide_client::OxideClient::from_config(config) {
+            Ok(client) => {
+                tracing::debug!(model = %config.model, backend = "oxide", "Llm backend selected");
+                Self {
+                    inner: Backend::Oxide(RetryClient::new(client)),
+                }
             }
-        } else {
-            #[cfg(feature = "genai")]
-            {
-                tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected (oxide fallback)");
-                return Self {
-                    inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(config)),
-                };
+            Err(_e) => {
+                #[cfg(feature = "genai")]
+                {
+                    tracing::debug!(model = %config.model, backend = "genai", "Llm backend selected (oxide fallback)");
+                    Self {
+                        inner: Backend::Genai(crate::genai_client::GenaiClient::from_config(
+                            config,
+                        )),
+                    }
+                }
+                #[cfg(not(feature = "genai"))]
+                {
+                    let msg = format!(
+                        "no LLM backend available for model `{}` — set `api_key` or `base_url` \
+                         in ~/.rust-code/config.toml, or pick a known provider \
+                         (gemini, openai, claude, ollama, mistralrs, lmstudio, vllm, cloudflare). \
+                         Underlying error: {}",
+                        config.model, _e
+                    );
+                    tracing::error!("{msg}");
+                    Self {
+                        inner: Backend::Failed(msg),
+                    }
+                }
             }
-            #[cfg(not(feature = "genai"))]
-            panic!("OxideClient::from_config failed and genai feature not enabled");
         }
     }
 
     /// Get a reference to the inner LlmClient.
-    fn client(&self) -> &dyn LlmClient {
+    /// Returns `None` if construction failed — callers map that to `SgrError`.
+    fn client(&self) -> Option<&dyn LlmClient> {
         match &self.inner {
-            Backend::Oxide(c) => c,
-            Backend::OxideChat(c) => c,
+            Backend::Oxide(c) => Some(c),
+            Backend::OxideChat(c) => Some(c),
             #[cfg(feature = "genai")]
-            Backend::Genai(c) => c,
-            Backend::Cli(c) => c,
+            Backend::Genai(c) => Some(c),
+            Backend::Cli(c) => Some(c),
+            Backend::Failed(_) => None,
+        }
+    }
+
+    /// Captured construction error, if any.
+    fn failure(&self) -> Option<SgrError> {
+        match &self.inner {
+            Backend::Failed(msg) => Some(SgrError::Schema(msg.clone())),
+            _ => None,
         }
     }
 
@@ -143,6 +175,9 @@ impl Llm {
     where
         F: FnMut(&str),
     {
+        if let Some(err) = self.failure() {
+            return Err(err);
+        }
         match &self.inner {
             #[cfg(feature = "genai")]
             Backend::Genai(c) => c.stream_complete(messages, on_token).await,
@@ -153,12 +188,16 @@ impl Llm {
                 on_token(&text);
                 Ok(text)
             }
+            Backend::Failed(msg) => Err(SgrError::Schema(msg.clone())),
         }
     }
 
     /// Non-streaming text completion.
     pub async fn generate(&self, messages: &[Message]) -> Result<String, SgrError> {
-        self.client().complete(messages).await
+        match self.client() {
+            Some(c) => c.complete(messages).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     /// Function calling with stateful session support (Responses API).
@@ -169,9 +208,13 @@ impl Llm {
         tools: &[ToolDef],
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
-        self.client()
-            .tools_call_stateful(messages, tools, previous_response_id)
-            .await
+        match self.client() {
+            Some(c) => {
+                c.tools_call_stateful(messages, tools, previous_response_id)
+                    .await
+            }
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     /// Function calling that returns both tool calls and assistant text.
@@ -181,7 +224,10 @@ impl Llm {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<(Vec<ToolCall>, String), SgrError> {
-        self.client().tools_call_with_text(messages, tools).await
+        match self.client() {
+            Some(c) => c.tools_call_with_text(messages, tools).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     /// Structured output — generates JSON schema from `T`, parses result.
@@ -189,9 +235,11 @@ impl Llm {
         &self,
         messages: &[Message],
     ) -> Result<T, SgrError> {
+        let client = self
+            .client()
+            .ok_or_else(|| self.failure().expect("client() None implies failure()"))?;
         let schema = response_schema_for::<T>();
-        let (parsed, _tool_calls, raw_text) =
-            self.client().structured_call(messages, &schema).await?;
+        let (parsed, _tool_calls, raw_text) = client.structured_call(messages, &schema).await?;
         match parsed {
             Some(value) => serde_json::from_value::<T>(value)
                 .map_err(|e| SgrError::Schema(format!("Parse error: {e}\nRaw: {raw_text}"))),
@@ -207,6 +255,7 @@ impl Llm {
             #[cfg(feature = "genai")]
             Backend::Genai(_) => "genai",
             Backend::Cli(_) => "cli",
+            Backend::Failed(_) => "failed",
         }
     }
 }
@@ -218,7 +267,10 @@ impl LlmClient for Llm {
         messages: &[Message],
         schema: &Value,
     ) -> Result<(Option<Value>, Vec<ToolCall>, String), SgrError> {
-        self.client().structured_call(messages, schema).await
+        match self.client() {
+            Some(c) => c.structured_call(messages, schema).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     async fn tools_call(
@@ -226,7 +278,10 @@ impl LlmClient for Llm {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
-        self.client().tools_call(messages, tools).await
+        match self.client() {
+            Some(c) => c.tools_call(messages, tools).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     async fn tools_call_stateful(
@@ -235,9 +290,13 @@ impl LlmClient for Llm {
         tools: &[ToolDef],
         previous_response_id: Option<&str>,
     ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
-        self.client()
-            .tools_call_stateful(messages, tools, previous_response_id)
-            .await
+        match self.client() {
+            Some(c) => {
+                c.tools_call_stateful(messages, tools, previous_response_id)
+                    .await
+            }
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     async fn tools_call_with_text(
@@ -245,11 +304,17 @@ impl LlmClient for Llm {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<(Vec<ToolCall>, String), SgrError> {
-        self.client().tools_call_with_text(messages, tools).await
+        match self.client() {
+            Some(c) => c.tools_call_with_text(messages, tools).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
-        self.client().complete(messages).await
+        match self.client() {
+            Some(c) => c.complete(messages).await,
+            None => Err(self.failure().expect("client() None implies failure()")),
+        }
     }
 }
 
@@ -293,5 +358,39 @@ mod tests {
         assert_eq!(config.model, "gpt-4o");
         assert!(config.api_key.is_none());
         assert_eq!(config.temp, 0.7);
+    }
+
+    /// Issue #2: previously panicked when there was no api_key + no base_url + no genai feature.
+    /// Must now return a Failed backend that surfaces a clear error on first call.
+    #[test]
+    fn llm_without_key_or_url_does_not_panic() {
+        // Snapshot + clear OPENAI_API_KEY so the test is hermetic.
+        let saved = std::env::var("OPENAI_API_KEY").ok();
+        // SAFETY: tests in the same process can race on env vars, but cargo serializes
+        // `cargo test` within a single binary by default; this test is isolated enough.
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
+
+        let config = LlmConfig {
+            model: "ollama-local-model".into(),
+            api_key: None,
+            base_url: None,
+            ..Default::default()
+        };
+        let llm = Llm::new(&config);
+
+        // Restore env var before any assertion (so a failure doesn't leak state).
+        if let Some(v) = saved {
+            unsafe {
+                std::env::set_var("OPENAI_API_KEY", v);
+            }
+        }
+
+        // Without the genai feature we expect a Failed backend; with it we expect genai fallback.
+        #[cfg(not(feature = "genai"))]
+        assert_eq!(llm.backend_name(), "failed");
+        #[cfg(feature = "genai")]
+        assert_eq!(llm.backend_name(), "genai");
     }
 }

@@ -126,25 +126,69 @@ At least one provider must be configured before launching `rust-code`.
 
 ### Self-hosted / OpenAI-compatible backends
 
-Anything that speaks `POST /v1/chat/completions` works via `base_url`. Set `use_chat_api = true` so `rust-code` routes through Chat Completions instead of OpenAI's newer Responses API (only OpenAI proper implements that):
+Anything that speaks `POST /v1/chat/completions` works. The easiest path: set `provider` to one of the known names below and `rust-code` fills in `base_url`, picks up the right env var, and switches to Chat Completions for you.
 
 ```toml
-# ~/.rust-code/config.toml
-model = "llama-3.1-8b-instruct"   # whatever your server loaded
-api_key = "sk-no-key-required"    # most local servers ignore it, but a value must be set
-base_url = "http://localhost:8080/v1"
-use_chat_api = true
+# ~/.rust-code/config.toml — Ollama, one-line setup
+provider = "ollama"
+model = "llama3"        # any model your local Ollama has pulled
 ```
 
-Typical default endpoints:
+```toml
+# ~/.rust-code/config.toml — Groq Cloud (uses $GROQ_API_KEY)
+provider = "groq"
+model    = "llama-3.3-70b-versatile"   # set the current Groq model id
+```
 
-| Backend | `base_url` |
-|---|---|
-| llama.cpp (`llama-server`) | `http://localhost:8080/v1` |
-| LM Studio | `http://localhost:1234/v1` |
-| mistral.rs | `http://localhost:1234/v1` |
-| vLLM | `http://localhost:8000/v1` |
-| Ollama (also supported natively via `OLLAMA_HOST` / `--local`) | `http://localhost:11434/v1` |
+```toml
+# ~/.rust-code/config.toml — generic OpenAI-compatible endpoint that isn't in the table
+model = "llama-3.1-8b-instruct"
+api_key = "sk-no-key-required"    # most local servers ignore it, but a value must be set
+base_url = "http://my-llama-host:8080/v1"
+use_chat_api = true               # routes through Chat Completions, not OpenAI Responses
+```
+
+Known providers with auto-filled defaults:
+
+**Local / self-hosted** — `base_url` and api key are auto-filled; override `base_url` to point elsewhere on your LAN.
+
+| `provider` | default `base_url` | default model |
+|---|---|---|
+| `ollama` | `http://localhost:11434/v1` | `llama3` |
+| `mistralrs` / `mistral-rs` | `http://localhost:1234/v1` | `default` |
+| `lmstudio` / `lm-studio` | `http://localhost:1234/v1` | `default` |
+| `vllm` | `http://localhost:8000/v1` | `default` |
+| `llamacpp` / `llama-cpp` / `llama.cpp` | `http://localhost:8080/v1` | `default` |
+
+**Hosted OpenAI-compatible inference** — token read from the env var below (or `api_key` in config). **You must set `model`** — provider model lineups rotate too often to hardcode a sane default.
+
+| `provider` | `base_url` | env var(s) |
+|---|---|---|
+| `groq` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| `cerebras` | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| `deepinfra` | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_TOKEN` / `DEEPINFRA_API_KEY` |
+| `together` | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
+| `fireworks` | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+
+**Cloudflare** — needs the account id (in `project_id` or `$CLOUDFLARE_ACCOUNT_ID`).
+
+| `provider` | `base_url` template | env var(s) |
+|---|---|---|
+| `cloudflare` (Workers AI) | `https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1` | `CLOUDFLARE_API_TOKEN` or `CF_AI_API_KEY` |
+| `cloudflare-gateway` (AI Gateway) | `https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/compat` | `CF_AI_API_KEY` or `CLOUDFLARE_API_TOKEN`; gateway name in `location` or `$CLOUDFLARE_GATEWAY` |
+
+```toml
+# ~/.rust-code/config.toml — Cloudflare AI Gateway
+provider    = "cloudflare-gateway"
+project_id  = "33dec9645c443eef5859b1e10ce71e01"   # your CF account id
+location    = "my-gateway"                          # AI Gateway name
+# The `compat` endpoint requires a provider prefix in the model id:
+#   workers-ai/...   openrouter/...   anthropic/...   google-vertex-ai/...
+model       = "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# token read from $CF_AI_API_KEY (preferred) or $CLOUDFLARE_API_TOKEN
+```
+
+Other servers (text-generation-webui, KoboldCpp, internal proxies, …) still work — point `base_url` at them, set `api_key`, and `use_chat_api = true`.
 
 Examples:
 

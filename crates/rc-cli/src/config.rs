@@ -200,6 +200,20 @@ impl Config {
                 Some("gemini" | "google") => Some("gemini-3.1-pro-preview".into()),
                 Some("openai") => Some("gpt-4o".into()),
                 Some("claude" | "anthropic") => Some("claude-sonnet-4-20250514".into()),
+                // Local servers: the user knows what they loaded — pick a soft default.
+                Some("ollama") => Some("llama3".into()),
+                Some("mistralrs" | "mistral-rs") => Some("default".into()),
+                Some("lmstudio" | "lm-studio") => Some("default".into()),
+                Some("vllm") => Some("default".into()),
+                Some("llamacpp" | "llama-cpp" | "llama.cpp") => Some("default".into()),
+                // Hosted providers: model names change too often to hardcode (Llama 3.3 → 4,
+                // DeepSeek-V3 → V4, etc.). User MUST set `model` in config. We auto-fill
+                // base_url + token only; if model is missing the function returns None and
+                // main prints the no-provider error.
+                Some(
+                    "groq" | "cerebras" | "deepinfra" | "together" | "fireworks" | "cloudflare"
+                    | "cloudflare-gateway",
+                ) => None,
                 _ => {
                     // No provider specified — detect from available env vars
                     if std::env::var("GEMINI_API_KEY").is_ok() {
@@ -210,6 +224,11 @@ impl Config {
                         Some("claude-sonnet-4-20250514".into())
                     } else if std::env::var("OPENROUTER_API_KEY").is_ok() {
                         Some("google/gemini-2.5-flash".into())
+                    } else if std::env::var("CLOUDFLARE_ACCOUNT_ID").is_ok()
+                        && (std::env::var("CLOUDFLARE_API_TOKEN").is_ok()
+                            || std::env::var("CF_AI_API_KEY").is_ok())
+                    {
+                        Some("@cf/meta/llama-3.1-8b-instruct".into())
                     } else {
                         None
                     }
@@ -218,6 +237,104 @@ impl Config {
         });
 
         let model = model?;
+
+        // OpenAI-compatible local/self-hosted backends: auto-fill base_url + Chat API.
+        // base_url override from config still wins.
+        let local_defaults: Option<&'static str> = match provider {
+            Some("ollama") => Some("http://localhost:11434/v1"),
+            Some("mistralrs" | "mistral-rs") => Some("http://localhost:1234/v1"),
+            Some("lmstudio" | "lm-studio") => Some("http://localhost:1234/v1"),
+            Some("vllm") => Some("http://localhost:8000/v1"),
+            Some("llamacpp" | "llama-cpp" | "llama.cpp") => Some("http://localhost:8080/v1"),
+            _ => None,
+        };
+
+        if let Some(default_url) = local_defaults {
+            let url = self
+                .base_url
+                .clone()
+                .unwrap_or_else(|| default_url.to_string());
+            let key = self.api_key.clone().unwrap_or_else(|| "local".to_string());
+            let mut cfg = LlmConfig::endpoint(key, url, &model);
+            // Local servers all speak Chat Completions reliably; Responses support is
+            // patchy (Ollama supports it, llama.cpp/vLLM/mistral.rs don't yet).
+            cfg.use_chat_api = true;
+            return Some(cfg);
+        }
+
+        // Hosted OpenAI-compatible inference providers — (base_url, env-var candidates).
+        let hosted: Option<(&'static str, &'static [&'static str])> = match provider {
+            Some("groq") => Some(("https://api.groq.com/openai/v1", &["GROQ_API_KEY"])),
+            Some("cerebras") => Some(("https://api.cerebras.ai/v1", &["CEREBRAS_API_KEY"])),
+            Some("deepinfra") => Some((
+                "https://api.deepinfra.com/v1/openai",
+                &["DEEPINFRA_TOKEN", "DEEPINFRA_API_KEY"],
+            )),
+            Some("together") => Some(("https://api.together.xyz/v1", &["TOGETHER_API_KEY"])),
+            Some("fireworks") => Some((
+                "https://api.fireworks.ai/inference/v1",
+                &["FIREWORKS_API_KEY"],
+            )),
+            _ => None,
+        };
+
+        if let Some((default_url, env_keys)) = hosted {
+            let token = self
+                .api_key
+                .clone()
+                .or_else(|| env_keys.iter().find_map(|k| std::env::var(k).ok()))?;
+            let url = self
+                .base_url
+                .clone()
+                .unwrap_or_else(|| default_url.to_string());
+            let mut cfg = LlmConfig::endpoint(token, url, &model);
+            cfg.use_chat_api = true;
+            return Some(cfg);
+        }
+
+        // Cloudflare Workers AI — direct REST endpoint, needs account id + token.
+        if provider == Some("cloudflare") {
+            let account = self
+                .project_id
+                .clone()
+                .or_else(|| std::env::var("CLOUDFLARE_ACCOUNT_ID").ok())?;
+            let token = self
+                .api_key
+                .clone()
+                .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())
+                .or_else(|| std::env::var("CF_AI_API_KEY").ok())?;
+            let url = self.base_url.clone().unwrap_or_else(|| {
+                format!("https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1")
+            });
+            let mut cfg = LlmConfig::endpoint(token, url, &model);
+            cfg.use_chat_api = true;
+            return Some(cfg);
+        }
+
+        // Cloudflare AI Gateway — multi-provider proxy with usage analytics.
+        // URL pattern: gateway.ai.cloudflare.com/v1/{account}/{gateway}/compat
+        if provider == Some("cloudflare-gateway") {
+            let account = self
+                .project_id
+                .clone()
+                .or_else(|| std::env::var("CLOUDFLARE_ACCOUNT_ID").ok())?;
+            let gateway = self
+                .location
+                .clone()
+                .or_else(|| std::env::var("CLOUDFLARE_GATEWAY").ok())
+                .unwrap_or_else(|| "default".to_string());
+            let token = self
+                .api_key
+                .clone()
+                .or_else(|| std::env::var("CF_AI_API_KEY").ok())
+                .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())?;
+            let url = self.base_url.clone().unwrap_or_else(|| {
+                format!("https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/compat")
+            });
+            let mut cfg = LlmConfig::endpoint(token, url, &model);
+            cfg.use_chat_api = true;
+            return Some(cfg);
+        }
 
         // If explicit api_key in config file, use it
         if let Some(ref key) = self.api_key {
@@ -328,6 +445,218 @@ mod tests {
         assert_eq!(config.provider.as_deref(), Some("openai"));
         assert_eq!(config.model.as_deref(), Some("gpt-4o"));
         assert_eq!(config.api_key.as_deref(), Some("sk-local-secret"));
+    }
+
+    /// Issue #2: `provider = "ollama"` without explicit base_url must auto-fill the
+    /// localhost endpoint and switch to Chat Completions API (Ollama doesn't speak Responses).
+    #[test]
+    fn ollama_provider_fills_localhost_and_chat_api() {
+        let cfg = Config {
+            provider: Some("ollama".into()),
+            model: Some("7shi/borea-phi-3.5-coding:3.8b-mini-instruct-q6_K".into()),
+            ..Default::default()
+        };
+        let llm = cfg.to_llm_config(None).expect("ollama config builds");
+        assert_eq!(
+            llm.base_url.as_deref(),
+            Some("http://localhost:11434/v1"),
+            "ollama must default to its localhost endpoint"
+        );
+        assert!(
+            llm.use_chat_api,
+            "ollama only speaks Chat Completions, not Responses"
+        );
+        assert_eq!(
+            llm.model,
+            "7shi/borea-phi-3.5-coding:3.8b-mini-instruct-q6_K"
+        );
+    }
+
+    #[test]
+    fn ollama_provider_with_custom_base_url_is_respected() {
+        let cfg = Config {
+            provider: Some("ollama".into()),
+            model: Some("llama3".into()),
+            base_url: Some("http://10.0.0.5:11434/v1".into()),
+            ..Default::default()
+        };
+        let llm = cfg.to_llm_config(None).expect("ollama config builds");
+        assert_eq!(llm.base_url.as_deref(), Some("http://10.0.0.5:11434/v1"));
+        assert!(llm.use_chat_api);
+    }
+
+    #[test]
+    fn mistralrs_provider_defaults_to_port_1234() {
+        let cfg = Config {
+            provider: Some("mistralrs".into()),
+            model: Some("any-model".into()),
+            ..Default::default()
+        };
+        let llm = cfg.to_llm_config(None).expect("mistralrs config builds");
+        assert_eq!(llm.base_url.as_deref(), Some("http://localhost:1234/v1"));
+        assert!(llm.use_chat_api);
+    }
+
+    #[test]
+    fn local_provider_presets_use_known_ports() {
+        // (provider, expected_default_url)
+        let cases = [
+            ("lmstudio", "http://localhost:1234/v1"),
+            ("lm-studio", "http://localhost:1234/v1"),
+            ("vllm", "http://localhost:8000/v1"),
+            ("llamacpp", "http://localhost:8080/v1"),
+            ("llama-cpp", "http://localhost:8080/v1"),
+            ("llama.cpp", "http://localhost:8080/v1"),
+            ("mistral-rs", "http://localhost:1234/v1"),
+        ];
+        for (provider, expected_url) in cases {
+            let cfg = Config {
+                provider: Some(provider.into()),
+                model: Some("any".into()),
+                ..Default::default()
+            };
+            let llm = cfg
+                .to_llm_config(None)
+                .unwrap_or_else(|| panic!("provider `{provider}` should build"));
+            assert_eq!(
+                llm.base_url.as_deref(),
+                Some(expected_url),
+                "provider `{provider}` base_url",
+            );
+            assert!(
+                llm.use_chat_api,
+                "provider `{provider}` must use Chat Completions",
+            );
+        }
+    }
+
+    /// Hosted providers must read their token from the documented env var
+    /// AND build the canonical OpenAI-compatible endpoint.
+    /// The user MUST set `model` — we don't hardcode names because they rotate.
+    #[test]
+    fn hosted_providers_read_env_var_and_build_endpoint() {
+        let cases = [
+            ("groq", "GROQ_API_KEY", "https://api.groq.com/openai/v1"),
+            ("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
+            (
+                "deepinfra",
+                "DEEPINFRA_TOKEN",
+                "https://api.deepinfra.com/v1/openai",
+            ),
+            (
+                "together",
+                "TOGETHER_API_KEY",
+                "https://api.together.xyz/v1",
+            ),
+            (
+                "fireworks",
+                "FIREWORKS_API_KEY",
+                "https://api.fireworks.ai/inference/v1",
+            ),
+        ];
+        for (provider, env_var, expected_url) in cases {
+            // SAFETY: tests modify env in-process; cargo runs tests in this binary
+            // serially unless `--test-threads` overrides, and we restore afterward.
+            let saved = std::env::var(env_var).ok();
+            unsafe {
+                std::env::set_var(env_var, "test-token-1234");
+            }
+
+            let cfg = Config {
+                provider: Some(provider.into()),
+                model: Some("any-model".into()),
+                ..Default::default()
+            };
+            let llm = cfg.to_llm_config(None);
+
+            // Restore env before asserting (so a failure doesn't leak state).
+            match saved {
+                Some(v) => unsafe { std::env::set_var(env_var, v) },
+                None => unsafe { std::env::remove_var(env_var) },
+            }
+
+            let llm = llm.unwrap_or_else(|| panic!("provider `{provider}` should build"));
+            assert_eq!(
+                llm.base_url.as_deref(),
+                Some(expected_url),
+                "provider `{provider}` base_url",
+            );
+            assert_eq!(
+                llm.api_key.as_deref(),
+                Some("test-token-1234"),
+                "provider `{provider}` api_key picked up from {env_var}",
+            );
+            assert!(llm.use_chat_api, "provider `{provider}` use_chat_api");
+        }
+    }
+
+    /// Hosted providers must NOT hardcode model names — model lineups change every
+    /// few months (Llama 3.3 → 4, DeepSeek V3 → V4, …). When the user picks the
+    /// provider but forgets to set `model`, fail clean instead of pointing at a
+    /// model that may already be deprecated.
+    #[test]
+    fn hosted_providers_have_no_default_model() {
+        for provider in [
+            "groq",
+            "cerebras",
+            "deepinfra",
+            "together",
+            "fireworks",
+            "cloudflare",
+            "cloudflare-gateway",
+        ] {
+            let cfg = Config {
+                provider: Some(provider.into()),
+                model: None,
+                api_key: Some("test-token".into()),
+                project_id: Some("acct".into()),
+                ..Default::default()
+            };
+            assert!(
+                cfg.to_llm_config(None).is_none(),
+                "provider `{provider}` must not build without an explicit model",
+            );
+        }
+    }
+
+    /// Cloudflare AI Gateway: URL pattern is
+    /// `gateway.ai.cloudflare.com/v1/{account}/{gateway}/compat`.
+    /// Account/gateway/token must be readable from config and from env.
+    #[test]
+    fn cloudflare_gateway_builds_compat_url() {
+        let cfg = Config {
+            provider: Some("cloudflare-gateway".into()),
+            model: Some("@cf/meta/llama-3.1-8b-instruct".into()),
+            api_key: Some("test-cf-token".into()),
+            project_id: Some("abc123".into()),
+            location: Some("mygw".into()),
+            ..Default::default()
+        };
+        let llm = cfg.to_llm_config(None).expect("cf-gateway builds");
+        assert_eq!(
+            llm.base_url.as_deref(),
+            Some("https://gateway.ai.cloudflare.com/v1/abc123/mygw/compat"),
+        );
+        assert_eq!(llm.api_key.as_deref(), Some("test-cf-token"));
+        assert!(llm.use_chat_api);
+    }
+
+    #[test]
+    fn cloudflare_workers_ai_builds_account_url() {
+        let cfg = Config {
+            provider: Some("cloudflare".into()),
+            model: Some("@cf/meta/llama-3.1-8b-instruct".into()),
+            api_key: Some("test-cf-token".into()),
+            project_id: Some("abc123".into()),
+            ..Default::default()
+        };
+        let llm = cfg.to_llm_config(None).expect("cf workers ai builds");
+        assert_eq!(
+            llm.base_url.as_deref(),
+            Some("https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"),
+        );
+        assert_eq!(llm.api_key.as_deref(), Some("test-cf-token"));
+        assert!(llm.use_chat_api);
     }
 
     #[test]
