@@ -171,7 +171,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "autoresearch"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3793,7 +3793,7 @@ dependencies = [
 
 [[package]]
 name = "rust-code"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4247,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "sgr-agent-ml"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ndarray 0.16.1",
@@ -4412,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "solograph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

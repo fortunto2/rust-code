@@ -1,6 +1,6 @@
 [package]
 name = "rust-code"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 description = "AI-powered TUI coding agent written in Rust"
 license = "MIT"
@@ -29,7 +29,7 @@ ignore.workspace = true
 neo_frizbee.workspace = true
 rmcp.workspace = true
 fff-search.workspace = true
-solograph = { version = "0.1.0", path = "../solograph" }
+solograph = { version = "0.2", path = "../solograph" }
 sgr-agent = { version = "0.7.7", path = "../sgr-agent", features = ["agent", "session", "app-tools", "providers", "telemetry", "search", "oxide", "tools-all", "tools-local-fs"] }
 sgr-agent-tui = { version = "0.4.5", path = "../sgr-agent-tui" }
 async-trait = "0.1"
