@@ -169,6 +169,7 @@ Known providers with auto-filled defaults:
 | `deepinfra` | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_TOKEN` / `DEEPINFRA_API_KEY` |
 | `together` | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
 | `fireworks` | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
 
 **Cloudflare** — needs the account id (in `project_id` or `$CLOUDFLARE_ACCOUNT_ID`).
 

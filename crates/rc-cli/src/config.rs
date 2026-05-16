@@ -211,8 +211,8 @@ impl Config {
                 // base_url + token only; if model is missing the function returns None and
                 // main prints the no-provider error.
                 Some(
-                    "groq" | "cerebras" | "deepinfra" | "together" | "fireworks" | "cloudflare"
-                    | "cloudflare-gateway",
+                    "groq" | "cerebras" | "deepinfra" | "together" | "fireworks" | "openrouter"
+                    | "cloudflare" | "cloudflare-gateway",
                 ) => None,
                 _ => {
                     // No provider specified — detect from available env vars
@@ -275,6 +275,7 @@ impl Config {
                 "https://api.fireworks.ai/inference/v1",
                 &["FIREWORKS_API_KEY"],
             )),
+            Some("openrouter") => Some(("https://openrouter.ai/api/v1", &["OPENROUTER_API_KEY"])),
             _ => None,
         };
 
@@ -553,6 +554,11 @@ mod tests {
                 "FIREWORKS_API_KEY",
                 "https://api.fireworks.ai/inference/v1",
             ),
+            (
+                "openrouter",
+                "OPENROUTER_API_KEY",
+                "https://openrouter.ai/api/v1",
+            ),
         ];
         for (provider, env_var, expected_url) in cases {
             // SAFETY: tests modify env in-process; cargo runs tests in this binary
@@ -602,6 +608,7 @@ mod tests {
             "deepinfra",
             "together",
             "fireworks",
+            "openrouter",
             "cloudflare",
             "cloudflare-gateway",
         ] {
