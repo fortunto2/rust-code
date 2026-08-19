@@ -26,7 +26,7 @@ impl OpenAIClient {
     pub fn new(config: ProviderConfig) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: crate::http_client::build(),
         }
     }
 

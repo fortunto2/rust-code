@@ -25,6 +25,12 @@ pub mod str_ext;
 pub mod tool;
 pub mod types;
 
+/// Shared HTTP client — timeouts that make a dead mobile socket fail fast.
+///
+/// Not behind a feature: the oxide clients are always compiled and take
+/// `REQUEST_TIMEOUT_SECS` from here.
+pub mod http_client;
+
 #[cfg(feature = "gemini")]
 pub mod gemini;
 

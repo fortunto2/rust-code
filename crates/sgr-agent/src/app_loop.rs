@@ -283,12 +283,24 @@ where
             session.push(
                 <<A::Msg as AgentMessage>::Role>::tool(),
                 format!(
-                    "⚠ LOOP WARNING: You repeated the same action {} times (category: {}). \
-                     The result is DEFINITIVE and will NOT change. Do NOT retry. \
-                     Proceed to the NEXT step in your plan or use finish to complete.",
-                    n, category
+                    "⚠ LOOP WARNING: you already ran this action (category: {category}), \
+                     {n} times now, and its result is in this conversation above. \
+                     It was NOT run again — re-reading it cannot tell you anything new. \
+                     Answer the user from what you already have, or choose a different action.",
                 ),
             );
+            // And do not run it. The warning used to be advice attached to yet
+            // another execution: the model repeated `file.list photos://videos`,
+            // was warned, received the identical 9 KB listing a second time, and
+            // repeated it once more into a hard abort — twelve of nineteen runs
+            // on 17 Aug ended that way, each costing two pointless tool calls
+            // and the user a "could not finish that one".
+            //
+            // Skipping the execution is what makes the warning true. The model
+            // gets its turn back with the same context minus the duplicate, and
+            // the cheapest correct move — answering — is the only one left that
+            // makes progress.
+            return Ok(None);
         }
         LoopStatus::Ok => {}
     }
@@ -406,7 +418,10 @@ where
     A: SgrAgent,
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
-    let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    // Fast exact abort: on this loop an identical repeated call never
+    // recovers (measured on a phone, 18 Aug 2026 — every warned repeat
+    // repeated again), so the warning turn is spent wall-clock, not a chance.
+    let mut detector = LoopDetector::new(config.loop_abort_threshold).with_fast_exact_abort();
     tracing::info!(max_steps = config.max_steps, "agent_loop_start");
 
     for step_num in 1..=config.max_steps {
@@ -463,7 +478,10 @@ where
     A: SgrAgentStream,
     F: FnMut(LoopEvent<'_, A::Action>) + Send,
 {
-    let mut detector = LoopDetector::new(config.loop_abort_threshold);
+    // Fast exact abort: on this loop an identical repeated call never
+    // recovers (measured on a phone, 18 Aug 2026 — every warned repeat
+    // repeated again), so the warning turn is spent wall-clock, not a chance.
+    let mut detector = LoopDetector::new(config.loop_abort_threshold).with_fast_exact_abort();
     tracing::info!(
         max_steps = config.max_steps,
         streaming = true,

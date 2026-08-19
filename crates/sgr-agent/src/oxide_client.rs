@@ -131,7 +131,8 @@ impl OxideClient {
             return Err(SgrError::Schema("No API key for oxide client".into()));
         }
 
-        let mut client_config = ClientConfig::new(&api_key);
+        let mut client_config =
+            ClientConfig::new(&api_key).timeout_secs(crate::http_client::REQUEST_TIMEOUT_SECS);
         if let Some(ref url) = config.base_url {
             client_config = client_config.base_url(url.clone());
         }

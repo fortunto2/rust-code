@@ -267,6 +267,11 @@ pub struct LoopDetector {
     frequency: FrequencyTracker,
     abort_threshold: usize,
     warn_threshold: usize,
+    /// Abort an *identical* repeat one step before `abort_threshold` — see
+    /// [`Self::with_fast_exact_abort`]. Off by default: callers that promise
+    /// a warning turn before blocking (VG's workflow guard pins this in
+    /// `second_read_only_warns`) keep their contract.
+    fast_exact_abort: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -290,6 +295,7 @@ impl LoopDetector {
             frequency: FrequencyTracker::new(abort_threshold * 2),
             abort_threshold,
             warn_threshold: abort_threshold.div_ceil(2),
+            fast_exact_abort: false,
         }
     }
 
@@ -302,7 +308,30 @@ impl LoopDetector {
             frequency: FrequencyTracker::new(abort_threshold * 2),
             abort_threshold,
             warn_threshold,
+            fast_exact_abort: false,
         }
+    }
+
+    /// Abort an *identical* repeat one step before the full threshold.
+    ///
+    /// Asking for the same tool with the same arguments twice in a row is not
+    /// the same as using a tool twice: the first call's output is already in
+    /// the context, word for word, so a second one cannot produce anything the
+    /// model has not been shown. Another use of the same *category* can — list
+    /// one folder, then another — which is why that tier keeps the full
+    /// threshold either way.
+    ///
+    /// Measured on a phone, 18 Aug 2026: every run where a model repeated an
+    /// identical call also repeated it a third time and aborted, and the extra
+    /// turn cost between 1.7s and 16.3s of a user's wait for an answer that
+    /// was already sitting in the step log.
+    ///
+    /// Opt-in, because it removes the warning turn for identical repeats —
+    /// a caller whose guard promises "warn first, block second" (VG's
+    /// workflow) must not inherit it silently.
+    pub fn with_fast_exact_abort(mut self) -> Self {
+        self.fast_exact_abort = true;
+        self
     }
 
     /// Check action signature only (backward-compatible).
@@ -316,10 +345,21 @@ impl LoopDetector {
     /// Check action with separate exact signature and normalized category.
     ///
     /// Returns the worst status across exact, category, and frequency signals.
+    /// With [`Self::with_fast_exact_abort`], an identical repeat gives up one
+    /// step sooner than the other tiers.
     pub fn check_with_category(&mut self, signature: &str, category: &str) -> LoopStatus {
         let exact_n = self.exact.record(signature);
         let cat_n = self.category.record(category);
         let freq_n = self.frequency.record(category);
+
+        if self.fast_exact_abort {
+            // Never below two: one call is not a repeat of anything.
+            let exact_abort = self.abort_threshold.saturating_sub(1).max(2);
+            if exact_n >= exact_abort {
+                return LoopStatus::Abort(exact_n);
+            }
+        }
+
         let max_n = exact_n.max(cat_n).max(freq_n);
 
         if max_n >= self.abort_threshold {
@@ -670,5 +710,107 @@ mod tests {
 
         assert_eq!(first_warning, Some(3), "should warn at step 3");
         assert_eq!(abort_at, Some(6), "should abort at step 6");
+    }
+}
+
+#[cfg(test)]
+mod category_threshold_tests {
+    use super::*;
+
+    /// What an abort threshold of N actually costs a caller.
+    ///
+    /// All three signals — exact repeat, category repeat, category frequency —
+    /// share this number, so N is not "how many identical calls" but "how many
+    /// calls of the same kind". A phone that set it to 2 to cut off a stuck
+    /// agent quickly also ended the run on the second legitimate call to a
+    /// tool: list the library, look at it another way, aborted. 91 times in
+    /// one day's logs.
+    ///
+    /// The fix belongs in the caller's configuration, not here — this test
+    /// exists so the next person sees the cost before choosing the number.
+    #[test]
+    fn the_threshold_counts_categories_not_only_identical_calls() {
+        let mut d = LoopDetector::new(2);
+
+        let first = d.check_with_category("file:list:limit=50", "file:list");
+        let second = d.check_with_category("file:list:limit=200", "file:list");
+
+        assert!(matches!(first, LoopStatus::Warning(_)));
+        assert!(
+            matches!(second, LoopStatus::Abort(_)),
+            "two calls of one kind end the run at threshold 2 — pick 3 or more \
+                 if the agent is expected to use a tool twice"
+        );
+    }
+
+    /// The same request twice running is over one step sooner than two
+    /// different requests to the same tool — the whole point of the two tiers.
+    ///
+    /// At threshold 3: `file:list limit=50` twice is an abort, because the
+    /// second one would be handed an answer it already has. `limit=50` then
+    /// `limit=200` is only a warning, because the second one asks something
+    /// new. Collapse the two and one of them breaks: either a stuck agent gets
+    /// a free turn worth up to 16 seconds of somebody's wait, or a legitimate
+    /// second look at the library ends the run.
+    #[test]
+    fn an_identical_call_ends_the_run_before_a_second_use_of_the_tool_does() {
+        let mut identical = LoopDetector::new(3).with_fast_exact_abort();
+        assert!(matches!(
+            identical.check_with_category("file:list:limit=50", "file:list"),
+            LoopStatus::Ok | LoopStatus::Warning(_)
+        ));
+        assert!(
+            matches!(
+                identical.check_with_category("file:list:limit=50", "file:list"),
+                LoopStatus::Abort(2)
+            ),
+            "the second identical call cannot learn anything the first did not say"
+        );
+
+        let mut different = LoopDetector::new(3).with_fast_exact_abort();
+        different.check_with_category("file:list:limit=50", "file:list");
+        assert!(
+            matches!(
+                different.check_with_category("file:list:limit=200", "file:list"),
+                LoopStatus::Warning(_)
+            ),
+            "a different question to the same tool keeps its turn"
+        );
+    }
+
+    /// Without the opt-in an identical repeat keeps its warning turn — the
+    /// contract callers like VG's workflow guard were built on.
+    #[test]
+    fn by_default_an_identical_repeat_warns_before_it_blocks() {
+        let mut d = LoopDetector::new(3);
+        let _ = d.check_with_category("read:foo.json", "read");
+        assert!(
+            matches!(
+                d.check_with_category("read:foo.json", "read"),
+                LoopStatus::Warning(_)
+            ),
+            "the second identical call must warn, not abort, by default"
+        );
+        assert!(matches!(
+            d.check_with_category("read:foo.json", "read"),
+            LoopStatus::Abort(_)
+        ));
+    }
+
+    /// A threshold of 2 must not become a threshold of 1: a single call is not
+    /// a repeat of anything, and `saturating_sub` would happily say it is.
+    ///
+    /// Thresholds start at 2 here — `new(1)` has always aborted on the first
+    /// call through the *general* tier (`max_n = 1 >= 1`), long before the
+    /// exact tier existed, and that contract is not this test's subject.
+    #[test]
+    fn one_call_is_never_a_repeat() {
+        for threshold in 2..=4 {
+            let mut d = LoopDetector::new(threshold).with_fast_exact_abort();
+            assert!(
+                !matches!(d.check_with_category("a", "a"), LoopStatus::Abort(_)),
+                "threshold {threshold} aborted on the first call"
+            );
+        }
     }
 }

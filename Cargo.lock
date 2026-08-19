@@ -2865,9 +2865,9 @@ dependencies = [
 
 [[package]]
 name = "openai-oxide"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eba564f02114d927bb7183227feacbe97d49d18d8a20f7c03b25a319f10bb8f"
+checksum = "951ad0e07bde4eaf74a2a9b17791763c6943b068db380856525d7f11e0be5e15"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2890,9 +2890,9 @@ dependencies = [
 
 [[package]]
 name = "openai-types"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c8c435e7aa9a2346fab0f214f0c3df44663f09d6931259e66527eca1495ef3"
+checksum = "e9b452b7ba3db212656800df6ac4204ebd28ccf4b93ac892428c0ad61c1665ae"
 dependencies = [
  "serde",
  "serde_json",
