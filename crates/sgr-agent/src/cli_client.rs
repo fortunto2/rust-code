@@ -8,7 +8,7 @@
 //! with tool calls, by putting tool schemas in the prompt and parsing
 //! the text response back into `ToolCall` structs.
 
-use crate::client::{LlmClient, synthesize_finish_if_empty};
+use crate::client::LlmClient;
 use crate::tool::ToolDef;
 use crate::types::{Message, Role, SgrError, ToolCall};
 use crate::union_schema;
@@ -206,26 +206,6 @@ impl CliClient {
 
         Ok(text)
     }
-
-    /// Build tool descriptions for text-based tool calling.
-    fn tools_prompt(tools: &[ToolDef]) -> String {
-        use crate::schema_simplifier;
-        let mut s = String::from(
-            "## Available Tools\n\n\
-             You MUST respond with ONLY valid JSON (no markdown, no explanation):\n\
-             {\"situation\": \"what you observe\", \"task\": [\"next steps\"], \
-             \"actions\": [{\"tool_name\": \"<name>\", ...args}]}\n\n",
-        );
-        for t in tools {
-            s.push_str(&schema_simplifier::simplify_tool(
-                &t.name,
-                &t.description,
-                &t.parameters,
-            ));
-            s.push_str("\n\n");
-        }
-        s
-    }
 }
 
 #[async_trait::async_trait]
@@ -256,27 +236,14 @@ impl LlmClient for CliClient {
         messages: &[Message],
         tools: &[ToolDef],
     ) -> Result<Vec<ToolCall>, SgrError> {
-        let tools_desc = Self::tools_prompt(tools);
+        // Text-emulated tool calling — the prompt and the parser are one
+        // protocol and live together in `union_schema`.
         let mut prompt = Self::flatten_messages(messages);
         prompt.push_str("\n\n");
-        prompt.push_str(&tools_desc);
+        prompt.push_str(&union_schema::tools_prompt(tools));
 
         let raw = self.run(&prompt).await?;
-
-        match union_schema::parse_action(&raw, tools) {
-            Ok((_situation, mut calls)) => {
-                synthesize_finish_if_empty(&mut calls, &raw);
-                Ok(calls)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "CLI response parse failed, synthesizing finish");
-                Ok(vec![ToolCall {
-                    id: "cli_finish".into(),
-                    name: "finish".into(),
-                    arguments: serde_json::json!({"summary": raw}),
-                }])
-            }
-        }
+        Ok(union_schema::calls_from_text(&raw, tools, "cli_finish"))
     }
 
     async fn complete(&self, messages: &[Message]) -> Result<String, SgrError> {
@@ -313,6 +280,9 @@ mod tests {
 
     #[test]
     fn tools_prompt_contains_schema() {
+        // The prompt itself moved to `union_schema::tools_prompt` (one copy
+        // for every text-emulating client); this pins that the CLI's call
+        // path still teaches the schema.
         let tools = vec![ToolDef {
             name: "read_file".into(),
             description: "Read a file".into(),
@@ -324,7 +294,7 @@ mod tests {
                 "required": ["path"]
             }),
         }];
-        let prompt = CliClient::tools_prompt(&tools);
+        let prompt = union_schema::tools_prompt(&tools);
         assert!(prompt.contains("read_file"));
         assert!(prompt.contains("File path"));
         assert!(prompt.contains("tool_name"));

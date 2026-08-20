@@ -182,6 +182,59 @@ pub fn parse_action(raw: &str, _tools: &[ToolDef]) -> Result<(String, Vec<ToolCa
     Ok((situation, tool_calls))
 }
 
+/// Tool descriptions for text-based tool calling — for backends with no
+/// native tools parameter (a CLI, a platform model behind a callback).
+///
+/// This string is a protocol: it teaches exactly the shape `parse_action`
+/// reads, so the prompt and the parser live in one file on purpose. It used
+/// to be duplicated per client (CliClient, va-agent's NativeLlmClient) and
+/// the copies were one wording fix away from drifting apart.
+pub fn tools_prompt(tools: &[ToolDef]) -> String {
+    let mut s = String::from(
+        "## Available Tools\n\n\
+         You MUST respond with ONLY valid JSON (no markdown, no explanation):\n\
+         {\"situation\": \"what you observe\", \"task\": [\"next steps\"], \
+         \"actions\": [{\"tool_name\": \"<name>\", ...args}]}\n\n",
+    );
+    for t in tools {
+        s.push_str(&crate::schema_simplifier::simplify_tool(
+            &t.name,
+            &t.description,
+            &t.parameters,
+        ));
+        s.push_str("\n\n");
+    }
+    s
+}
+
+/// A text reply, turned into tool calls — the other half of `tools_prompt`.
+///
+/// An action JSON becomes its calls (plus a synthesized `finish` when the
+/// model answered in text beside an empty actions array); a reply that does
+/// not parse at all becomes a `finish` carrying the prose under
+/// `fallback_id`, because a model that answered in words still answered.
+/// A blank reply becomes no calls — there is nothing to finish with.
+pub fn calls_from_text(raw: &str, tools: &[ToolDef], fallback_id: &str) -> Vec<ToolCall> {
+    match parse_action(raw, tools) {
+        Ok((_situation, mut calls)) => {
+            crate::client::synthesize_finish_if_empty(&mut calls, raw);
+            calls
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "text tools reply did not parse, synthesizing finish");
+            let text = raw.trim();
+            if text.is_empty() {
+                return Vec::new();
+            }
+            vec![ToolCall {
+                id: fallback_id.into(),
+                name: "finish".into(),
+                arguments: serde_json::json!({"summary": text}),
+            }]
+        }
+    }
+}
+
 /// Known wrapper keys that Gemini uses to wrap tool arguments.
 const WRAPPER_KEYS: &[&str] = &["parameters", "params", "args", "arguments"];
 
@@ -220,6 +273,40 @@ mod tests {
                 }),
             },
         ]
+    }
+
+    #[test]
+    fn tools_prompt_teaches_what_parse_action_reads() {
+        let prompt = tools_prompt(&mock_tools());
+        assert!(prompt.contains("read_file"));
+        assert!(prompt.contains("File path"));
+        assert!(prompt.contains("tool_name"));
+    }
+
+    #[test]
+    fn calls_from_text_covers_the_three_reply_shapes() {
+        let tools = mock_tools();
+        // An action JSON becomes its calls.
+        let calls = calls_from_text(
+            r#"{"situation":"s","task":[],"actions":[{"tool_name":"bash","command":"ls"}]}"#,
+            &tools,
+            "x_finish",
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+        // Prose becomes a finish under the caller's id.
+        let calls = calls_from_text("You have 28 videos.", &tools, "x_finish");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "finish");
+        assert_eq!(calls[0].id, "x_finish");
+        assert!(
+            calls[0].arguments["summary"]
+                .as_str()
+                .unwrap()
+                .contains("28")
+        );
+        // A blank reply is no calls, not a blank finish.
+        assert!(calls_from_text("   ", &tools, "x_finish").is_empty());
     }
 
     #[test]
