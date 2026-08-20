@@ -27,6 +27,14 @@ pub trait AgentMessage: Clone {
     fn with_call_id(self, _call_id: String) -> Self {
         self
     }
+    /// Attach the tool calls this assistant turn decided on, so the session
+    /// records a protocol-valid transcript (tool results pair with these by
+    /// id). Default: no-op — message types that don't persist tool calls
+    /// keep working, and their tool results are repaired at the client
+    /// boundary instead.
+    fn with_tool_calls(self, _calls: Vec<crate::types::ToolCall>) -> Self {
+        self
+    }
 }
 
 /// Entry type discriminator — prevents invalid types at compile time.

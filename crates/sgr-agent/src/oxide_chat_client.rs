@@ -154,6 +154,17 @@ impl OxideChatClient {
     }
 
     fn build_messages(&self, messages: &[Message]) -> Vec<ChatCompletionMessageParam> {
+        // A `role:"tool"` message is only valid when a preceding assistant
+        // message offered a tool_call with the same id. Session-based loops
+        // (app_loop) never record the assistant turn, so their tool results
+        // arrive orphaned — strict endpoints 400 on that, and Cloudflare's
+        // gemma template silently drops the message, leaving the model blind
+        // to every tool output (measured: the agent re-listed the same folder
+        // five times into a loop abort). Orphans are sent as user messages.
+        let offered_ids: std::collections::HashSet<&str> = messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.as_str()))
+            .collect();
         let result: Vec<ChatCompletionMessageParam> = messages
             .iter()
             .map(|m| match m.role {
@@ -204,10 +215,29 @@ impl OxideChatClient {
                         refusal: None,
                     }
                 }
-                Role::Tool => ChatCompletionMessageParam::Tool {
-                    content: m.content.clone(),
-                    tool_call_id: m.tool_call_id.clone().unwrap_or_default(),
-                },
+                Role::Tool => {
+                    let cid = m.tool_call_id.as_deref().unwrap_or("");
+                    if !cid.is_empty() && offered_ids.contains(cid) {
+                        ChatCompletionMessageParam::Tool {
+                            content: m.content.clone(),
+                            tool_call_id: cid.to_string(),
+                        }
+                    } else {
+                        // Orphan tool result — no assistant tool_call to pair
+                        // with. As a user message the model actually sees it,
+                        // images included (the Tool wire shape carries none).
+                        let text = format!("[tool result]\n{}", m.content);
+                        let content = if m.images.is_empty() {
+                            UserContent::Text(text)
+                        } else {
+                            UserContent::Parts(multimodal::chat_parts(&text, &m.images))
+                        };
+                        ChatCompletionMessageParam::User {
+                            content,
+                            name: None,
+                        }
+                    }
+                }
             })
             .collect();
 
@@ -537,5 +567,62 @@ impl LlmClient for OxideChatClient {
             .unwrap_or_default();
         record_chat_otel(&self.model, messages, response.usage.as_ref(), &[], &text);
         Ok(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client() -> OxideChatClient {
+        let config = LlmConfig {
+            base_url: Some("http://localhost:1".into()),
+            model: "test".into(),
+            ..Default::default()
+        };
+        OxideChatClient::from_config(&config).expect("test client")
+    }
+
+    #[test]
+    fn orphan_tool_message_becomes_user() {
+        // No assistant tool_calls in history — the "tool" call_id that
+        // Session-based loops stamp pairs with nothing.
+        let msgs = vec![
+            Message::user("list the folder"),
+            Message::tool("tool", "{\"ok\":true,\"entries\":[]}"),
+        ];
+        let built = client().build_messages(&msgs);
+        match &built[1] {
+            ChatCompletionMessageParam::User { content, .. } => match content {
+                UserContent::Text(t) => {
+                    assert!(t.starts_with("[tool result]"), "prefix names the turn: {t}");
+                    assert!(t.contains("entries"), "payload survives: {t}");
+                }
+                _ => panic!("expected text content"),
+            },
+            other => panic!("orphan tool must be sent as user, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paired_tool_message_stays_tool() {
+        let mut assistant = Message::assistant("");
+        assistant.tool_calls = vec![ToolCall {
+            id: "call_1".into(),
+            name: "file_list".into(),
+            arguments: serde_json::json!({"path": "eval"}),
+        }];
+        let msgs = vec![
+            Message::user("list the folder"),
+            assistant,
+            Message::tool("call_1", "{\"ok\":true}"),
+        ];
+        let built = client().build_messages(&msgs);
+        match &built[2] {
+            ChatCompletionMessageParam::Tool { tool_call_id, .. } => {
+                assert_eq!(tool_call_id, "call_1");
+            }
+            other => panic!("paired tool must keep the tool role, got {other:?}"),
+        }
     }
 }

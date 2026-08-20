@@ -166,11 +166,7 @@ impl ToolRegistry {
         let mut defs: Vec<ToolDef> = self.tools.values().map(|t| t.to_def()).collect();
         // AI-NOTE: deferred tools emit stub schema — LLM sees them but can't call until promoted
         for tool in self.deferred.values() {
-            defs.push(ToolDef {
-                name: tool.name().to_string(),
-                description: tool.description().to_string(),
-                parameters: serde_json::json!({"type": "object", "properties": {}}),
-            });
+            defs.push(tool.to_def().stub());
         }
         defs
     }

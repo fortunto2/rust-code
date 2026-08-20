@@ -25,8 +25,12 @@ pub struct StepDecision<A> {
     /// Soft hints injected as system messages before execution.
     /// Used for intent-mismatch nudges, guardrails, etc.
     pub hints: Vec<String>,
-    /// Tool call IDs from Responses API — paired with actions by index for stateful chaining.
-    pub call_ids: Vec<String>,
+    /// The raw tool calls behind `actions` (same order), when the backend
+    /// provided them. Recorded into the session as the assistant turn so the
+    /// transcript stays protocol-valid: a Chat Completions `role:"tool"`
+    /// message is only visible to the model when a preceding assistant
+    /// message offered a tool_call with the same id.
+    pub tool_calls: Vec<crate::types::ToolCall>,
 }
 
 impl<A> Default for StepDecision<A> {
@@ -37,7 +41,7 @@ impl<A> Default for StepDecision<A> {
             completed: false,
             actions: vec![],
             hints: vec![],
-            call_ids: vec![],
+            tool_calls: vec![],
         }
     }
 }
@@ -208,6 +212,14 @@ where
 
     if decision.completed {
         tracing::info!(step = step_num, "agent_completed");
+        // Record the final answer — a resumed session otherwise ends on a
+        // tool result with no assistant turn saying what came of it.
+        if !decision.situation.is_empty() {
+            session.push(
+                <<A::Msg as AgentMessage>::Role>::assistant(),
+                decision.situation.clone(),
+            );
+        }
         // Execute final actions (e.g. FinishTaskTool) so their output is visible,
         // then signal completion.
         for action in &decision.actions {
@@ -259,6 +271,24 @@ where
                 return Ok(None);
             }
         }
+    }
+
+    // --- Record the assistant turn ---
+    // The decision itself is part of the conversation: without it the session
+    // is [system, user, tool, tool, …] — its tool results pair with nothing,
+    // strict Chat Completions endpoints reject them, and Cloudflare's gemma
+    // template silently drops them, leaving the model blind to every tool
+    // output. Message types that persist tool calls (via `with_tool_calls`)
+    // get exact id pairing; the rest fall back to the client-side repair.
+    {
+        let mut amsg = A::Msg::new(
+            <<A::Msg as AgentMessage>::Role>::assistant(),
+            decision.situation.clone(),
+        );
+        if !decision.tool_calls.is_empty() {
+            amsg = amsg.with_tool_calls(decision.tool_calls.clone());
+        }
+        session.push_msg(amsg);
     }
 
     // --- Tier 1+2: exact + category loop detection ---
@@ -313,9 +343,9 @@ where
         );
     }
 
-    // --- Execute actions (with call_ids for stateful chaining) ---
+    // --- Execute actions (call ids derive from the recorded tool calls) ---
     for (i, action) in decision.actions.iter().enumerate() {
-        let call_id = decision.call_ids.get(i).cloned();
+        let call_id = decision.tool_calls.get(i).map(|tc| tc.id.clone());
         let action_sig = A::action_signature(action);
         on_event(LoopEvent::ActionStart(action));
 
@@ -601,6 +631,41 @@ mod tests {
         assert_eq!(steps, 3);
         assert!(events.contains(&"completed".to_string()));
         assert!(session.len() > 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn session_records_assistant_turn_before_tool_results() {
+        let dir = std::env::temp_dir().join("sgr_loop_test_assistant_turn");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut session = Session::<TestMsg>::new(dir.to_str().unwrap(), 60).unwrap();
+        session.push(TestRole::User, "do something".into());
+
+        let agent = MockAgent {
+            steps_before_done: AtomicUsize::new(2),
+        };
+        let config = LoopConfig {
+            max_steps: 10,
+            loop_abort_threshold: 5,
+        };
+        run_loop(&agent, &mut session, &config, |_| {})
+            .await
+            .unwrap();
+
+        // The transcript must read: user -> assistant (the decision) -> tool
+        // (its result) -> assistant (final answer). Without the assistant
+        // turns, tool results pair with nothing and chat endpoints drop them.
+        let roles: Vec<&str> = session
+            .messages()
+            .iter()
+            .map(|m| m.role().as_str())
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool", "assistant"],
+            "transcript shape: {roles:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

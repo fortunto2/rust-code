@@ -4707,7 +4707,8 @@ impl<'a> App<'a> {
                                     // Execute all actions sequentially (with call_ids for stateful chaining)
                                     let mut is_done = false;
                                     for (i, action) in step.actions.iter().enumerate() {
-                                        let call_id = step.call_ids.get(i).cloned();
+                                        let call_id =
+                                            step.tool_calls.get(i).map(|tc| tc.id.clone());
                                         if matches!(
                                             action,
                                             Action::Finish { .. } | Action::AskUser { .. }

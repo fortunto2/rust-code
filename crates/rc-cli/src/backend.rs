@@ -99,9 +99,10 @@ pub struct SgrNextStep {
     /// Responses API response_id for stateful chaining (prompt caching).
     #[serde(skip)]
     pub response_id: Option<String>,
-    /// Tool call IDs from the API — paired with actions by index for stateful chaining.
+    /// The raw tool calls behind `actions` — paired by index; carries the
+    /// ids for stateful chaining and the names/arguments for the transcript.
     #[serde(skip)]
-    pub call_ids: Vec<String>,
+    pub tool_calls: Vec<sgr_agent::ToolCall>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -672,10 +673,10 @@ impl LlmProvider {
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
 
-        // Convert tool calls to actions, preserving call_ids for stateful chaining.
-        let (actions, call_ids): (Vec<SgrAction>, Vec<String>) = tool_calls
+        // Convert tool calls to actions, keeping each raw call beside its action.
+        let (actions, tool_calls): (Vec<SgrAction>, Vec<sgr_agent::ToolCall>) = tool_calls
             .iter()
-            .filter_map(|tc| tool_call_to_sgr_action(tc).map(|a| (a, tc.id.clone())))
+            .filter_map(|tc| tool_call_to_sgr_action(tc).map(|a| (a, tc.clone())))
             .unzip();
 
         if actions.is_empty() {
@@ -686,7 +687,7 @@ impl LlmProvider {
                     summary: "Task completed.".into(),
                 }],
                 response_id,
-                call_ids: vec![],
+                tool_calls: vec![],
             });
         }
 
@@ -713,7 +714,7 @@ impl LlmProvider {
             task: vec![],
             actions,
             response_id,
-            call_ids,
+            tool_calls,
         })
     }
 

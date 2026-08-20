@@ -717,7 +717,8 @@ impl SgrAgent for Agent {
             completed: done,
             actions: step.actions,
             hints,
-            call_ids: step.call_ids,
+            tool_calls: step.tool_calls,
+            ..Default::default()
         })
     }
 
@@ -912,7 +913,8 @@ impl SgrAgentStream for Agent {
                 completed: done,
                 actions: step.actions,
                 hints,
-                call_ids: step.call_ids,
+                tool_calls: step.tool_calls,
+                ..Default::default()
             })
         }
     }

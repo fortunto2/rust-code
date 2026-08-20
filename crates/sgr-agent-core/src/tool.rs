@@ -23,6 +23,24 @@ pub fn tool<T: JsonSchema + DeserializeOwned>(name: &str, description: &str) -> 
 }
 
 impl ToolDef {
+    /// The deferred form: name and description stay visible to the LLM, the
+    /// argument schema is withheld until the tool is promoted. One place owns
+    /// the wire shape — `ToolRegistry::to_defs` and any agent doing its own
+    /// promotion must agree on what a stub looks like, or a change here
+    /// silently breaks the other's full/stub detection.
+    pub fn stub(mut self) -> Self {
+        self.parameters = serde_json::json!({"type": "object", "properties": {}});
+        self
+    }
+
+    /// Is this the deferred form produced by [`ToolDef::stub`]?
+    pub fn is_stub(&self) -> bool {
+        self.parameters
+            .get("properties")
+            .map(|p| p == &serde_json::json!({}))
+            .unwrap_or(true)
+    }
+
     pub fn to_gemini(&self) -> Value {
         serde_json::json!({
             "name": self.name,
