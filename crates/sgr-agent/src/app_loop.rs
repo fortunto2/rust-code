@@ -248,6 +248,17 @@ where
         .collect::<Vec<_>>()
         .join("|");
 
+    // --- Inject hints as tool messages (better visibility in FC mode) ---
+    // Before the empty-actions guard, deliberately: a veto that strips the
+    // only action leaves an empty decision whose hint carries the veto's
+    // marker — swallowing it turned "vetoed once" into veto-forever.
+    for hint in &decision.hints {
+        session.push(
+            <<A::Msg as AgentMessage>::Role>::tool(),
+            format!("HINT: {}", hint),
+        );
+    }
+
     // --- Empty actions guard ---
     if decision.actions.is_empty() {
         tracing::warn!(step = step_num, "agent_empty_actions");
@@ -333,14 +344,6 @@ where
             return Ok(None);
         }
         LoopStatus::Ok => {}
-    }
-
-    // --- Inject hints as tool messages (better visibility in FC mode) ---
-    for hint in &decision.hints {
-        session.push(
-            <<A::Msg as AgentMessage>::Role>::tool(),
-            format!("HINT: {}", hint),
-        );
     }
 
     // --- Execute actions (call ids derive from the recorded tool calls) ---

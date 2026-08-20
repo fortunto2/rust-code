@@ -171,6 +171,42 @@ impl<C: LlmClient> LlmClient for RetryClient<C> {
         Err(last_err.unwrap())
     }
 
+    async fn tools_call_stateful(
+        &self,
+        messages: &[Message],
+        tools: &[crate::tool::ToolDef],
+        previous_response_id: Option<&str>,
+    ) -> Result<(Vec<ToolCall>, Option<String>), SgrError> {
+        // Without this override the trait default delegated to `tools_call`
+        // and returned response_id=None on every call — so Responses-API
+        // chaining silently never engaged for any client wrapped in retries,
+        // which is all of them.
+        let mut last_err = None;
+        for attempt in 0..=self.config.max_retries {
+            match self
+                .inner
+                .tools_call_stateful(messages, tools, previous_response_id)
+                .await
+            {
+                Ok(r) => return Ok(r),
+                Err(e) if is_retryable(&e) && attempt < self.config.max_retries => {
+                    let delay = delay_for_attempt(attempt, &self.config, &e);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max = self.config.max_retries,
+                        delay_ms = delay.as_millis() as u64,
+                        "Retrying tools_call_stateful: {}",
+                        e
+                    );
+                    tokio::time::sleep(delay).await;
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap_or(SgrError::EmptyResponse))
+    }
+
     async fn tools_call_with_text(
         &self,
         messages: &[Message],
