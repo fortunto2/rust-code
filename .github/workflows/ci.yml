@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# `env -u CI` appears on every cargo call on purpose: fff-search's build.rs
+# hard-panics when $CI is set unless the zlob (Zig) feature is enabled, and
+# zlob 1.3.3 does not build against current Zig. Same dance as release.yml.
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test
+        run: env -u CI cargo test --workspace --exclude genai --exclude sgr-agent-ml
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned rather than `stable`: the pre-commit hook runs the same clippy
+      # locally, and a floating toolchain means CI fails on lints the committer's
+      # clippy has never heard of. Bump this deliberately, with the fixes.
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Format
+        run: env -u CI cargo fmt -p sgr-agent -p sgr-agent-tui -p rust-code -p solograph -- --check
+      - name: Clippy
+        run: env -u CI cargo clippy -p sgr-agent -p sgr-agent-tui -p solograph --all-targets -- -D warnings
+
+  packaging:
+    name: Packaging (crates.io dry-run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # The packaged crates resolve their siblings from crates.io, not from the
+      # workspace path, so a symbol added without a version bump breaks the
+      # release while every local build stays green. That is how v0.6.6 shipped
+      # with a failed publish job and 0.6.5 left as newest. Verifying the
+      # tarballs on every push turns that into a red branch instead of a
+      # surprise at tag time. A version already on crates.io is fine here —
+      # --dry-run does not check for it.
+      - name: Verify the publish chain
+        run: |
+          for crate in sgr-agent-core sgr-agent-tools sgr-agent sgr-agent-tui solograph rust-code; do
+            echo "::group::dry-run $crate"
+            env -u CI cargo publish -p "$crate" --dry-run --allow-dirty
+            echo "::endgroup::"
+          done
