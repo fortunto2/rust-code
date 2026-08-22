@@ -126,23 +126,31 @@ mod tests {
     use super::*;
     use crate::session::simple::{SimpleMsg, SimpleRole};
 
-    fn make_session() -> Session<SimpleMsg> {
-        let dir = std::env::temp_dir().join("sgr_stateful_test");
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("sgr_stateful_test-{}-{name}", std::process::id()))
+    }
+
+    /// One directory per test. Both tests used to share a fixed path, so with
+    /// cargo running them in parallel one test's `remove_dir_all` raced the
+    /// other's create and this function panicked with `AlreadyExists`.
+    fn make_session(name: &str) -> Session<SimpleMsg> {
+        let dir = test_dir(name);
         let _ = std::fs::remove_dir_all(&dir);
         Session::new(dir.to_str().unwrap(), 60).unwrap()
     }
 
     #[test]
     fn new_has_no_delta() {
-        let session = make_session();
+        let session = make_session("new_has_no_delta");
         let stateful = StatefulSession::new(session);
         assert!(stateful.delta().is_none());
         assert!(!stateful.is_stateful());
+        let _ = std::fs::remove_dir_all(test_dir("new_has_no_delta"));
     }
 
     #[test]
     fn store_and_delta() {
-        let mut session = make_session();
+        let mut session = make_session("store_and_delta");
         session.push(SimpleRole::System, "system prompt".into());
         session.push(SimpleRole::User, "hello".into());
         session.push(SimpleRole::Assistant, "hi".into());
@@ -168,13 +176,12 @@ mod tests {
         assert_eq!(stateful.len(), 4);
 
         // Clean up
-        let dir = std::env::temp_dir().join("sgr_stateful_test");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(test_dir("store_and_delta"));
     }
 
     #[test]
     fn clear_removes_state() {
-        let mut session = make_session();
+        let mut session = make_session("clear_removes_state");
         session.push(SimpleRole::User, "test".into());
 
         let mut stateful = StatefulSession::new(session);
@@ -191,7 +198,7 @@ mod tests {
 
     #[test]
     fn delegate_methods() {
-        let session = make_session();
+        let session = make_session("delegate_methods");
         let mut stateful = StatefulSession::new(session);
 
         assert!(stateful.is_empty());
@@ -208,7 +215,7 @@ mod tests {
 
     #[test]
     fn into_inner() {
-        let mut session = make_session();
+        let mut session = make_session("into_inner");
         session.push(SimpleRole::User, "preserved".into());
         let stateful = StatefulSession::new(session);
         let inner = stateful.into_inner();
@@ -220,7 +227,7 @@ mod tests {
 
     #[test]
     fn delta_none_when_count_exceeds_messages() {
-        let session = make_session();
+        let session = make_session("delta_none_when_count_exceeds_messages");
         let mut stateful = StatefulSession::new(session);
         // Store a count that exceeds actual messages
         stateful.store_response(Some("resp_x".into()), 100, vec![]);
