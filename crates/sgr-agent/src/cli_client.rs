@@ -150,6 +150,8 @@ impl CliClient {
         let mut command = tokio::process::Command::new(&cmd);
         command
             .args(&args)
+            // See cli_proxy::run_cli — the child must not inherit the TUI's tty.
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

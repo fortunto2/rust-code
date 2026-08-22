@@ -91,6 +91,10 @@ async fn run_cli(provider: CliProvider, prompt: &str) -> Result<String, String> 
     let mut command = tokio::process::Command::new(&cmd);
     command
         .args(&args)
+        // Never hand the child our stdin: under the TUI that is the terminal,
+        // and an interactive CLI on the other end eats the user's keystrokes
+        // and rewrites the termios we are relying on.
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

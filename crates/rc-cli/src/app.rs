@@ -92,6 +92,8 @@ pub enum AppEvent {
     SessionsLoaded(Vec<SessionEntry>),
     SessionLoaded,
     BashCwdChanged(std::path::PathBuf),
+    /// Terminal input died for good — carries the reason to show the user.
+    InputLost(String),
 }
 
 pub struct FuzzySearchState<'a> {
@@ -964,19 +966,36 @@ impl<'a> App<'a> {
             self.load_git_diff();
         }
 
-        // UI Event Task
+        // Terminal input pump. Its own OS thread, not a tokio task: `event::poll`
+        // and `event::read` are blocking syscalls with no business parking a
+        // runtime worker for 16ms at a time.
         let ui_tx = tx.clone();
+        std::thread::Builder::new()
+            .name("rc-input".to_string())
+            .spawn(move || input_pump(ui_tx))
+            .expect("spawn terminal input thread");
+
+        // Signals. A plain `kill` / `pkill` used to terminate the process with the
+        // terminal still in raw mode on the alternate screen, which is why issue #6
+        // needed a `reset` afterwards. Restoring from the handler itself rather than
+        // routing through the main loop keeps `pkill` working even when the loop is
+        // the thing that is stuck.
+        #[cfg(unix)]
         tokio::spawn(async move {
-            loop {
-                if event::poll(std::time::Duration::from_millis(16)).unwrap() {
-                    if let Ok(e) = event::read() {
-                        if ui_tx.send(AppEvent::Ui(e)).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-            }
+            use tokio::signal::unix::{SignalKind, signal};
+            let (Ok(mut term), Ok(mut hup)) = (
+                signal(SignalKind::terminate()),
+                signal(SignalKind::hangup()),
+            ) else {
+                return;
+            };
+            let reason = tokio::select! {
+                _ = term.recv() => "SIGTERM",
+                _ = hup.recv() => "SIGHUP",
+            };
+            let _ = crate::tui::restore();
+            println!("rust-code: {reason} received, terminal restored.");
+            std::process::exit(130);
         });
 
         // Tick Task for animations
@@ -990,8 +1009,24 @@ impl<'a> App<'a> {
             }
         });
 
+        // A failed frame is survivable. `Terminal::draw` re-reads the terminal
+        // size on every call, which on unix opens /dev/tty and falls back to
+        // `last_os_error()` when it cannot — so a momentary failure used to end
+        // the session with whatever errno happened to be lying around, e.g.
+        // "Bad file descriptor (os error 9)" (issue #6).
+        let mut draw_budget = FailureBudget::default();
+        let mut input_error: Option<String> = None;
+
         while !self.exit {
-            terminal.draw(|frame| self.draw(frame))?;
+            if let Err(e) = terminal.draw(|frame| self.draw(frame)) {
+                if draw_budget.record_failure(DRAW_ERROR_BUDGET) {
+                    return Err(anyhow::Error::new(e).context(format!(
+                        "terminal rendering failed {DRAW_ERROR_BUDGET} times in a row"
+                    )));
+                }
+            } else {
+                draw_budget.record_success();
+            }
 
             if let Some(event) = rx.recv().await {
                 match event {
@@ -1248,6 +1283,10 @@ impl<'a> App<'a> {
                         self.messages.push(status_message);
                         self.chat_pin_bottom();
                     }
+                    AppEvent::InputLost(reason) => {
+                        input_error = Some(reason);
+                        self.exit = true;
+                    }
                     AppEvent::Tick => {
                         self.tick_count = self.tick_count.wrapping_add(1);
                         // Auto-refresh BG task preview every ~1s (every 10th tick at 100ms)
@@ -1257,6 +1296,16 @@ impl<'a> App<'a> {
                     }
                 }
             }
+        }
+
+        if let Some(reason) = input_error {
+            anyhow::bail!(
+                "terminal input stopped working: {reason}\n\
+                 crossterm builds its event reader once and caches the failure, so \
+                 there is no way back from this inside the session. It is almost \
+                 always a file-descriptor shortage — raise the limit \
+                 (`ulimit -n 4096`) and start rust-code again."
+            );
         }
         Ok(())
     }
@@ -5130,5 +5179,144 @@ impl<'a> App<'a> {
             "ping" => Some("Analysis: pong".to_string()),
             _ => None,
         }
+    }
+}
+
+/// Frames that may fail back-to-back before the session is considered lost.
+const DRAW_ERROR_BUDGET: u32 = 30;
+
+/// Poll failures in a row before we stop asking the terminal for input.
+const INPUT_ERROR_BUDGET: u32 = 5;
+
+/// Counts *consecutive* failures, so a single hiccup never adds up over hours.
+#[derive(Default)]
+struct FailureBudget {
+    consecutive: u32,
+}
+
+impl FailureBudget {
+    fn record_success(&mut self) {
+        self.consecutive = 0;
+    }
+
+    /// Records one failure; `true` means the budget is spent.
+    fn record_failure(&mut self, budget: u32) -> bool {
+        self.consecutive += 1;
+        self.consecutive >= budget
+    }
+}
+
+/// A signal cut the syscall short, or the tty had nothing ready yet. Both mean
+/// "ask again", not "input is broken".
+fn is_transient_io(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+    )
+}
+
+/// Blocking terminal-input pump, one per session.
+///
+/// This used to be `event::poll(..).unwrap()` inside a tokio task, and that one
+/// `unwrap` is issue #6: crossterm builds its global event source on the first
+/// poll (kqueue/epoll handle + tty + signal pipe — a handful of file
+/// descriptors), and if that fails it stores `None` and returns
+/// "Failed to initialize input reader" for the rest of the process. The panic
+/// landed on a runtime worker, so it killed nothing but input; the message went
+/// to the redirected stderr log where nobody saw it; and the UI kept redrawing
+/// while ignoring every key. Hence "the cli stops", a process that needs
+/// `pkill`, and a terminal that needs `reset`.
+fn input_pump(tx: mpsc::Sender<AppEvent>) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+    let mut budget = FailureBudget::default();
+
+    loop {
+        // The app is shutting down — stop reading the terminal before it does.
+        if tx.is_closed() {
+            return;
+        }
+
+        match event::poll(POLL_INTERVAL) {
+            Ok(false) => budget.record_success(),
+            Ok(true) => {
+                budget.record_success();
+                match event::read() {
+                    Ok(ev) => {
+                        // Channel closed = the app is shutting down.
+                        if tx.blocking_send(AppEvent::Ui(ev)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) if is_transient_io(&e) => {}
+                    Err(e) => {
+                        let _ = tx.blocking_send(AppEvent::InputLost(e.to_string()));
+                        return;
+                    }
+                }
+            }
+            Err(e) if is_transient_io(&e) => std::thread::sleep(POLL_INTERVAL),
+            Err(e) => {
+                if budget.record_failure(INPUT_ERROR_BUDGET) {
+                    let _ = tx.blocking_send(AppEvent::InputLost(e.to_string()));
+                    return;
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn budget_only_trips_on_consecutive_failures() {
+        let mut budget = FailureBudget::default();
+        assert!(!budget.record_failure(3));
+        assert!(!budget.record_failure(3));
+        budget.record_success();
+        assert!(!budget.record_failure(3));
+        assert!(!budget.record_failure(3));
+        assert!(budget.record_failure(3));
+    }
+
+    #[test]
+    fn budget_of_one_trips_immediately() {
+        assert!(FailureBudget::default().record_failure(1));
+    }
+
+    #[test]
+    fn interrupted_and_would_block_are_retried() {
+        assert!(is_transient_io(&Error::from(ErrorKind::Interrupted)));
+        assert!(is_transient_io(&Error::from(ErrorKind::WouldBlock)));
+    }
+
+    #[test]
+    fn a_dead_event_reader_is_not_transient() {
+        // What crossterm hands back once its event source failed to initialize.
+        let dead = Error::other("Failed to initialize input reader");
+        assert!(!is_transient_io(&dead));
+        // And the errno issue #6 was reported with.
+        assert!(!is_transient_io(&Error::from_raw_os_error(9)));
+    }
+
+    #[test]
+    fn input_pump_stops_when_the_app_is_gone() {
+        // No tty in tests, so poll fails; with the receiver dropped the pump
+        // must return instead of spinning forever.
+        let (tx, rx) = mpsc::channel::<AppEvent>(1);
+        drop(rx);
+        let handle = std::thread::spawn(move || input_pump(tx));
+        let start = std::time::Instant::now();
+        while !handle.is_finished() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "input_pump did not terminate"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        handle.join().unwrap();
     }
 }

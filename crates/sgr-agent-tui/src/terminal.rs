@@ -10,6 +10,7 @@ use std::io::{Stdout, stdout};
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 pub fn init_terminal() -> Result<Tui> {
+    claim_input_reader()?;
     stdout()
         .execute(EnterAlternateScreen)?
         .execute(EnableMouseCapture)?;
@@ -17,6 +18,26 @@ pub fn init_terminal() -> Result<Tui> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     terminal.clear()?;
     Ok(terminal)
+}
+
+/// Build crossterm's event reader now, while file descriptors are still cheap.
+///
+/// crossterm creates it lazily on the first `poll`, and it needs several fds
+/// (kqueue/epoll handle, the tty, a signal pipe). If that first attempt fails it
+/// caches `None` and every later poll returns "Failed to initialize input
+/// reader" — permanently deaf, with no way to retry. Doing it here means the
+/// reader is claimed before the file watcher, the scanner and the thread pools
+/// take their share, and a failure is a clear message on a clean terminal
+/// instead of a TUI that draws but ignores every key (issue #6).
+pub fn claim_input_reader() -> Result<()> {
+    crossterm::event::poll(std::time::Duration::ZERO).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read terminal input: {e}\n\
+             This is usually a file-descriptor shortage — check `ulimit -n` \
+             (4096 is a sane value) and try again."
+        )
+    })?;
+    Ok(())
 }
 
 pub fn restore_terminal() -> Result<()> {
@@ -28,11 +49,20 @@ pub fn restore_terminal() -> Result<()> {
 }
 
 /// Setup panic hook that restores terminal before printing panic.
+///
+/// The exit is the point. A panic on a tokio worker unwinds that task and
+/// nothing else, so before this the terminal was already torn down here while
+/// the process kept running and redrawing into it — a freeze that needed `pkill`
+/// and then `reset` (issue #6). Stderr is redirected to a log file in TUI mode,
+/// so the reason is also echoed on stdout where it is actually readable.
 pub fn setup_panic_hook() {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = restore_terminal();
+        println!("rust-code crashed: {panic_info}");
+        println!("Backtrace, if any: .rust-code/stderr.log");
         original_hook(panic_info);
+        std::process::exit(101);
     }));
 }
 

@@ -1124,6 +1124,11 @@ async fn main() -> Result<()> {
     // Setup panic hook to restore terminal (TUI mode only)
     if args.prompt.is_none() && args.command.is_none() {
         setup_panic_hook();
+        // Claim crossterm's event reader here, at the top of the program, before
+        // the scanner / file watcher / thread pools take their share of file
+        // descriptors. crossterm builds it once and caches a failure forever, so
+        // whoever asks first wins — and it has to be input (issue #6).
+        tui::claim_input_reader()?;
     }
 
     // Handle subcommands first (no init needed)
