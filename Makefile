@@ -16,7 +16,7 @@ release:
 test:
 	$(CARGO) test -p sgr-agent --features "agent search" -p sgr-agent-tui -p rust-code -p solograph
 	@echo "=== genai gemini tests ==="
-	$(CARGO) test -p genai --test tests_p_gemini 2>&1 || echo "(genai gemini tests skipped — no GEMINI_API_KEY?)"
+	$(CARGO) test --manifest-path crates/genai/Cargo.toml --test tests_p_gemini 2>&1 || echo "(genai gemini tests skipped — no GEMINI_API_KEY?)"
 
 ## Run headless with PROMPT
 run: build

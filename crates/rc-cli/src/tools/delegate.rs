@@ -11,7 +11,7 @@
 use super::bash::{list_bg_windows, read_tmux_log, run_command_bg};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 /// Supported delegate agents.

@@ -10,6 +10,12 @@ members = [
     "crates/autoresearch",
 ]
 default-members = ["crates/rc-cli"]
+# Vendored fork, and nothing depends on it by path (sgr-agent uses the published
+# genai). Declaring it excluded rather than merely unlisted is what lets
+# `cargo test --manifest-path crates/genai/Cargo.toml` run at all — without it
+# cargo refuses the manifest and `make test`'s genai step only ever printed an
+# error.
+exclude = ["crates/genai"]
 resolver = "2"
 
 [workspace.dependencies]

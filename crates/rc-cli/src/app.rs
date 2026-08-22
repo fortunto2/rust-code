@@ -1432,7 +1432,7 @@ impl<'a> App<'a> {
                 .border_style(input_border)
                 .title(self.input_title()),
         );
-        frame.render_widget(self.textarea.widget(), left_chunks[1]);
+        frame.render_widget(&self.textarea, left_chunks[1]);
 
         // Slash command autocomplete popup (renders via CommandPalette)
         self.command_palette.render(frame, left_chunks[1]);
@@ -1752,7 +1752,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.bg_tasks.input.widget(), chunks[0]);
+        frame.render_widget(&self.bg_tasks.input, chunks[0]);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -1818,7 +1818,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.bash_history_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.bash_history_state.input, chunks[0]);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -1888,7 +1888,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.skills_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.skills_state.input, chunks[0]);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -1957,7 +1957,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.tasks_search_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.tasks_search_state.input, chunks[0]);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -2071,7 +2071,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.symbols_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.symbols_state.input, chunks[0]);
 
         let main = Layout::default()
             .direction(Direction::Horizontal)
@@ -2133,7 +2133,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.git_history.input.widget(), chunks[0]);
+        frame.render_widget(&self.git_history.input, chunks[0]);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -2273,7 +2273,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(inner_area);
 
-        frame.render_widget(self.session_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.session_state.input, chunks[0]);
 
         let bottom_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -2352,7 +2352,7 @@ impl<'a> App<'a> {
             .split(inner_area);
 
         // Render input
-        frame.render_widget(self.fuzzy_state.input.widget(), chunks[0]);
+        frame.render_widget(&self.fuzzy_state.input, chunks[0]);
 
         // Layout for List & Preview
         let bottom_chunks = Layout::default()

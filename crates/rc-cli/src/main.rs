@@ -12,7 +12,7 @@ pub mod tui;
 use crate::agent::Agent;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sgr_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop, run_loop_stream};
+use sgr_agent::{LoopConfig, LoopEvent, SgrAgent, run_loop};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
